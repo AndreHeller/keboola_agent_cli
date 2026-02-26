@@ -9,6 +9,7 @@ from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
 from keboola_agent_cli.models import ProjectConfig, TokenVerifyResponse
 from keboola_agent_cli.services.config_service import ConfigService
+from keboola_agent_cli.services.job_service import JobService
 from keboola_agent_cli.services.project_service import ProjectService
 
 
@@ -1128,3 +1129,423 @@ class TestResolveProjects:
         service = ConfigService(config_store=store)
         result = service.resolve_projects(aliases=[])
         assert set(result.keys()) == {"prod"}
+
+
+# ---------------------------------------------------------------------------
+# Helpers for JobService tests
+# ---------------------------------------------------------------------------
+
+SAMPLE_JOBS = [
+    {
+        "id": 1001,
+        "status": "success",
+        "component": "keboola.ex-db-snowflake",
+        "configId": "101",
+        "createdTime": "2026-02-26T10:00:00Z",
+        "durationSeconds": 45,
+    },
+    {
+        "id": 1002,
+        "status": "error",
+        "component": "keboola.wr-db-snowflake",
+        "configId": "201",
+        "createdTime": "2026-02-26T11:00:00Z",
+        "durationSeconds": 120,
+    },
+]
+
+SAMPLE_JOBS_2 = [
+    {
+        "id": 2001,
+        "status": "processing",
+        "component": "keboola.python-transformation-v2",
+        "configId": "301",
+        "createdTime": "2026-02-26T12:00:00Z",
+    },
+]
+
+
+def _make_list_jobs_client(jobs: list[dict]) -> MagicMock:
+    """Create a mock KeboolaClient with list_jobs returning given data."""
+    mock_client = MagicMock()
+    mock_client.list_jobs.return_value = jobs
+    return mock_client
+
+
+class TestJobServiceListJobs:
+    """Tests for JobService.list_jobs()."""
+
+    def test_list_jobs_single_project(self, tmp_config_dir: Path) -> None:
+        """list_jobs returns all jobs from a single project."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+                project_name="Production",
+                project_id=1234,
+            ),
+        )
+
+        mock_client = _make_list_jobs_client(SAMPLE_JOBS)
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.list_jobs()
+        jobs = result["jobs"]
+        errors = result["errors"]
+
+        assert len(errors) == 0
+        assert len(jobs) == 2
+        assert jobs[0]["project_alias"] == "prod"
+        assert jobs[0]["id"] == 1001
+        assert jobs[1]["status"] == "error"
+
+    def test_list_jobs_multi_project_aggregation(self, tmp_config_dir: Path) -> None:
+        """list_jobs aggregates jobs across multiple projects."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+        store.add_project(
+            "dev",
+            ProjectConfig(
+                stack_url="https://connection.north-europe.azure.keboola.com",
+                token="532-abcdef-ghijklmnopqrst",
+            ),
+        )
+
+        prod_client = _make_list_jobs_client(SAMPLE_JOBS)
+        dev_client = _make_list_jobs_client(SAMPLE_JOBS_2)
+
+        def factory(url, token):
+            if "901" in token:
+                return prod_client
+            return dev_client
+
+        service = JobService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        result = service.list_jobs()
+        jobs = result["jobs"]
+
+        assert len(jobs) == 3  # 2 from prod + 1 from dev
+        prod_jobs = [j for j in jobs if j["project_alias"] == "prod"]
+        dev_jobs = [j for j in jobs if j["project_alias"] == "dev"]
+        assert len(prod_jobs) == 2
+        assert len(dev_jobs) == 1
+
+    def test_list_jobs_partial_failure(self, tmp_config_dir: Path) -> None:
+        """list_jobs continues when one project fails, reporting the error."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "good",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-good-abcdefghijklmnop",
+            ),
+        )
+        store.add_project(
+            "bad",
+            ProjectConfig(
+                stack_url="https://connection.north-europe.azure.keboola.com",
+                token="532-bad-abcdefghijklmnopq",
+            ),
+        )
+
+        good_client = _make_list_jobs_client(SAMPLE_JOBS)
+        bad_client = MagicMock()
+        bad_client.list_jobs.side_effect = KeboolaApiError(
+            message="Token expired for bad project",
+            status_code=401,
+            error_code="INVALID_TOKEN",
+            retryable=False,
+        )
+
+        def factory(url, token):
+            if "good" in token:
+                return good_client
+            return bad_client
+
+        service = JobService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        result = service.list_jobs()
+        jobs = result["jobs"]
+        errors = result["errors"]
+
+        assert len(jobs) == 2
+        assert all(j["project_alias"] == "good" for j in jobs)
+        assert len(errors) == 1
+        assert errors[0]["project_alias"] == "bad"
+        assert errors[0]["error_code"] == "INVALID_TOKEN"
+
+    def test_list_jobs_with_filters(self, tmp_config_dir: Path) -> None:
+        """list_jobs passes filters to the client."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        mock_client = _make_list_jobs_client([])
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        service.list_jobs(
+            component_id="keboola.ex-db-snowflake",
+            config_id="42",
+            status="error",
+            limit=10,
+        )
+
+        mock_client.list_jobs.assert_called_once_with(
+            component_id="keboola.ex-db-snowflake",
+            config_id="42",
+            status="error",
+            limit=10,
+        )
+
+    def test_list_jobs_unknown_alias_raises_config_error(self, tmp_config_dir: Path) -> None:
+        """list_jobs with unknown alias raises ConfigError."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        service = JobService(config_store=store)
+
+        with pytest.raises(ConfigError, match="not found"):
+            service.list_jobs(aliases=["nonexistent"])
+
+    def test_list_jobs_empty_results(self, tmp_config_dir: Path) -> None:
+        """list_jobs returns empty jobs list when no jobs exist."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "empty",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        mock_client = _make_list_jobs_client([])
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.list_jobs()
+        assert result["jobs"] == []
+        assert result["errors"] == []
+
+    def test_list_jobs_no_projects_configured(self, tmp_config_dir: Path) -> None:
+        """list_jobs with no projects returns empty results."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        service = JobService(config_store=store)
+
+        result = service.list_jobs()
+        assert result["jobs"] == []
+        assert result["errors"] == []
+
+    def test_list_jobs_client_closed_after_use(self, tmp_config_dir: Path) -> None:
+        """list_jobs always closes the client after querying."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        mock_client = _make_list_jobs_client(SAMPLE_JOBS)
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        service.list_jobs()
+        mock_client.close.assert_called_once()
+
+    def test_list_jobs_client_closed_on_error(self, tmp_config_dir: Path) -> None:
+        """list_jobs closes the client even when the API call fails."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "bad",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.list_jobs.side_effect = KeboolaApiError(
+            message="Server error",
+            status_code=500,
+            error_code="API_ERROR",
+            retryable=True,
+        )
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        service.list_jobs()
+        mock_client.close.assert_called_once()
+
+    def test_list_jobs_project_filter(self, tmp_config_dir: Path) -> None:
+        """list_jobs with aliases only queries specified projects."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+        store.add_project(
+            "dev",
+            ProjectConfig(
+                stack_url="https://connection.north-europe.azure.keboola.com",
+                token="532-abcdef-ghijklmnopqrst",
+            ),
+        )
+
+        prod_client = _make_list_jobs_client(SAMPLE_JOBS)
+        dev_client = _make_list_jobs_client(SAMPLE_JOBS_2)
+
+        def factory(url, token):
+            if "901" in token:
+                return prod_client
+            return dev_client
+
+        service = JobService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        result = service.list_jobs(aliases=["prod"])
+        jobs = result["jobs"]
+
+        assert len(jobs) == 2
+        assert all(j["project_alias"] == "prod" for j in jobs)
+        dev_client.list_jobs.assert_not_called()
+
+
+class TestJobServiceGetJobDetail:
+    """Tests for JobService.get_job_detail()."""
+
+    def test_get_job_detail_success(self, tmp_config_dir: Path) -> None:
+        """get_job_detail returns full job detail with project_alias."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        detail_response = {
+            "id": "1001",
+            "status": "success",
+            "component": "keboola.ex-db-snowflake",
+            "config": "101",
+            "result": {"message": "Job completed"},
+        }
+
+        mock_client = MagicMock()
+        mock_client.get_job_detail.return_value = detail_response
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.get_job_detail(alias="prod", job_id="1001")
+
+        assert result["id"] == "1001"
+        assert result["status"] == "success"
+        assert result["project_alias"] == "prod"
+        mock_client.get_job_detail.assert_called_once_with("1001")
+        mock_client.close.assert_called_once()
+
+    def test_get_job_detail_unknown_alias(self, tmp_config_dir: Path) -> None:
+        """get_job_detail raises ConfigError for unknown alias."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        service = JobService(config_store=store)
+
+        with pytest.raises(ConfigError, match="not found"):
+            service.get_job_detail(alias="nonexistent", job_id="1001")
+
+    def test_get_job_detail_api_error(self, tmp_config_dir: Path) -> None:
+        """get_job_detail propagates KeboolaApiError from the client."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.get_job_detail.side_effect = KeboolaApiError(
+            message="Job not found",
+            status_code=404,
+            error_code="NOT_FOUND",
+            retryable=False,
+        )
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        with pytest.raises(KeboolaApiError) as exc_info:
+            service.get_job_detail(alias="prod", job_id="999999")
+
+        assert exc_info.value.error_code == "NOT_FOUND"
+        mock_client.close.assert_called_once()
+
+    def test_get_job_detail_client_closed_on_error(self, tmp_config_dir: Path) -> None:
+        """get_job_detail closes the client even when API call fails."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.get_job_detail.side_effect = KeboolaApiError(
+            message="Server error",
+            status_code=500,
+            error_code="API_ERROR",
+            retryable=True,
+        )
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        with pytest.raises(KeboolaApiError):
+            service.get_job_detail("prod", "1001")
+
+        mock_client.close.assert_called_once()

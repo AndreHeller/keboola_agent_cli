@@ -11,6 +11,7 @@ from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import KeboolaApiError
 from keboola_agent_cli.models import ProjectConfig, TokenVerifyResponse
 from keboola_agent_cli.services.config_service import ConfigService
+from keboola_agent_cli.services.job_service import JobService
 from keboola_agent_cli.services.project_service import ProjectService
 
 runner = CliRunner()
@@ -1430,6 +1431,497 @@ class TestConfigDetail:
 
 
 # ---------------------------------------------------------------------------
+# Job list command tests
+# ---------------------------------------------------------------------------
+
+SAMPLE_JOBS = [
+    {
+        "id": 1001,
+        "status": "success",
+        "component": "keboola.ex-db-snowflake",
+        "configId": "101",
+        "createdTime": "2026-02-26T10:00:00Z",
+        "durationSeconds": 45,
+    },
+    {
+        "id": 1002,
+        "status": "error",
+        "component": "keboola.wr-db-snowflake",
+        "configId": "201",
+        "createdTime": "2026-02-26T11:00:00Z",
+        "durationSeconds": 120,
+    },
+]
+
+
+def _make_list_jobs_client(jobs: list[dict]) -> MagicMock:
+    """Create a mock KeboolaClient with list_jobs returning given data."""
+    mock_client = MagicMock()
+    mock_client.list_jobs.return_value = jobs
+    return mock_client
+
+
+class TestJobList:
+    """Tests for `kbagent job list` command."""
+
+    def test_job_list_json_output(self, tmp_path: Path) -> None:
+        """job list --json returns structured JSON with jobs from all projects."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = _make_list_jobs_client(SAMPLE_JOBS)
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(app, ["--json", "job", "list"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        jobs = output["data"]["jobs"]
+        assert len(jobs) == 2
+        assert jobs[0]["project_alias"] == "prod"
+        assert jobs[0]["id"] == 1001
+        assert jobs[0]["status"] == "success"
+
+    def test_job_list_human_output(self, tmp_path: Path) -> None:
+        """job list in human mode shows Rich table grouped by project."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = _make_list_jobs_client(SAMPLE_JOBS)
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(app, ["job", "list"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "Jobs" in result.output
+        assert "prod" in result.output
+        assert "1001" in result.output
+        assert "success" in result.output
+
+    def test_job_list_project_filter(self, tmp_path: Path) -> None:
+        """job list --project X returns jobs only from that project."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = _make_list_jobs_client(SAMPLE_JOBS)
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+                "dev": {"token": "532-abcdef-ghijklmnopqrst"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "list", "--project", "prod"],
+            )
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        jobs = output["data"]["jobs"]
+        assert len(jobs) == 2
+        assert all(j["project_alias"] == "prod" for j in jobs)
+
+    def test_job_list_invalid_status_exit_code_2(self, tmp_path: Path) -> None:
+        """job list --status invalid returns exit code 2."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            MockProjService.return_value = ProjectService(config_store=MockStore.return_value)
+            MockCfgService.return_value = ConfigService(config_store=MockStore.return_value)
+            MockJobService.return_value = JobService(config_store=MockStore.return_value)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "list", "--status", "invalid"],
+            )
+
+        assert result.exit_code == 2
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "INVALID_ARGUMENT"
+
+    def test_job_list_invalid_limit_exit_code_2(self, tmp_path: Path) -> None:
+        """job list --limit 0 returns exit code 2."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            MockProjService.return_value = ProjectService(config_store=MockStore.return_value)
+            MockCfgService.return_value = ConfigService(config_store=MockStore.return_value)
+            MockJobService.return_value = JobService(config_store=MockStore.return_value)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "list", "--limit", "0"],
+            )
+
+        assert result.exit_code == 2
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "INVALID_ARGUMENT"
+
+    def test_job_list_limit_too_high_exit_code_2(self, tmp_path: Path) -> None:
+        """job list --limit 501 returns exit code 2."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            MockProjService.return_value = ProjectService(config_store=MockStore.return_value)
+            MockCfgService.return_value = ConfigService(config_store=MockStore.return_value)
+            MockJobService.return_value = JobService(config_store=MockStore.return_value)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "list", "--limit", "501"],
+            )
+
+        assert result.exit_code == 2
+
+    def test_job_list_config_id_without_component_id_exit_code_2(self, tmp_path: Path) -> None:
+        """job list --config-id without --component-id returns exit code 2."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            MockProjService.return_value = ProjectService(config_store=MockStore.return_value)
+            MockCfgService.return_value = ConfigService(config_store=MockStore.return_value)
+            MockJobService.return_value = JobService(config_store=MockStore.return_value)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "list", "--config-id", "42"],
+            )
+
+        assert result.exit_code == 2
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "component-id" in output["error"]["message"]
+
+    def test_job_list_unknown_project_exit_code_5(self, tmp_path: Path) -> None:
+        """job list --project nonexistent returns exit code 5."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            MockProjService.return_value = ProjectService(config_store=MockStore.return_value)
+            MockCfgService.return_value = ConfigService(config_store=MockStore.return_value)
+            MockJobService.return_value = JobService(config_store=MockStore.return_value)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "list", "--project", "nonexistent"],
+            )
+
+        assert result.exit_code == 5
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "CONFIG_ERROR"
+
+    def test_job_list_empty_json(self, tmp_path: Path) -> None:
+        """job list with no jobs returns empty list."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = _make_list_jobs_client([])
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(app, ["--json", "job", "list"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output["data"]["jobs"] == []
+        assert output["data"]["errors"] == []
+
+
+JOB_DETAIL_RESPONSE = {
+    "id": "1001",
+    "status": "error",
+    "component": "keboola.ex-db-snowflake",
+    "config": "123",
+    "mode": "run",
+    "type": "standard",
+    "createdTime": "2026-02-26T10:00:00Z",
+    "startTime": "2026-02-26T10:00:05Z",
+    "endTime": "2026-02-26T10:00:50Z",
+    "durationSeconds": 45,
+    "url": "https://queue.keboola.com/jobs/1001",
+    "result": {"message": "Validation Error: missing field", "error": {"type": "user"}},
+}
+
+
+class TestJobDetail:
+    """Tests for `kbagent job detail` command."""
+
+    def test_job_detail_json_output(self, tmp_path: Path) -> None:
+        """job detail --json returns structured JSON with full job data."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = MagicMock()
+        mock_client.get_job_detail.return_value = dict(JOB_DETAIL_RESPONSE)
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "detail", "--project", "prod", "--job-id", "1001"],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["id"] == "1001"
+        assert output["data"]["status"] == "error"
+        assert output["data"]["project_alias"] == "prod"
+
+    def test_job_detail_human_output(self, tmp_path: Path) -> None:
+        """job detail in human mode shows Rich panel."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = MagicMock()
+        mock_client.get_job_detail.return_value = dict(JOB_DETAIL_RESPONSE)
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(
+                app,
+                ["job", "detail", "--project", "prod", "--job-id", "1001"],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "1001" in result.output
+        assert "Validation Error" in result.output
+
+    def test_job_detail_unknown_project_exit_code_5(self, tmp_path: Path) -> None:
+        """job detail --project nonexistent returns exit code 5."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            MockProjService.return_value = ProjectService(config_store=MockStore.return_value)
+            MockCfgService.return_value = ConfigService(config_store=MockStore.return_value)
+            MockJobService.return_value = JobService(config_store=MockStore.return_value)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "detail", "--project", "nonexistent", "--job-id", "1001"],
+            )
+
+        assert result.exit_code == 5
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "CONFIG_ERROR"
+
+    def test_job_detail_not_found_exit_code_1(self, tmp_path: Path) -> None:
+        """job detail for nonexistent job returns exit code 1."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        mock_client = MagicMock()
+        mock_client.get_job_detail.side_effect = KeboolaApiError(
+            message="Job not found",
+            status_code=404,
+            error_code="NOT_FOUND",
+            retryable=False,
+        )
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            job_service = JobService(
+                config_store=store,
+                client_factory=lambda url, token: mock_client,
+            )
+            MockJobService.return_value = job_service
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "detail", "--project", "prod", "--job-id", "999999"],
+            )
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
 # Context command tests
 # ---------------------------------------------------------------------------
 
@@ -2055,6 +2547,7 @@ class TestHelp:
         assert result.exit_code == 0
         assert "project" in result.output
         assert "config" in result.output
+        assert "job" in result.output
         assert "context" in result.output
         assert "doctor" in result.output
 
@@ -2098,6 +2591,23 @@ class TestHelp:
         assert "--project" in result.output
         assert "--component-id" in result.output
         assert "--config-id" in result.output
+
+    def test_job_help(self) -> None:
+        """job --help shows subcommands."""
+        result = runner.invoke(app, ["job", "--help"])
+        assert result.exit_code == 0
+        assert "list" in result.output
+        assert "detail" in result.output
+
+    def test_job_list_help(self) -> None:
+        """job list --help shows options."""
+        result = runner.invoke(app, ["job", "list", "--help"])
+        assert result.exit_code == 0
+        assert "--project" in result.output
+        assert "--component-id" in result.output
+        assert "--config-id" in result.output
+        assert "--status" in result.output
+        assert "--limit" in result.output
 
 
 class TestVerboseFlag:

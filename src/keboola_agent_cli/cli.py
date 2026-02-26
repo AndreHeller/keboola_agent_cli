@@ -7,10 +7,12 @@ import typer
 from .commands.config import config_app
 from .commands.context import context_command
 from .commands.doctor import doctor_command
+from .commands.job import job_app
 from .commands.project import project_app
 from .config_store import ConfigStore
 from .output import OutputFormatter
 from .services.config_service import ConfigService
+from .services.job_service import JobService
 from .services.project_service import ProjectService
 
 app = typer.Typer(
@@ -21,6 +23,7 @@ app = typer.Typer(
 
 app.add_typer(project_app, name="project")
 app.add_typer(config_app, name="config")
+app.add_typer(job_app, name="job")
 app.command("context")(context_command)
 app.command("doctor")(doctor_command)
 
@@ -60,6 +63,7 @@ def main(
 
     project_service = ProjectService(config_store=config_store)
     config_service = ConfigService(config_store=config_store)
+    job_service = JobService(config_store=config_store)
 
     ctx.ensure_object(dict)
     ctx.obj["formatter"] = formatter
@@ -69,3 +73,4 @@ def main(
     ctx.obj["config_store"] = config_store
     ctx.obj["project_service"] = project_service
     ctx.obj["config_service"] = config_service
+    ctx.obj["job_service"] = job_service

@@ -692,3 +692,229 @@ class TestStackUrlNormalization:
             assert exc_info.value.error_code == "NOT_FOUND"
             assert exc_info.value.status_code == 404
             assert exc_info.value.retryable is False
+
+
+class TestQueueBaseUrl:
+    """Tests for Queue API URL derivation from Storage API URL."""
+
+    def test_queue_url_from_aws_stack(self) -> None:
+        """Queue URL replaces 'connection.' with 'queue.' for AWS stack."""
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        )
+        assert client._queue_base_url == "https://queue.keboola.com"
+        client.close()
+
+    def test_queue_url_from_azure_stack(self) -> None:
+        """Queue URL replaces 'connection.' for Azure stack."""
+        client = KeboolaClient(
+            stack_url="https://connection.north-europe.azure.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        )
+        assert client._queue_base_url == "https://queue.north-europe.azure.keboola.com"
+        client.close()
+
+    def test_queue_url_from_gcp_stack(self) -> None:
+        """Queue URL replaces 'connection.' for GCP stack."""
+        client = KeboolaClient(
+            stack_url="https://connection.europe-west3.gcp.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        )
+        assert client._queue_base_url == "https://queue.europe-west3.gcp.keboola.com"
+        client.close()
+
+    def test_queue_url_with_trailing_slash(self) -> None:
+        """Queue URL derivation works when stack URL has trailing slash."""
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com/",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        )
+        assert client._queue_base_url == "https://queue.keboola.com"
+        client.close()
+
+
+class TestListJobs:
+    """Tests for list_jobs() - Queue API interaction."""
+
+    def test_list_jobs_success(self, httpx_mock) -> None:
+        """list_jobs() returns job list from Queue API."""
+        jobs = [
+            {
+                "id": 1001,
+                "status": "success",
+                "component": "keboola.ex-db-snowflake",
+                "configId": "123",
+                "createdTime": "2026-02-26T10:00:00Z",
+                "durationSeconds": 45,
+            },
+        ]
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=50&offset=0",
+            json=jobs,
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_jobs()
+            assert len(result) == 1
+            assert result[0]["id"] == 1001
+            assert result[0]["status"] == "success"
+
+    def test_list_jobs_with_filters(self, httpx_mock) -> None:
+        """list_jobs() passes component, config, and status filters as query params."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=10&offset=0&component=keboola.ex-db-snowflake&config=42&status=error",
+            json=[],
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_jobs(
+                component_id="keboola.ex-db-snowflake",
+                config_id="42",
+                status="error",
+                limit=10,
+            )
+            assert result == []
+
+    def test_list_jobs_401_error(self, httpx_mock) -> None:
+        """list_jobs() raises KeboolaApiError with INVALID_TOKEN on 401 from Queue API."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=50&offset=0",
+            json={"error": "Invalid token"},
+            status_code=401,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            with pytest.raises(KeboolaApiError) as exc_info:
+                client.list_jobs()
+            assert exc_info.value.error_code == "INVALID_TOKEN"
+
+    def test_list_jobs_retry_on_503(self, httpx_mock) -> None:
+        """list_jobs() retries on 503 from Queue API and succeeds."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=50&offset=0",
+            status_code=503,
+            text="Service Unavailable",
+        )
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=50&offset=0",
+            json=[{"id": 1, "status": "success"}],
+            status_code=200,
+        )
+
+        import keboola_agent_cli.client as client_module
+
+        original_sleep = client_module.time.sleep
+        client_module.time.sleep = lambda x: None
+        try:
+            with KeboolaClient(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ) as client:
+                result = client.list_jobs()
+                assert len(result) == 1
+        finally:
+            client_module.time.sleep = original_sleep
+
+    def test_list_jobs_empty_result(self, httpx_mock) -> None:
+        """list_jobs() returns empty list when no jobs match."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=50&offset=0",
+            json=[],
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_jobs()
+            assert result == []
+
+
+class TestCloseWithQueueClient:
+    """Tests that close() properly closes both Storage and Queue clients."""
+
+    def test_close_without_queue_client(self) -> None:
+        """close() works when queue client was never created."""
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        )
+        assert client._queue_client is None
+        client.close()  # Should not raise
+
+    def test_close_with_queue_client(self, httpx_mock) -> None:
+        """close() closes both storage and queue clients."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/search/jobs?limit=50&offset=0",
+            json=[],
+            status_code=200,
+        )
+
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        )
+        # Trigger queue client creation
+        client.list_jobs()
+        assert client._queue_client is not None
+        client.close()  # Should not raise
+
+
+class TestGetJobDetail:
+    """Tests for get_job_detail() - Queue API interaction."""
+
+    def test_get_job_detail_success(self, httpx_mock) -> None:
+        """get_job_detail() returns job detail from Queue API."""
+        job_data = {
+            "id": "1001",
+            "status": "success",
+            "component": "keboola.ex-db-snowflake",
+            "config": "123",
+            "createdTime": "2026-02-26T10:00:00Z",
+            "durationSeconds": 45,
+            "result": {"message": "All good"},
+        }
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs/1001",
+            json=job_data,
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.get_job_detail("1001")
+            assert result["id"] == "1001"
+            assert result["status"] == "success"
+            assert result["result"]["message"] == "All good"
+
+    def test_get_job_detail_not_found(self, httpx_mock) -> None:
+        """get_job_detail() raises NOT_FOUND for nonexistent job."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs/999999",
+            json={"error": "Job not found"},
+            status_code=404,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            with pytest.raises(KeboolaApiError) as exc_info:
+                client.get_job_detail("999999")
+            assert exc_info.value.error_code == "NOT_FOUND"
+            assert exc_info.value.status_code == 404

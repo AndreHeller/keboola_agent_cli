@@ -1,11 +1,13 @@
 """Keboola API client with retry, timeouts, and token masking.
 
-This is the only module that communicates with the Keboola Storage API.
-All HTTP details, endpoint URLs, and error mapping are encapsulated here.
+This is the only module that communicates with the Keboola Storage API
+and the Keboola Queue API. All HTTP details, endpoint URLs, and error
+mapping are encapsulated here.
 """
 
 import time
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -19,7 +21,7 @@ BACKOFF_BASE = 1.0  # seconds; delays: 1s, 2s, 4s
 
 
 class KeboolaClient:
-    """HTTP client for the Keboola Storage API.
+    """HTTP client for the Keboola Storage API and Queue API.
 
     Provides methods to interact with Keboola endpoints with built-in
     retry logic (exponential backoff for 429/5xx), timeouts, and
@@ -30,18 +32,34 @@ class KeboolaClient:
         self._stack_url = stack_url.rstrip("/")
         self._token = token
         self._masked_token = mask_token(token)
+        self._headers = {
+            "X-StorageApi-Token": token,
+            "User-Agent": f"keboola-agent-cli/{__version__}",
+        }
         self._client = httpx.Client(
             base_url=self._stack_url,
             timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
-            headers={
-                "X-StorageApi-Token": token,
-                "User-Agent": f"keboola-agent-cli/{__version__}",
-            },
+            headers=self._headers,
         )
+        self._queue_client: httpx.Client | None = None
+
+    @property
+    def _queue_base_url(self) -> str:
+        """Derive Queue API base URL from the Storage API URL.
+
+        Replaces 'connection.' with 'queue.' in the hostname.
+        E.g. https://connection.keboola.com -> https://queue.keboola.com
+        """
+        parsed = urlparse(self._stack_url)
+        hostname = parsed.hostname or ""
+        queue_host = hostname.replace("connection.", "queue.", 1)
+        return urlunparse(parsed._replace(netloc=queue_host))
 
     def close(self) -> None:
-        """Close the underlying HTTP client."""
+        """Close the underlying HTTP clients."""
         self._client.close()
+        if self._queue_client is not None:
+            self._queue_client.close()
 
     def __enter__(self) -> "KeboolaClient":
         return self
@@ -49,8 +67,12 @@ class KeboolaClient:
     def __exit__(self, *args: Any) -> None:
         self.close()
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    def _do_request(
+        self, client: httpx.Client, base_url: str, method: str, path: str, **kwargs: Any
+    ) -> httpx.Response:
         """Execute an HTTP request with retry and exponential backoff.
+
+        Shared retry logic for both Storage and Queue API clients.
 
         Retries on status codes 429, 500, 502, 503, 504 up to MAX_RETRIES times
         with exponential backoff (1s, 2s, 4s).
@@ -62,7 +84,7 @@ class KeboolaClient:
 
         for attempt in range(MAX_RETRIES):
             try:
-                response = self._client.request(method, path, **kwargs)
+                response = client.request(method, path, **kwargs)
 
                 if response.status_code < 400:
                     return response
@@ -73,7 +95,7 @@ class KeboolaClient:
                     last_response = response
                     continue
 
-                self._raise_api_error(response)
+                self._raise_api_error(response, base_url)
 
             except httpx.TimeoutException as exc:
                 if attempt < MAX_RETRIES - 1:
@@ -81,7 +103,7 @@ class KeboolaClient:
                     time.sleep(delay)
                     continue
                 raise KeboolaApiError(
-                    message=f"Request timed out connecting to {self._stack_url} (token: {self._masked_token})",
+                    message=f"Request timed out connecting to {base_url} (token: {self._masked_token})",
                     status_code=0,
                     error_code="TIMEOUT",
                     retryable=True,
@@ -93,25 +115,42 @@ class KeboolaClient:
                     time.sleep(delay)
                     continue
                 raise KeboolaApiError(
-                    message=f"Cannot connect to {self._stack_url} (token: {self._masked_token})",
+                    message=f"Cannot connect to {base_url} (token: {self._masked_token})",
                     status_code=0,
                     error_code="CONNECTION_ERROR",
                     retryable=True,
                 ) from exc
 
         if last_response is not None:
-            self._raise_api_error(last_response)
+            self._raise_api_error(last_response, base_url)
 
         raise KeboolaApiError(
-            message=f"Request failed after {MAX_RETRIES} retries to {self._stack_url} (token: {self._masked_token})",
+            message=f"Request failed after {MAX_RETRIES} retries to {base_url} (token: {self._masked_token})",
             status_code=0,
             error_code="RETRY_EXHAUSTED",
             retryable=True,
         )
 
-    def _raise_api_error(self, response: httpx.Response) -> None:
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Execute a Storage API request with retry."""
+        return self._do_request(self._client, self._stack_url, method, path, **kwargs)
+
+    def _queue_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Execute a Queue API request with retry. Lazily creates the queue client."""
+        if self._queue_client is None:
+            self._queue_client = httpx.Client(
+                base_url=self._queue_base_url,
+                timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
+                headers=self._headers,
+            )
+        return self._do_request(
+            self._queue_client, self._queue_base_url, method, path, **kwargs
+        )
+
+    def _raise_api_error(self, response: httpx.Response, base_url: str | None = None) -> None:
         """Convert an HTTP error response into a KeboolaApiError."""
         status = response.status_code
+        url_label = base_url or self._stack_url
 
         try:
             body = response.json()
@@ -145,7 +184,7 @@ class KeboolaClient:
 
         retryable = status in RETRYABLE_STATUS_CODES
         raise KeboolaApiError(
-            message=f"API error {status} from {self._stack_url} (token: {self._masked_token}): {api_message}",
+            message=f"API error {status} from {url_label} (token: {self._masked_token}): {api_message}",
             status_code=status,
             error_code="API_ERROR",
             retryable=retryable,
@@ -201,4 +240,47 @@ class KeboolaClient:
             "GET",
             f"/v2/storage/components/{component_id}/configs/{config_id}",
         )
+        return response.json()
+
+    def list_jobs(
+        self,
+        component_id: str | None = None,
+        config_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List jobs from the Queue API.
+
+        Args:
+            component_id: Optional filter by component ID.
+            config_id: Optional filter by config ID (requires component_id).
+            status: Optional filter by job status.
+            limit: Max number of jobs to return (1-500, default 50).
+            offset: Offset for pagination.
+
+        Returns:
+            List of job dicts from the Queue API.
+        """
+        params: dict[str, str | int] = {"limit": limit, "offset": offset}
+        if component_id:
+            params["component"] = component_id
+        if config_id:
+            params["config"] = config_id
+        if status:
+            params["status"] = status
+
+        response = self._queue_request("GET", "/search/jobs", params=params)
+        return response.json()
+
+    def get_job_detail(self, job_id: str) -> dict[str, Any]:
+        """Get detailed information about a specific job from the Queue API.
+
+        Args:
+            job_id: The job ID.
+
+        Returns:
+            Job detail dict from the Queue API.
+        """
+        response = self._queue_request("GET", f"/jobs/{job_id}")
         return response.json()

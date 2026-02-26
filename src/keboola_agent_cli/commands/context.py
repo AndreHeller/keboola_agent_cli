@@ -17,6 +17,7 @@ AGENT_CONTEXT = f"""\
 kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
 - Connect to multiple Keboola projects across different stacks
 - List and inspect configurations (extractors, writers, transformations, applications)
+- Browse job history (running, succeeded, failed jobs)
 - Check connectivity and health of project connections
 - Get structured JSON output suitable for programmatic consumption
 
@@ -80,6 +81,27 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
     Example:
       kbagent --json config detail --project prod --component-id keboola.ex-db-snowflake --config-id 12345
 
+### Job History
+
+  kbagent job list [--project NAME] [--component-id ID] [--config-id ID] [--status STATUS] [--limit N]
+    List jobs from the Queue API across one, many, or all connected projects.
+    --project can be repeated to query multiple projects.
+    --status: processing, terminated, cancelled, success, error
+    --limit: 1-500 (default 50)
+    --config-id requires --component-id
+    Examples:
+      kbagent --json job list
+      kbagent --json job list --project prod
+      kbagent --json job list --project prod --project dev
+      kbagent --json job list --status error
+      kbagent --json job list --component-id keboola.ex-db-snowflake --limit 10
+      kbagent --json job list --component-id keboola.ex-db-snowflake --config-id 12345
+
+  kbagent job detail --project NAME --job-id ID
+    Show full detail of a specific job including result message and timing.
+    Example:
+      kbagent --json job detail --project prod --job-id 148512262
+
 ### Utility Commands
 
   kbagent context
@@ -117,6 +139,8 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
      kbagent --json config list --project prod                # List all configs
      kbagent --json config list --project prod --component-type extractor  # Filter by type
      kbagent --json config detail --project prod --component-id keboola.ex-db-snowflake --config-id 12345
+     kbagent --json job list --project prod --limit 10        # Recent jobs
+     kbagent --json job list --project prod --status error    # Failed jobs
 
 7. Common workflow - check health:
      kbagent --json doctor                                    # Full health check

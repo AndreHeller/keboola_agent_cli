@@ -149,14 +149,38 @@ class TestFullWorkflow:
                 assert "component_id" in cfg
                 assert "config_name" in cfg
 
-            # Step 5: Doctor check
+            # Step 5: Job list
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "list",
+                    "--project",
+                    alias,
+                    "--limit",
+                    "5",
+                ],
+            )
+            assert result.exit_code == 0, f"job list failed: {result.output}"
+            job_output = json.loads(result.output)
+            assert job_output["status"] == "ok"
+            assert "jobs" in job_output["data"]
+            assert "errors" in job_output["data"]
+            assert job_output["data"]["errors"] == []
+            for job in job_output["data"]["jobs"]:
+                assert job["project_alias"] == alias
+                assert "id" in job
+                assert "status" in job
+
+            # Step 6: Doctor check (was Step 5)
             result = runner.invoke(app, ["--json", "doctor"])
             assert result.exit_code == 0, f"doctor failed: {result.output}"
             doctor_output = json.loads(result.output)
             assert doctor_output["status"] == "ok"
             assert doctor_output["data"]["summary"]["healthy"] is True
 
-            # Step 6: Remove project
+            # Step 7: Remove project
             result = runner.invoke(
                 app,
                 [

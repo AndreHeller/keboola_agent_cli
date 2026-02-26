@@ -33,6 +33,18 @@ WRITE_PREFIXES = (
     "set_",
 )
 
+# Tools that auto-expand when a required param is missing.
+# Maps tool_name -> (missing_param, resolve_tool) pairs.
+# When the param is not provided, the resolve_tool is called first,
+# then the target tool is called once per result item.
+AUTO_EXPAND_TOOLS = {
+    "list_tables": {
+        "param": "bucket_id",
+        "resolve_tool": "list_buckets",
+        "resolve_key": "id",
+    },
+}
+
 
 def _is_write_tool(tool_name: str) -> bool:
     """Determine if a tool name indicates a write/mutating operation."""
@@ -133,6 +145,41 @@ async def _connect_and_list_tools(
         await exit_stack.aclose()
 
 
+def _parse_content(result: Any) -> list[Any]:
+    """Parse MCP tool result content items into Python objects."""
+    content_items = []
+    for item in result.content:
+        if hasattr(item, "text"):
+            try:
+                content_items.append(json.loads(item.text))
+            except (json.JSONDecodeError, TypeError):
+                content_items.append(item.text)
+        else:
+            content_items.append(str(item))
+    return content_items
+
+
+async def _open_session(
+    project: ProjectConfig,
+    exit_stack: AsyncExitStack,
+) -> "ClientSession":
+    """Open an MCP session for a project, managed by the given exit stack."""
+    params = _build_server_params(project)
+
+    read_stream, write_stream = await asyncio.wait_for(
+        exit_stack.enter_async_context(
+            stdio_client(params, errlog=subprocess.DEVNULL)
+        ),
+        timeout=MCP_INIT_TIMEOUT_SECONDS,
+    )
+
+    session = await exit_stack.enter_async_context(
+        ClientSession(read_stream, write_stream)
+    )
+    await asyncio.wait_for(session.initialize(), timeout=MCP_INIT_TIMEOUT_SECONDS)
+    return session
+
+
 async def _connect_and_call_tool(
     project: ProjectConfig,
     tool_name: str,
@@ -148,45 +195,114 @@ async def _connect_and_call_tool(
     Returns:
         Dict with tool result content and error status.
     """
-    params = _build_server_params(project)
     exit_stack = AsyncExitStack()
 
     try:
-        read_stream, write_stream = await asyncio.wait_for(
-            exit_stack.enter_async_context(
-                stdio_client(params, errlog=subprocess.DEVNULL)
-            ),
-            timeout=MCP_INIT_TIMEOUT_SECONDS,
-        )
-
-        session = await exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
-        )
-        await asyncio.wait_for(session.initialize(), timeout=MCP_INIT_TIMEOUT_SECONDS)
+        session = await _open_session(project, exit_stack)
 
         result = await asyncio.wait_for(
             session.call_tool(tool_name, tool_input),
             timeout=MCP_TOOL_TIMEOUT_SECONDS,
         )
 
-        # Extract content from result
-        content_items = []
-        for item in result.content:
-            if hasattr(item, "text"):
-                # Try to parse as JSON for structured content
-                try:
-                    content_items.append(json.loads(item.text))
-                except (json.JSONDecodeError, TypeError):
-                    content_items.append(item.text)
-            else:
-                content_items.append(str(item))
-
         return {
-            "content": content_items,
+            "content": _parse_content(result),
             "isError": bool(result.isError),
         }
     finally:
         await exit_stack.aclose()
+
+
+async def _connect_and_auto_expand(
+    project: ProjectConfig,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    expand_config: dict[str, str],
+) -> dict[str, Any]:
+    """Connect to MCP server and auto-expand a tool call.
+
+    First calls the resolve_tool to get a list of items, then calls
+    the target tool for each item, reusing one MCP session.
+
+    Args:
+        project: Project config.
+        tool_name: Target tool name (e.g. "list_tables").
+        tool_input: Base input for the target tool (without the auto-expanded param).
+        expand_config: Dict with "param", "resolve_tool", "resolve_key".
+
+    Returns:
+        Dict with aggregated content and error status.
+    """
+    resolve_tool = expand_config["resolve_tool"]
+    resolve_key = expand_config["resolve_key"]
+    param_name = expand_config["param"]
+
+    exit_stack = AsyncExitStack()
+
+    try:
+        session = await _open_session(project, exit_stack)
+
+        # Step 1: Call resolve tool (e.g. list_buckets)
+        resolve_result = await asyncio.wait_for(
+            session.call_tool(resolve_tool, {}),
+            timeout=MCP_TOOL_TIMEOUT_SECONDS,
+        )
+
+        if resolve_result.isError:
+            return {
+                "content": _parse_content(resolve_result),
+                "isError": True,
+            }
+
+        # Extract IDs from resolve result
+        resolve_items = _parse_content(resolve_result)
+        item_ids = _extract_ids(resolve_items, resolve_key)
+
+        if not item_ids:
+            return {"content": [], "isError": False}
+
+        # Step 2: Call target tool for each resolved ID
+        all_content: list[Any] = []
+        has_error = False
+
+        for item_id in item_ids:
+            call_input = {**tool_input, param_name: item_id}
+            result = await asyncio.wait_for(
+                session.call_tool(tool_name, call_input),
+                timeout=MCP_TOOL_TIMEOUT_SECONDS,
+            )
+
+            content = _parse_content(result)
+            if result.isError:
+                has_error = True
+            all_content.extend(content)
+
+        return {"content": all_content, "isError": has_error}
+    finally:
+        await exit_stack.aclose()
+
+
+def _extract_ids(content_items: list[Any], key: str) -> list[str]:
+    """Extract ID values from parsed MCP tool content.
+
+    Handles both list-of-dicts format and single-dict-with-list format.
+    """
+    ids = []
+    for item in content_items:
+        if isinstance(item, list):
+            for sub in item:
+                if isinstance(sub, dict) and key in sub:
+                    ids.append(str(sub[key]))
+        elif isinstance(item, dict):
+            if key in item:
+                ids.append(str(item[key]))
+            # Handle nested list in a single response dict
+            for value in item.values():
+                if isinstance(value, list):
+                    for sub in value:
+                        if isinstance(sub, dict) and key in sub:
+                            ids.append(str(sub[key]))
+    return ids
 
 
 class McpService:
@@ -329,6 +445,8 @@ class McpService:
         """Validate tool input against the tool's schema.
 
         Checks that all required parameters are provided.
+        Parameters that can be auto-expanded (see AUTO_EXPAND_TOOLS) are
+        excluded from the missing list.
 
         Args:
             tool_name: Name of the tool.
@@ -344,6 +462,13 @@ class McpService:
 
         required = schema.get("required", [])
         missing = [param for param in required if param not in tool_input]
+
+        # Exclude auto-expandable params from missing list
+        expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
+        if expand_config:
+            auto_param = expand_config["param"]
+            missing = [p for p in missing if p != auto_param]
+
         return missing
 
     def call_tool(
@@ -409,13 +534,63 @@ class McpService:
         tool_input: dict[str, Any],
         alias: str | None,
     ) -> dict[str, Any]:
-        """Execute a read tool across projects in parallel."""
+        """Execute a read tool across projects in parallel.
+
+        If the tool is in AUTO_EXPAND_TOOLS and the required param is missing,
+        automatically resolves it by calling the resolve tool first.
+        """
         projects = self.resolve_projects([alias]) if alias else self.resolve_projects()
 
         if not projects:
             raise ConfigError("No projects configured. Use 'kbagent project add' first.")
 
+        # Check if auto-expand is needed
+        expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
+        if expand_config and expand_config["param"] not in tool_input:
+            return asyncio.run(
+                self._gather_auto_expand_results(
+                    projects, tool_name, tool_input, expand_config
+                )
+            )
+
         return asyncio.run(self._gather_read_results(projects, tool_name, tool_input))
+
+    async def _gather_auto_expand_results(
+        self,
+        projects: dict[str, ProjectConfig],
+        tool_name: str,
+        tool_input: dict[str, Any],
+        expand_config: dict[str, str],
+    ) -> dict[str, Any]:
+        """Run an auto-expanded tool across multiple projects in parallel.
+
+        For each project, opens one MCP session, resolves the missing param
+        by calling the resolve tool, then calls the target tool per item.
+        """
+        tasks = {}
+        for a, project in projects.items():
+            tasks[a] = asyncio.create_task(
+                _connect_and_auto_expand(project, tool_name, tool_input, expand_config)
+            )
+
+        all_results: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+
+        for a, task in tasks.items():
+            try:
+                result = await task
+                result["project_alias"] = a
+                all_results.append(result)
+            except Exception as exc:
+                errors.append(
+                    {
+                        "project_alias": a,
+                        "error_code": "MCP_ERROR",
+                        "message": str(exc),
+                    }
+                )
+
+        return {"results": all_results, "errors": errors}
 
     async def _gather_read_results(
         self,

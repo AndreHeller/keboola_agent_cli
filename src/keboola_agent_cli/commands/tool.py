@@ -100,6 +100,29 @@ def tool_call(
             )
             raise typer.Exit(code=2) from None
 
+    # Validate required parameters before calling tool across all projects
+    try:
+        missing = service.validate_tool_input(
+            tool_name=tool_name,
+            tool_input=parsed_input,
+            aliases=[project] if project else None,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+
+    if missing:
+        params_str = ", ".join(missing)
+        example_json = json.dumps({p: "..." for p in missing})
+        formatter.error(
+            message=(
+                f"Missing required parameter(s) for '{tool_name}': {params_str}. "
+                f"Use: kbagent tool call {tool_name} --input '{example_json}'"
+            ),
+            error_code="MISSING_PARAMETER",
+        )
+        raise typer.Exit(code=2) from None
+
     try:
         result = service.call_tool(
             tool_name=tool_name,

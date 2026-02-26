@@ -431,8 +431,24 @@ def format_tools_table(console: Console, data: dict[str, Any]) -> None:
     console.print()
 
 
+def _extract_result_text(result: dict[str, Any]) -> str:
+    """Extract a text representation of a tool result's content for comparison."""
+    parts = []
+    for item in result.get("content", []):
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            parts.append(json.dumps(item, sort_keys=True))
+        else:
+            parts.append(str(item))
+    return "\n".join(parts)
+
+
 def format_tool_result(console: Console, data: dict[str, Any]) -> None:
     """Render MCP tool call results as Rich panels.
+
+    When all results are errors with the same message (e.g. missing parameter),
+    consolidates them into a single error panel instead of repeating N times.
 
     Args:
         console: Rich Console instance.
@@ -454,6 +470,33 @@ def format_tool_result(console: Console, data: dict[str, Any]) -> None:
             console.print("Tool call failed for all projects.")
         return
 
+    # Detect all-same-error pattern: all results are errors with identical content
+    all_errors = all(r.get("isError", False) for r in results)
+    if all_errors and len(results) > 1:
+        unique_messages = {_extract_result_text(r) for r in results}
+        if len(unique_messages) == 1:
+            # Consolidate: show one error panel + count
+            affected = [r.get("project_alias", "unknown") for r in results]
+            content = results[0].get("content", [])
+
+            lines = [
+                f"[bold]Status:[/bold] [bold red]ERROR[/bold red] (same error across {len(results)} projects)",
+            ]
+            for item in content:
+                if isinstance(item, str):
+                    lines.append(item)
+                elif isinstance(item, dict):
+                    lines.append(json.dumps(item, indent=2))
+                else:
+                    lines.append(str(item))
+
+            lines.append(f"\n[dim]Affected projects: {', '.join(affected)}[/dim]")
+
+            panel = Panel("\n".join(lines), title="Tool Error", expand=False)
+            console.print(panel)
+            return
+
+    # Normal rendering: one panel per result
     for result in results:
         alias = result.get("project_alias", "unknown")
         is_error = result.get("isError", False)

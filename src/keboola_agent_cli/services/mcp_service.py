@@ -299,6 +299,53 @@ class McpService:
 
         return {"tools": [], "errors": errors}
 
+    def get_tool_schema(
+        self, tool_name: str, aliases: list[str] | None = None
+    ) -> dict[str, Any] | None:
+        """Get the input schema for a specific tool.
+
+        Fetches tool list from the first available project and finds the
+        matching tool's inputSchema.
+
+        Args:
+            tool_name: Name of the tool.
+            aliases: Project aliases to try.
+
+        Returns:
+            The tool's inputSchema dict, or None if tool not found.
+        """
+        result = self.list_tools(aliases=aliases)
+        for tool in result.get("tools", []):
+            if tool["name"] == tool_name:
+                return tool.get("inputSchema", {})
+        return None
+
+    def validate_tool_input(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        aliases: list[str] | None = None,
+    ) -> list[str]:
+        """Validate tool input against the tool's schema.
+
+        Checks that all required parameters are provided.
+
+        Args:
+            tool_name: Name of the tool.
+            tool_input: Input arguments to validate.
+            aliases: Project aliases to try for schema lookup.
+
+        Returns:
+            List of missing required parameter names. Empty if all OK.
+        """
+        schema = self.get_tool_schema(tool_name, aliases=aliases)
+        if schema is None:
+            return []  # Can't validate - tool not found, let it fail at call time
+
+        required = schema.get("required", [])
+        missing = [param for param in required if param not in tool_input]
+        return missing
+
     def call_tool(
         self,
         tool_name: str,

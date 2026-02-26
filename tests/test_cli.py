@@ -3048,6 +3048,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
+            mock_mcp.validate_tool_input.return_value = []
             mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT_MULTI
             MockMcpService.return_value = mock_mcp
 
@@ -3095,6 +3096,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
+            mock_mcp.validate_tool_input.return_value = []
             mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT
             MockMcpService.return_value = mock_mcp
 
@@ -3191,7 +3193,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.call_tool.side_effect = ConfigError(
+            mock_mcp.validate_tool_input.side_effect = ConfigError(
                 "No projects configured. Use 'kbagent project add' first."
             )
             MockMcpService.return_value = mock_mcp
@@ -3232,6 +3234,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
+            mock_mcp.validate_tool_input.return_value = []
             mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT
             MockMcpService.return_value = mock_mcp
 

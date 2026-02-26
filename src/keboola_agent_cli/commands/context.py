@@ -19,6 +19,7 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
 - List and inspect configurations (extractors, writers, transformations, applications)
 - Browse job history (running, succeeded, failed jobs)
 - Check connectivity and health of project connections
+- Analyze cross-project data lineage via bucket sharing
 - Get structured JSON output suitable for programmatic consumption
 
 ## Quick Start
@@ -102,6 +103,41 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
     Example:
       kbagent --json job detail --project prod --job-id 148512262
 
+### Data Lineage
+
+  kbagent lineage [--project NAME]
+    Analyze cross-project data lineage via bucket sharing.
+    Shows which projects share buckets to other projects -- essential
+    for understanding multi-project data architectures.
+    --project can be repeated to query specific projects.
+    Examples:
+      kbagent --json lineage
+      kbagent --json lineage show
+      kbagent --json lineage show --project prod
+      kbagent --json lineage show --project prod --project dev
+
+### Organization Management
+
+  kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
+    Bulk-onboard all projects from a Keboola organization.
+    Lists all projects via Manage API, creates Storage API tokens, and registers them.
+    Safe to re-run -- already registered projects are skipped.
+
+    The manage token is read from KBC_MANAGE_API_TOKEN env var or prompted
+    interactively (never passed as CLI argument for security).
+
+    Options:
+      --org-id         Required. Organization ID.
+      --url            Required. Keboola stack URL (or KBC_STORAGE_API_URL env var).
+      --dry-run        Preview what would happen without making changes.
+      --yes / -y       Skip confirmation prompt.
+      --token-description  Description prefix for created tokens (default: kbagent-cli).
+
+    Examples:
+      kbagent org setup --org-id 123 --url https://connection.keboola.com --dry-run
+      kbagent --json org setup --org-id 123 --url https://connection.keboola.com
+      KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
+
 ### Utility Commands
 
   kbagent context
@@ -117,6 +153,25 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
   --json / -j     Output in JSON format (always use this for programmatic parsing)
   --verbose / -v  Enable verbose output
   --no-color      Disable colored output (auto-disabled in non-TTY environments)
+
+### MCP Tools (Multi-Project)
+
+  kbagent tool list [--project NAME]
+    List all available MCP tools from keboola-mcp-server.
+    Each tool is annotated with multi_project flag:
+    - multi_project=true: Read tool, runs across ALL connected projects in parallel
+    - multi_project=false: Write tool, targets a single project
+    Example:
+      kbagent --json tool list
+
+  kbagent tool call TOOL_NAME [--project NAME] [--input JSON]
+    Call an MCP tool. Read tools automatically query all projects.
+    Write tools use --project or the default project.
+    Examples:
+      kbagent --json tool call list_configs
+      kbagent --json tool call list_configs --project prod
+      kbagent --json tool call get_config --input '{{"configuration_id": "12345"}}'
+      kbagent --json tool call create_config --project prod --input '{{"component_id": "keboola.ex-db-snowflake", "name": "My Config"}}'
 
 ## Tips for AI Agents
 
@@ -146,7 +201,18 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
      kbagent --json doctor                                    # Full health check
      kbagent --json project status                            # Test all connections
 
-8. Environment variables:
+8. Common workflow - explore data lineage:
+     kbagent --json lineage                                    # Cross-project data flow
+     kbagent --json lineage show --project prod                # Lineage for one project
+     kbagent --json lineage show --project prod --project dev  # Lineage for specific projects
+
+9. MCP tools workflow - interact with Keboola via MCP server:
+     kbagent --json tool list                                    # See all available tools
+     kbagent --json tool call list_configs                       # List configs from ALL projects
+     kbagent --json tool call list_configs --project prod        # List configs from one project
+     kbagent --json tool call create_config --project prod --input '{{...}}'  # Write to one project
+
+10. Environment variables:
      KBC_TOKEN             - Default Storage API token
      KBC_STORAGE_API_URL   - Default stack URL
 

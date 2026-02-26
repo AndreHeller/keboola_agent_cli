@@ -242,6 +242,21 @@ class KeboolaClient:
         )
         return response.json()
 
+    def list_buckets(self, include: str | None = None) -> list[dict[str, Any]]:
+        """List storage buckets with optional extended information.
+
+        Args:
+            include: Optional include parameter (e.g. "linkedBuckets" for sharing info).
+
+        Returns:
+            List of bucket dicts from the API.
+        """
+        params: dict[str, str] = {}
+        if include:
+            params["include"] = include
+        response = self._request("GET", "/v2/storage/buckets", params=params)
+        return response.json()
+
     def list_jobs(
         self,
         component_id: str | None = None,

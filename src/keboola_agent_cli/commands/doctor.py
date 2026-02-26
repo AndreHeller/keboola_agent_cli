@@ -22,6 +22,7 @@ from ..config_store import ConfigStore
 from ..errors import KeboolaApiError
 from ..models import AppConfig
 from ..output import OutputFormatter
+from ..services.mcp_service import McpService
 from ..services.project_service import ClientFactory, default_client_factory
 
 
@@ -265,6 +266,11 @@ def doctor_command(ctx: typer.Context) -> None:
     # Check 4: CLI version
     version_check = _check_version()
     all_checks.append(version_check)
+
+    # Check 5: MCP server availability
+    mcp_service: McpService = ctx.obj.get("mcp_service", McpService(config_store))
+    mcp_check = mcp_service.check_server_available()
+    all_checks.append(mcp_check)
 
     # Build summary
     total = len(all_checks)

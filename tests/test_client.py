@@ -918,3 +918,73 @@ class TestGetJobDetail:
                 client.get_job_detail("999999")
             assert exc_info.value.error_code == "NOT_FOUND"
             assert exc_info.value.status_code == 404
+
+
+SAMPLE_BUCKETS = [
+    {"id": "in.c-data", "name": "Data", "stage": "in"},
+    {"id": "out.c-results", "name": "Results", "stage": "out"},
+]
+
+SAMPLE_BUCKETS_WITH_SHARING = [
+    {
+        "id": "in.c-shared",
+        "name": "Shared",
+        "stage": "in",
+        "sharing": "organization-project",
+        "linkedBy": [
+            {"id": "in.c-linked", "project": {"id": 7012, "name": "Target"}}
+        ],
+    },
+]
+
+
+class TestListBuckets:
+    """Tests for list_buckets() - Storage API bucket listing."""
+
+    def test_list_buckets_success(self, httpx_mock) -> None:
+        """list_buckets() returns bucket list from Storage API without include param."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/buckets",
+            json=SAMPLE_BUCKETS,
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_buckets()
+            assert len(result) == 2
+            assert result[0]["id"] == "in.c-data"
+
+    def test_list_buckets_with_include(self, httpx_mock) -> None:
+        """list_buckets(include=) passes include query param and returns sharing info."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/buckets?include=linkedBuckets",
+            json=SAMPLE_BUCKETS_WITH_SHARING,
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_buckets(include="linkedBuckets")
+            assert len(result) == 1
+            assert result[0]["sharing"] == "organization-project"
+            assert result[0]["linkedBy"][0]["project"]["id"] == 7012
+
+    def test_list_buckets_empty(self, httpx_mock) -> None:
+        """list_buckets() returns empty list when no buckets exist."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/buckets",
+            json=[],
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_buckets()
+            assert result == []

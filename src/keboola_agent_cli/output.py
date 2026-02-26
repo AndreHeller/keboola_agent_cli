@@ -8,6 +8,7 @@ from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .models import ErrorResponse, SuccessResponse
 
@@ -386,3 +387,239 @@ def format_job_detail(console: Console, data: dict[str, Any]) -> None:
 
     panel = Panel("\n".join(lines), title=f"Job Detail - {job_id}", expand=False)
     console.print(panel)
+
+
+def format_tools_table(console: Console, data: dict[str, Any]) -> None:
+    """Render a Rich table of MCP tools.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with "tools" list and "errors" list.
+    """
+    tools = data.get("tools", [])
+    errors = data.get("errors", [])
+
+    for err in errors:
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Project [bold]{err['project_alias']}[/bold]: "
+            f"{err['message']}"
+        )
+
+    if not tools:
+        if not errors:
+            console.print(
+                "No MCP tools found. Ensure keboola-mcp-server is installed and a project is connected."
+            )
+        else:
+            console.print("No tools retrieved (all projects failed).")
+        return
+
+    table = Table(title="MCP Tools")
+    table.add_column("Tool Name", style="bold cyan")
+    table.add_column("Multi-Project", justify="center")
+    table.add_column("Description", max_width=60)
+
+    for tool in tools:
+        multi = "[green]yes[/green]" if tool.get("multi_project") else "[dim]no[/dim]"
+        table.add_row(
+            tool["name"],
+            multi,
+            tool.get("description", ""),
+        )
+
+    console.print(table)
+    console.print()
+
+
+def format_tool_result(console: Console, data: dict[str, Any]) -> None:
+    """Render MCP tool call results as Rich panels.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with "results" list and "errors" list.
+    """
+    results = data.get("results", [])
+    errors = data.get("errors", [])
+
+    for err in errors:
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Project [bold]{err['project_alias']}[/bold]: "
+            f"{err['message']}"
+        )
+
+    if not results:
+        if not errors:
+            console.print("No results returned.")
+        else:
+            console.print("Tool call failed for all projects.")
+        return
+
+    for result in results:
+        alias = result.get("project_alias", "unknown")
+        is_error = result.get("isError", False)
+        content = result.get("content", [])
+
+        status_label = "[bold red]ERROR[/bold red]" if is_error else "[bold green]OK[/bold green]"
+        lines = [f"[bold]Status:[/bold] {status_label}"]
+
+        for item in content:
+            if isinstance(item, str):
+                lines.append(item)
+            elif isinstance(item, dict):
+                lines.append(json.dumps(item, indent=2))
+            else:
+                lines.append(str(item))
+
+        panel = Panel("\n".join(lines), title=f"Result - {alias}", expand=False)
+        console.print(panel)
+
+
+_SHARING_TYPE_STYLES = {
+    "organization": "bold cyan",
+    "organization-project": "bold green",
+    "data-science": "bold magenta",
+}
+
+
+def _project_label(alias: str, project_id: int, project_name: str) -> Text:
+    """Create a styled project label. Unknown projects shown as dimmed #id."""
+    if alias:
+        return Text(alias, style="bold")
+    label = Text(f"#{project_id}", style="dim")
+    if project_name:
+        label.append(f" ({project_name})", style="dim")
+    return label
+
+
+def format_lineage_table(console: Console, data: dict[str, Any]) -> None:
+    """Render cross-project lineage data as Rich tables.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with "edges", "shared_buckets", "linked_buckets", "summary", "errors".
+    """
+    edges = data.get("edges", [])
+    shared_buckets = data.get("shared_buckets", [])
+    linked_buckets = data.get("linked_buckets", [])
+    summary = data.get("summary", {})
+    errors = data.get("errors", [])
+
+    # Show per-project errors
+    for err in errors:
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Project [bold]{err['project_alias']}[/bold]: "
+            f"{err['message']}"
+        )
+
+    # Render summary
+    _render_lineage_summary(console, summary)
+
+    # Render edges table if available
+    if edges:
+        _render_edges_table(console, edges)
+    elif shared_buckets or linked_buckets:
+        # No edges but buckets exist -- show details
+        if shared_buckets:
+            _render_shared_buckets_table(console, shared_buckets)
+        if linked_buckets:
+            _render_linked_buckets_table(console, linked_buckets)
+    elif not errors:
+        console.print(
+            "\nNo bucket sharing detected across queried projects."
+        )
+
+
+def _render_lineage_summary(console: Console, summary: dict[str, Any]) -> None:
+    """Render a summary line for lineage results."""
+    shared = summary.get("total_shared_buckets", 0)
+    linked = summary.get("total_linked_buckets", 0)
+    edge_count = summary.get("total_edges", 0)
+    queried = summary.get("projects_queried", 0)
+
+    console.print(
+        f"\nFound [bold]{shared}[/bold] shared bucket(s) with "
+        f"[bold]{edge_count}[/bold] link(s) across "
+        f"[bold]{queried}[/bold] project(s)."
+    )
+    if linked:
+        console.print(f"  [dim]{linked} linked bucket(s) detected.[/dim]")
+    console.print()
+
+
+def _render_edges_table(console: Console, edges: list[dict[str, Any]]) -> None:
+    """Render the main edges table showing data flow between projects."""
+    table = Table(title="Data Flow Edges")
+    table.add_column("Source Project", style="bold magenta")
+    table.add_column("Source Bucket", style="cyan")
+    table.add_column("Sharing Type", style="dim")
+    table.add_column("Target Project", style="bold magenta")
+    table.add_column("Target Bucket", style="cyan")
+
+    for edge in edges:
+        source_label = _project_label(
+            edge.get("source_project_alias", ""),
+            edge.get("source_project_id", 0),
+            edge.get("source_project_name", ""),
+        )
+        target_label = _project_label(
+            edge.get("target_project_alias", ""),
+            edge.get("target_project_id", 0),
+            edge.get("target_project_name", ""),
+        )
+        sharing_type = edge.get("sharing_type", "")
+        style = _SHARING_TYPE_STYLES.get(sharing_type, "")
+        sharing_display = Text(sharing_type, style=style) if style else Text(sharing_type)
+
+        table.add_row(
+            source_label,
+            edge.get("source_bucket_id", ""),
+            sharing_display,
+            target_label,
+            edge.get("target_bucket_id", ""),
+        )
+
+    console.print(table)
+    console.print()
+
+
+def _render_shared_buckets_table(console: Console, shared_buckets: list[dict[str, Any]]) -> None:
+    """Render a table of shared buckets (no linked targets found)."""
+    table = Table(title="Shared Buckets (no linked targets found)")
+    table.add_column("Project", style="bold magenta")
+    table.add_column("Bucket ID", style="cyan")
+    table.add_column("Bucket Name")
+    table.add_column("Sharing Type", style="dim")
+
+    for sb in shared_buckets:
+        table.add_row(
+            sb.get("project_alias", ""),
+            sb.get("bucket_id", ""),
+            sb.get("bucket_name", ""),
+            sb.get("sharing_type", ""),
+        )
+
+    console.print(table)
+    console.print()
+
+
+def _render_linked_buckets_table(console: Console, linked_buckets: list[dict[str, Any]]) -> None:
+    """Render a table of linked buckets (incoming links)."""
+    table = Table(title="Linked Buckets (incoming)")
+    table.add_column("Project", style="bold magenta")
+    table.add_column("Bucket ID", style="cyan")
+    table.add_column("Source Bucket", style="dim")
+    table.add_column("Source Project", style="dim")
+    table.add_column("Read-only", justify="center")
+
+    for lb in linked_buckets:
+        readonly = "[green]yes[/green]" if lb.get("is_readonly") else "[dim]no[/dim]"
+        table.add_row(
+            lb.get("project_alias", ""),
+            lb.get("bucket_id", ""),
+            lb.get("source_bucket_id", ""),
+            lb.get("source_project_name", ""),
+            readonly,
+        )
+
+    console.print(table)
+    console.print()

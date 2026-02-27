@@ -1,16 +1,22 @@
 """Lineage service - cross-project data flow analysis via bucket sharing.
 
 Queries the Storage API for bucket sharing metadata and builds
-a graph of data flow edges between projects.
+a graph of data flow edges between projects. Fetches buckets from
+all projects in parallel using ThreadPoolExecutor.
 """
 
+import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from ..client import KeboolaClient
 from ..config_store import ConfigStore
 from ..errors import ConfigError, KeboolaApiError
 from ..models import ProjectConfig
+
+# Env var name for overriding max_parallel_workers from config.json
+ENV_MAX_PARALLEL_WORKERS = "KBAGENT_MAX_PARALLEL_WORKERS"
 
 ClientFactory = Callable[[str, str], KeboolaClient]
 
@@ -38,6 +44,24 @@ class LineageService:
         self._config_store = config_store
         self._client_factory = client_factory or default_client_factory
 
+    def _resolve_max_workers(self) -> int:
+        """Resolve max parallel workers: env var > config.json > default (10).
+
+        Returns:
+            Positive integer for ThreadPoolExecutor max_workers.
+        """
+        env_val = os.environ.get(ENV_MAX_PARALLEL_WORKERS)
+        if env_val is not None:
+            try:
+                val = int(env_val)
+                if val > 0:
+                    return val
+            except ValueError:
+                pass
+
+        config = self._config_store.load()
+        return config.max_parallel_workers
+
     def resolve_projects(self, aliases: list[str] | None = None) -> dict[str, ProjectConfig]:
         """Resolve project aliases to ProjectConfig instances.
 
@@ -63,18 +87,53 @@ class LineageService:
 
         return resolved
 
+    def _fetch_project_buckets(
+        self, alias: str, project: ProjectConfig
+    ) -> tuple[str, ProjectConfig, list[dict[str, Any]]] | tuple[str, dict[str, str]]:
+        """Fetch buckets for a single project (runs in a worker thread).
+
+        Creates its own KeboolaClient, fetches buckets, and closes the client.
+        Returns either (alias, project, buckets) on success or (alias, error_dict)
+        on failure. The client is always closed in the finally block.
+        """
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            buckets = client.list_buckets(include="linkedBuckets")
+            return (alias, project, buckets)
+        except KeboolaApiError as exc:
+            return (
+                alias,
+                {
+                    "project_alias": alias,
+                    "error_code": exc.error_code,
+                    "message": exc.message,
+                },
+            )
+        except Exception as exc:
+            return (
+                alias,
+                {
+                    "project_alias": alias,
+                    "error_code": "UNEXPECTED_ERROR",
+                    "message": str(exc),
+                },
+            )
+        finally:
+            client.close()
+
     def get_lineage(self, aliases: list[str] | None = None) -> dict[str, Any]:
         """Analyze cross-project data lineage via bucket sharing.
 
-        For each resolved project, fetches buckets with linkedBuckets info,
-        classifies them as shared or linked, and builds deduplicated edges.
+        For each resolved project, fetches buckets with linkedBuckets info
+        in parallel using ThreadPoolExecutor, classifies them as shared or
+        linked, and builds deduplicated edges.
 
         Args:
             aliases: Project aliases to query. None means all projects.
 
         Returns:
             Dict with keys:
-                - "edges": list of data flow edge dicts
+                - "edges": list of data flow edge dicts (sorted by source/target)
                 - "shared_buckets": list of shared bucket dicts
                 - "linked_buckets": list of linked bucket dicts
                 - "summary": dict with counts
@@ -84,6 +143,22 @@ class LineageService:
             ConfigError: If a specified alias is not found.
         """
         projects = self.resolve_projects(aliases)
+
+        # Early return for zero projects (avoids ThreadPoolExecutor(max_workers=0))
+        if not projects:
+            return {
+                "edges": [],
+                "shared_buckets": [],
+                "linked_buckets": [],
+                "summary": {
+                    "total_shared_buckets": 0,
+                    "total_linked_buckets": 0,
+                    "total_edges": 0,
+                    "projects_queried": 0,
+                    "projects_with_errors": 0,
+                },
+                "errors": [],
+            }
 
         # Build project_id -> alias lookup for cross-referencing
         project_id_to_alias: dict[int, str] = {}
@@ -95,31 +170,64 @@ class LineageService:
         edges_by_key: dict[tuple[int, str, int, str], dict[str, Any]] = {}
         errors: list[dict[str, str]] = []
 
-        for alias, project in projects.items():
-            client = self._client_factory(project.stack_url, project.token)
-            try:
-                buckets = client.list_buckets(include="linkedBuckets")
-                self._process_buckets(
-                    buckets=buckets,
-                    alias=alias,
-                    project=project,
-                    project_id_to_alias=project_id_to_alias,
-                    all_shared_buckets=all_shared_buckets,
-                    all_linked_buckets=all_linked_buckets,
-                    edges_by_key=edges_by_key,
-                )
-            except KeboolaApiError as exc:
-                errors.append(
-                    {
-                        "project_alias": alias,
-                        "error_code": exc.error_code,
-                        "message": exc.message,
-                    }
-                )
-            finally:
-                client.close()
+        # Fetch buckets from all projects in parallel
+        max_workers = min(len(projects), self._resolve_max_workers())
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_alias = {
+                executor.submit(self._fetch_project_buckets, alias, project): alias
+                for alias, project in projects.items()
+            }
 
-        edges = list(edges_by_key.values())
+            for future in as_completed(future_to_alias):
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    # Unexpected exception from the future itself
+                    proj_alias = future_to_alias[future]
+                    errors.append(
+                        {
+                            "project_alias": proj_alias,
+                            "error_code": "UNEXPECTED_ERROR",
+                            "message": str(exc),
+                        }
+                    )
+                    continue
+
+                # Distinguish success (3-tuple) from error (2-tuple)
+                if len(result) == 3:
+                    alias, project, buckets = result
+                    self._process_buckets(
+                        buckets=buckets,
+                        alias=alias,
+                        project=project,
+                        project_id_to_alias=project_id_to_alias,
+                        all_shared_buckets=all_shared_buckets,
+                        all_linked_buckets=all_linked_buckets,
+                        edges_by_key=edges_by_key,
+                    )
+                else:
+                    _alias, error_dict = result
+                    errors.append(error_dict)
+
+        # Sort results for deterministic output (parallel execution order varies).
+        # Use str() in sort keys: source_project_id comes from Pydantic (int) but
+        # target_project_id comes from API linkedBy[].project.id which returns str.
+        edges = sorted(
+            edges_by_key.values(),
+            key=lambda e: (
+                str(e.get("source_project_id", "")),
+                str(e.get("source_bucket_id", "")),
+                str(e.get("target_project_id", "")),
+                str(e.get("target_bucket_id", "")),
+            ),
+        )
+        all_shared_buckets.sort(
+            key=lambda b: (str(b.get("project_id", "")), str(b.get("bucket_id", "")))
+        )
+        all_linked_buckets.sort(
+            key=lambda b: (str(b.get("project_id", "")), str(b.get("bucket_id", "")))
+        )
+        errors.sort(key=lambda e: e.get("project_alias", ""))
 
         summary = {
             "total_shared_buckets": len(all_shared_buckets),

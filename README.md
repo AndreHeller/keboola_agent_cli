@@ -1,133 +1,103 @@
 # Keboola Agent CLI (`kbagent`)
 
-AI-friendly CLI for managing Keboola projects. Designed for use by AI coding agents (Claude Code, Codex, Gemini) and human developers alike.
+A CLI for managing multiple Keboola projects from one place. Built for AI coding agents (Claude Code, Codex, Gemini) and human operators who need to work across many projects at once.
 
-## Features
+## Why does this exist?
 
-- **Multi-project management**: Connect to multiple Keboola projects across different stacks (AWS, Azure, GCP)
-- **Configuration browsing**: List and inspect extractors, writers, transformations, and applications
-- **Structured JSON output**: Every command supports `--json` for reliable programmatic parsing
-- **Health checks**: Built-in `doctor` command to verify setup and connectivity
-- **Agent context**: `kbagent context` provides comprehensive usage instructions for AI agents
-- **Secure token handling**: Tokens are stored with 0600 permissions and always masked in output
+Keboola's web UI and standard API clients work great for a single project. But when you manage 30+ projects across an organization, you need a way to:
+
+- **Query all projects at once** -- list configurations, jobs, or data lineage across the entire organization in one command
+- **Give AI agents access to Keboola** -- every command supports `--json` output that agents can parse reliably
+- **Onboard an entire organization** -- register all projects from a Keboola org with a single `org setup` command
+- **Trace data flow** -- see how data moves between projects via bucket sharing (lineage)
+- **Use MCP tools** -- call keboola-mcp-server tools across all projects in parallel
+
+## What it can do
+
+| Command group | What it does |
+|---------------|-------------|
+| `project` | Add, remove, edit, list, and check status of connected Keboola projects |
+| `config` | Browse configurations (extractors, writers, transformations, applications) across projects |
+| `job` | Browse job history -- list and inspect jobs from the Queue API |
+| `lineage` | Analyze cross-project data flow via bucket sharing (parallel across all projects) |
+| `org setup` | Bulk-onboard all projects from a Keboola organization (uses Manage API) |
+| `tool` | List and call MCP tools from keboola-mcp-server (read tools run across all projects in parallel) |
+| `context` | Print comprehensive usage instructions for AI agents |
+| `doctor` | Health check -- verifies config, permissions, connectivity, MCP server availability |
+
+Every command supports `--json` for structured output and Rich formatting for human-readable output.
+
+Run `kbagent --help` or `kbagent <command> --help` for details on any command.
 
 ## Installation
 
 ```bash
-# Install with uv (recommended)
+# Run directly without installing (recommended for trying it out)
+uv run kbagent --help
+
+# Install globally
 uv tool install .
 
 # Or install in development mode
 uv pip install -e ".[dev]"
 ```
 
-After installation, the `kbagent` command is available globally.
+After global install, `kbagent` is available directly. Otherwise use `uv run kbagent`.
 
-## Quick Start
+## Configuration and credentials
 
-```bash
-# 1. Add a Keboola project
-kbagent project add --alias prod --url https://connection.keboola.com --token YOUR_TOKEN
+### Where is everything stored?
 
-# 2. Verify the connection
-kbagent project status
+All configuration lives in a single file:
 
-# 3. List configurations
-kbagent config list
-
-# 4. Get structured JSON output (recommended for scripts and agents)
-kbagent --json config list
+```
+~/.config/keboola-agent-cli/config.json    (permissions: 0600)
 ```
 
-## Commands
+This file contains **Storage API tokens** for each connected project. File permissions are set to `0600` (owner read/write only) to protect these tokens. Tokens are always masked in CLI output (e.g. `901-...pt0k`).
 
-### Project Management
+The config file structure:
 
-```bash
-# Add a new project connection (token is verified against API)
-kbagent project add --alias NAME --url STACK_URL --token TOKEN
-
-# List all connected projects
-kbagent project list
-
-# Remove a project connection
-kbagent project remove --alias NAME
-
-# Edit an existing project (re-verifies token if changed)
-kbagent project edit --alias NAME [--url NEW_URL] [--token NEW_TOKEN]
-
-# Check connectivity to all projects (or a specific one)
-kbagent project status
-kbagent project status --project NAME
-```
-
-### Configuration Browsing
-
-```bash
-# List all configurations from all projects
-kbagent config list
-
-# Filter by project (can be repeated)
-kbagent config list --project prod
-kbagent config list --project prod --project dev
-
-# Filter by component type
-kbagent config list --component-type extractor
-
-# Filter by specific component
-kbagent config list --component-id keboola.ex-db-snowflake
-
-# Get full detail of a specific configuration
-kbagent config detail --project prod --component-id keboola.ex-db-snowflake --config-id 12345
-```
-
-### Utility Commands
-
-```bash
-# Show usage instructions for AI agents
-kbagent context
-
-# Run health checks (config, permissions, connectivity, version)
-kbagent doctor
-kbagent --json doctor
-```
-
-### Global Flags
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--json` | `-j` | Output in JSON format for programmatic consumption |
-| `--verbose` | `-v` | Enable verbose output |
-| `--no-color` | | Disable colored Rich formatting |
-
-Non-TTY environments automatically disable Rich formatting.
-
-## JSON Output Format
-
-All commands with `--json` return a consistent structure.
-
-**Success:**
 ```json
 {
-  "status": "ok",
-  "data": { ... }
-}
-```
-
-**Error:**
-```json
-{
-  "status": "error",
-  "error": {
-    "code": "INVALID_TOKEN",
-    "message": "Token is invalid or expired",
-    "project": "prod",
-    "retryable": false
+  "version": 1,
+  "default_project": "prod",
+  "max_parallel_workers": 10,
+  "projects": {
+    "prod": {
+      "stack_url": "https://connection.keboola.com",
+      "token": "901-xxxxx-xxxxxxx",
+      "project_name": "Production",
+      "project_id": 1234
+    }
   }
 }
 ```
 
-## Exit Codes
+### Manage API token is never stored
+
+The `org setup` command requires a Manage API token to list organization projects and create Storage API tokens. This token is **never persisted** to disk -- it is either read from the `KBC_MANAGE_API_TOKEN` environment variable or prompted interactively (hidden input). It is never passed as a CLI argument and never logged.
+
+### Parallel execution
+
+Multi-project operations (`lineage show`, `tool call` for read tools) run in parallel using a thread pool. The concurrency is configurable:
+
+| Priority | Method | Example |
+|----------|--------|---------|
+| 1 (highest) | Environment variable | `KBAGENT_MAX_PARALLEL_WORKERS=20 kbagent lineage show` |
+| 2 | Config file | `"max_parallel_workers": 20` in config.json |
+| 3 (default) | Built-in default | `10` |
+
+## JSON output format
+
+All commands with `--json` return a consistent structure:
+
+```json
+{"status": "ok", "data": { ... }}
+{"status": "error", "error": {"code": "INVALID_TOKEN", "message": "...", "retryable": false}}
+```
+
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
@@ -135,65 +105,25 @@ All commands with `--json` return a consistent structure.
 | 1 | General error |
 | 2 | Usage error (invalid arguments) |
 | 3 | Authentication error (invalid/expired token) |
-| 4 | Network error (timeout, unreachable server) |
-| 5 | Configuration error (corrupt config, unknown alias) |
+| 4 | Network error (timeout, unreachable) |
+| 5 | Configuration error |
 
-## Environment Variables
+## Supported Keboola stacks
 
-| Variable | Description |
-|----------|-------------|
-| `KBC_TOKEN` | Default Storage API token (used by `project add`) |
-| `KBC_STORAGE_API_URL` | Default stack URL (used by `project add`) |
+Works with any Keboola stack -- AWS, Azure, GCP. Examples:
 
-## Configuration
-
-Configuration is stored at `~/.config/keboola-agent-cli/config.json` with file permissions `0600` to protect stored tokens.
-
-```json
-{
-  "version": 1,
-  "default_project": "prod",
-  "projects": {
-    "prod": {
-      "stack_url": "https://connection.keboola.com",
-      "token": "901-...",
-      "project_name": "My Project",
-      "project_id": 1234
-    }
-  }
-}
-```
-
-## Architecture
-
-The project follows a 3-layer architecture:
-
-```
-CLI Commands (commands/)  -->  Services (services/)  -->  API Client (client.py)
-```
-
-- **Commands layer**: Thin Typer wrappers that parse arguments, call services, and format output
-- **Services layer**: Business logic, project resolution, multi-project aggregation
-- **Client layer**: HTTP communication with Keboola API, retry logic, error mapping
+- `https://connection.keboola.com` (US, AWS)
+- `https://connection.north-europe.azure.keboola.com` (Azure)
+- `https://connection.europe-west3.gcp.keboola.com` (GCP)
+- `https://connection.us-east4.gcp.keboola.com` (GCP)
 
 ## Development
 
 ```bash
-# Install in development mode
 uv pip install -e ".[dev]"
-
-# Run tests
 uv run pytest tests/ -v
-
-# Run the CLI
 uv run kbagent --help
 ```
-
-## Supported Keboola Stacks
-
-- AWS: `https://connection.keboola.com`
-- Azure (North Europe): `https://connection.north-europe.azure.keboola.com`
-- GCP (Europe West): `https://connection.europe-west3.gcp.keboola.com`
 
 ## License
 

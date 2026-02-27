@@ -8,7 +8,7 @@ import pytest
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
 from keboola_agent_cli.models import ProjectConfig
-from keboola_agent_cli.services.lineage_service import LineageService
+from keboola_agent_cli.services.lineage_service import ENV_MAX_PARALLEL_WORKERS, LineageService
 
 
 def _make_lineage_client(buckets: list[dict]) -> MagicMock:
@@ -585,3 +585,241 @@ class TestLineageProjectFilter:
 
         resolved = service.resolve_projects(aliases=None)
         assert set(resolved.keys()) == {"prod", "dev"}
+
+
+class TestLineageParallelExecution:
+    """Tests for parallel execution via ThreadPoolExecutor."""
+
+    def test_zero_projects_returns_empty(self, tmp_config_dir: Path) -> None:
+        """With no projects configured, get_lineage returns empty results without crashing."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        # Initialize config file with no projects
+        store.save(store.load())
+
+        service = LineageService(
+            config_store=store,
+            client_factory=lambda url, token: MagicMock(),
+        )
+
+        result = service.get_lineage()
+
+        assert result["edges"] == []
+        assert result["shared_buckets"] == []
+        assert result["linked_buckets"] == []
+        assert result["errors"] == []
+        assert result["summary"]["projects_queried"] == 0
+        assert result["summary"]["projects_with_errors"] == 0
+
+    def test_all_projects_queried_in_parallel(self, tmp_config_dir: Path) -> None:
+        """All configured projects are queried (each client gets called)."""
+        store = _setup_two_projects(tmp_config_dir)
+
+        prod_client = _make_lineage_client([])
+        dev_client = _make_lineage_client([])
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "901" in token:
+                return prod_client
+            return dev_client
+
+        service = LineageService(config_store=store, client_factory=factory)
+        result = service.get_lineage()
+
+        # Both clients must have been called
+        prod_client.list_buckets.assert_called_once_with(include="linkedBuckets")
+        dev_client.list_buckets.assert_called_once_with(include="linkedBuckets")
+        # Both clients must have been closed
+        prod_client.close.assert_called_once()
+        dev_client.close.assert_called_once()
+
+        assert result["summary"]["projects_queried"] == 2
+        assert result["summary"]["projects_with_errors"] == 0
+
+    def test_mixed_success_and_failure(self, tmp_config_dir: Path) -> None:
+        """One project succeeds and one fails; results and errors both preserved."""
+        store = _setup_two_projects(tmp_config_dir)
+
+        # prod fails with API error
+        error = KeboolaApiError(
+            message="Forbidden",
+            status_code=403,
+            error_code="ACCESS_DENIED",
+            retryable=False,
+        )
+        prod_client = _make_failing_lineage_client(error)
+
+        # dev succeeds with a shared bucket
+        dev_buckets = [
+            {
+                "id": "in.c-shared",
+                "name": "shared",
+                "sharing": "organization-project",
+                "linkedBy": [],
+            },
+        ]
+        dev_client = _make_lineage_client(dev_buckets)
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "901" in token:
+                return prod_client
+            return dev_client
+
+        service = LineageService(config_store=store, client_factory=factory)
+        result = service.get_lineage()
+
+        # Error from prod preserved
+        assert len(result["errors"]) == 1
+        assert result["errors"][0]["project_alias"] == "prod"
+        assert result["errors"][0]["error_code"] == "ACCESS_DENIED"
+
+        # Results from dev preserved
+        assert len(result["shared_buckets"]) == 1
+        assert result["shared_buckets"][0]["project_alias"] == "dev"
+
+        assert result["summary"]["projects_queried"] == 2
+        assert result["summary"]["projects_with_errors"] == 1
+
+    def test_unexpected_exception_accumulated_as_error(self, tmp_config_dir: Path) -> None:
+        """Non-KeboolaApiError exceptions are caught and accumulated as errors."""
+        store = _setup_single_project(tmp_config_dir)
+
+        mock_client = MagicMock()
+        mock_client.list_buckets.side_effect = RuntimeError("connection pool exhausted")
+
+        service = LineageService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.get_lineage(aliases=["prod"])
+
+        assert len(result["errors"]) == 1
+        assert result["errors"][0]["project_alias"] == "prod"
+        assert result["errors"][0]["error_code"] == "UNEXPECTED_ERROR"
+        assert "connection pool exhausted" in result["errors"][0]["message"]
+
+        # Client should still be closed
+        mock_client.close.assert_called_once()
+
+    def test_deterministic_output_ordering(self, tmp_config_dir: Path) -> None:
+        """Edges and buckets are sorted deterministically regardless of execution order."""
+        store = _setup_two_projects(tmp_config_dir)
+
+        # prod (id=258) shares a bucket linked by dev (id=7012)
+        prod_buckets = [
+            {
+                "id": "in.c-shared-b",
+                "name": "shared-b",
+                "sharing": "organization-project",
+                "linkedBy": [
+                    {"project": {"id": 7012, "name": "Development"}, "id": "in.c-linked-b"},
+                ],
+            },
+            {
+                "id": "in.c-shared-a",
+                "name": "shared-a",
+                "sharing": "organization-project",
+                "linkedBy": [
+                    {"project": {"id": 9999, "name": "Staging"}, "id": "in.c-linked-a"},
+                ],
+            },
+        ]
+        prod_client = _make_lineage_client(prod_buckets)
+        dev_client = _make_lineage_client([])
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "901" in token:
+                return prod_client
+            return dev_client
+
+        service = LineageService(config_store=store, client_factory=factory)
+
+        # Run multiple times — output should always be the same
+        results = [service.get_lineage() for _ in range(3)]
+
+        for r in results:
+            assert len(r["edges"]) == 2
+            # Edges sorted by (source_project_id, source_bucket_id, target_project_id, ...)
+            assert r["edges"][0]["source_bucket_id"] == "in.c-shared-a"
+            assert r["edges"][1]["source_bucket_id"] == "in.c-shared-b"
+
+    def test_mixed_int_str_project_ids_in_sort(self, tmp_config_dir: Path) -> None:
+        """Sorting works when API returns project IDs as mix of int and str."""
+        store = _setup_two_projects(tmp_config_dir)
+
+        # prod shares bucket, linkedBy has project id as int
+        prod_buckets = [
+            {
+                "id": "in.c-shared",
+                "name": "shared",
+                "sharing": "organization-project",
+                "linkedBy": [
+                    {"project": {"id": 7012, "name": "Development"}, "id": "in.c-linked"},
+                ],
+            },
+        ]
+        # dev has linked bucket, sourceBucket project id as STRING (API inconsistency)
+        dev_buckets = [
+            {
+                "id": "in.c-linked",
+                "name": "linked",
+                "sourceBucket": {
+                    "id": "in.c-shared",
+                    "project": {"id": "258", "name": "Production"},
+                },
+            },
+        ]
+
+        prod_client = _make_lineage_client(prod_buckets)
+        dev_client = _make_lineage_client(dev_buckets)
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "901" in token:
+                return prod_client
+            return dev_client
+
+        service = LineageService(config_store=store, client_factory=factory)
+
+        # This must NOT raise TypeError: '<' not supported between instances of 'int' and 'str'
+        result = service.get_lineage()
+
+        assert len(result["edges"]) >= 1
+        assert result["summary"]["projects_with_errors"] == 0
+
+    def test_default_max_workers_from_config(self, tmp_config_dir: Path) -> None:
+        """Default max_parallel_workers is 10 from AppConfig."""
+        store = _setup_single_project(tmp_config_dir)
+        service = LineageService(config_store=store)
+        assert service._resolve_max_workers() == 10
+
+    def test_max_workers_from_config_file(self, tmp_config_dir: Path) -> None:
+        """max_parallel_workers can be set in config.json."""
+        store = _setup_single_project(tmp_config_dir)
+        config = store.load()
+        config.max_parallel_workers = 20
+        store.save(config)
+
+        service = LineageService(config_store=store)
+        assert service._resolve_max_workers() == 20
+
+    def test_env_var_overrides_config(self, tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KBAGENT_MAX_PARALLEL_WORKERS env var overrides config.json value."""
+        store = _setup_single_project(tmp_config_dir)
+        config = store.load()
+        config.max_parallel_workers = 5
+        store.save(config)
+
+        monkeypatch.setenv(ENV_MAX_PARALLEL_WORKERS, "25")
+        service = LineageService(config_store=store)
+        assert service._resolve_max_workers() == 25
+
+    def test_invalid_env_var_falls_back_to_config(self, tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Invalid env var value falls back to config.json."""
+        store = _setup_single_project(tmp_config_dir)
+        config = store.load()
+        config.max_parallel_workers = 15
+        store.save(config)
+
+        monkeypatch.setenv(ENV_MAX_PARALLEL_WORKERS, "not-a-number")
+        service = LineageService(config_store=store)
+        assert service._resolve_max_workers() == 15

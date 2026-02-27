@@ -21,6 +21,10 @@ class AppConfig(BaseModel):
 
     version: int = Field(default=1, description="Config schema version for future migrations")
     default_project: str = Field(default="", description="Alias of the default project")
+    max_parallel_workers: int = Field(
+        default=10,
+        description="Max concurrent threads for multi-project operations (env: KBAGENT_MAX_PARALLEL_WORKERS)",
+    )
     projects: dict[str, ProjectConfig] = Field(
         default_factory=dict,
         description="Map of alias -> ProjectConfig",

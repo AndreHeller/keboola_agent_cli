@@ -1549,3 +1549,565 @@ class TestJobServiceGetJobDetail:
             service.get_job_detail("prod", "1001")
 
         mock_client.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Parallel-specific tests: deterministic ordering, unexpected exceptions
+# ---------------------------------------------------------------------------
+
+
+class TestConfigListDeterministicOrder:
+    """Tests that list_configs produces deterministic sort order across projects."""
+
+    def test_configs_sorted_by_alias_component_config(self, tmp_config_dir: Path) -> None:
+        """Configs from multiple projects are sorted by (project_alias, component_id, config_id)."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "z-project",
+            ProjectConfig(
+                stack_url="https://z.com",
+                token="901-zzz-abcdefghijklmnop",
+                project_name="Z Project",
+                project_id=100,
+            ),
+        )
+        store.add_project(
+            "a-project",
+            ProjectConfig(
+                stack_url="https://a.com",
+                token="902-aaa-abcdefghijklmnop",
+                project_name="A Project",
+                project_id=200,
+            ),
+        )
+
+        z_components = [
+            {
+                "id": "keboola.wr-db-snowflake",
+                "name": "Snowflake Writer",
+                "type": "writer",
+                "configurations": [
+                    {"id": "202", "name": "Write B", "description": ""},
+                    {"id": "201", "name": "Write A", "description": ""},
+                ],
+            },
+        ]
+        a_components = [
+            {
+                "id": "keboola.ex-db-snowflake",
+                "name": "Snowflake Extractor",
+                "type": "extractor",
+                "configurations": [
+                    {"id": "102", "name": "Extract B", "description": ""},
+                    {"id": "101", "name": "Extract A", "description": ""},
+                ],
+            },
+        ]
+
+        z_client = _make_list_components_client(z_components)
+        a_client = _make_list_components_client(a_components)
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "zzz" in token:
+                return z_client
+            return a_client
+
+        service = ConfigService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        # Run multiple times to verify deterministic ordering
+        for _ in range(5):
+            result = service.list_configs()
+            configs = result["configs"]
+
+            assert len(configs) == 4
+            # a-project configs should come before z-project configs
+            assert configs[0]["project_alias"] == "a-project"
+            assert configs[0]["config_id"] == "101"
+            assert configs[1]["project_alias"] == "a-project"
+            assert configs[1]["config_id"] == "102"
+            assert configs[2]["project_alias"] == "z-project"
+            assert configs[2]["config_id"] == "201"
+            assert configs[3]["project_alias"] == "z-project"
+            assert configs[3]["config_id"] == "202"
+
+    def test_configs_sorted_by_component_id_within_project(self, tmp_config_dir: Path) -> None:
+        """Within a project, configs are sorted by component_id then config_id."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-prod-abcdefghijklmnop",
+                project_name="Prod",
+                project_id=1,
+            ),
+        )
+
+        components = [
+            {
+                "id": "keboola.wr-db-snowflake",
+                "name": "Writer",
+                "type": "writer",
+                "configurations": [
+                    {"id": "301", "name": "W1", "description": ""},
+                ],
+            },
+            {
+                "id": "keboola.ex-db-snowflake",
+                "name": "Extractor",
+                "type": "extractor",
+                "configurations": [
+                    {"id": "101", "name": "E1", "description": ""},
+                ],
+            },
+        ]
+
+        mock_client = _make_list_components_client(components)
+        service = ConfigService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.list_configs()
+        configs = result["configs"]
+
+        assert len(configs) == 2
+        # ex-db-snowflake < wr-db-snowflake alphabetically
+        assert configs[0]["component_id"] == "keboola.ex-db-snowflake"
+        assert configs[1]["component_id"] == "keboola.wr-db-snowflake"
+
+
+class TestConfigListUnexpectedException:
+    """Tests that unexpected (non-KeboolaApiError) exceptions are caught and accumulated."""
+
+    def test_runtime_error_caught_as_unexpected_error(self, tmp_config_dir: Path) -> None:
+        """A RuntimeError from the client is caught and accumulated with UNEXPECTED_ERROR."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "broken",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-broken-abcdefghijklmn",
+                project_name="Broken",
+                project_id=999,
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.list_components.side_effect = RuntimeError("Something went very wrong")
+
+        service = ConfigService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.list_configs()
+        configs = result["configs"]
+        errors = result["errors"]
+
+        assert len(configs) == 0
+        assert len(errors) == 1
+        assert errors[0]["project_alias"] == "broken"
+        assert errors[0]["error_code"] == "UNEXPECTED_ERROR"
+        assert "Something went very wrong" in errors[0]["message"]
+
+        # Client must still be closed even after unexpected error
+        mock_client.close.assert_called_once()
+
+    def test_unexpected_error_with_healthy_project(self, tmp_config_dir: Path) -> None:
+        """One project raising RuntimeError does not block healthy projects."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "good",
+            ProjectConfig(
+                stack_url="https://good.com",
+                token="901-good-abcdefghijklmnop",
+                project_name="Good",
+                project_id=1,
+            ),
+        )
+        store.add_project(
+            "broken",
+            ProjectConfig(
+                stack_url="https://broken.com",
+                token="902-broken-abcdefghijklmn",
+                project_name="Broken",
+                project_id=2,
+            ),
+        )
+
+        good_client = _make_list_components_client(SAMPLE_COMPONENTS)
+        broken_client = MagicMock()
+        broken_client.list_components.side_effect = RuntimeError("Unexpected crash")
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "good" in token:
+                return good_client
+            return broken_client
+
+        service = ConfigService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        result = service.list_configs()
+        configs = result["configs"]
+        errors = result["errors"]
+
+        # Good project configs should still be returned
+        assert len(configs) == 3
+        assert all(c["project_alias"] == "good" for c in configs)
+
+        # Broken project error should be reported
+        assert len(errors) == 1
+        assert errors[0]["project_alias"] == "broken"
+        assert errors[0]["error_code"] == "UNEXPECTED_ERROR"
+
+        # Both clients should be closed
+        good_client.close.assert_called_once()
+        broken_client.close.assert_called_once()
+
+
+class TestJobListDeterministicOrder:
+    """Tests that list_jobs produces deterministic sort order across projects."""
+
+    def test_jobs_sorted_by_alias_and_job_id(self, tmp_config_dir: Path) -> None:
+        """Jobs from multiple projects are sorted by (project_alias, job_id)."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "z-project",
+            ProjectConfig(
+                stack_url="https://z.com",
+                token="901-zzz-abcdefghijklmnop",
+                project_name="Z Project",
+                project_id=100,
+            ),
+        )
+        store.add_project(
+            "a-project",
+            ProjectConfig(
+                stack_url="https://a.com",
+                token="902-aaa-abcdefghijklmnop",
+                project_name="A Project",
+                project_id=200,
+            ),
+        )
+
+        z_jobs = [
+            {"id": 3003, "status": "success", "component": "comp-z"},
+            {"id": 3001, "status": "error", "component": "comp-z"},
+        ]
+        a_jobs = [
+            {"id": 2002, "status": "success", "component": "comp-a"},
+            {"id": 2001, "status": "processing", "component": "comp-a"},
+        ]
+
+        z_client = _make_list_jobs_client(z_jobs)
+        a_client = _make_list_jobs_client(a_jobs)
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "zzz" in token:
+                return z_client
+            return a_client
+
+        service = JobService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        # Run multiple times to verify deterministic ordering
+        for _ in range(5):
+            result = service.list_jobs()
+            jobs = result["jobs"]
+
+            assert len(jobs) == 4
+            # a-project jobs first (sorted by id as string), then z-project
+            assert jobs[0]["project_alias"] == "a-project"
+            assert jobs[0]["id"] == 2001
+            assert jobs[1]["project_alias"] == "a-project"
+            assert jobs[1]["id"] == 2002
+            assert jobs[2]["project_alias"] == "z-project"
+            assert jobs[2]["id"] == 3001
+            assert jobs[3]["project_alias"] == "z-project"
+            assert jobs[3]["id"] == 3003
+
+
+class TestJobListUnexpectedException:
+    """Tests that unexpected (non-KeboolaApiError) exceptions are caught in job listing."""
+
+    def test_runtime_error_caught_as_unexpected_error(self, tmp_config_dir: Path) -> None:
+        """A RuntimeError from the client is caught with UNEXPECTED_ERROR code."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "broken",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-broken-abcdefghijklmn",
+                project_name="Broken",
+                project_id=999,
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.list_jobs.side_effect = RuntimeError("Connection pool exhausted")
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.list_jobs()
+        jobs = result["jobs"]
+        errors = result["errors"]
+
+        assert len(jobs) == 0
+        assert len(errors) == 1
+        assert errors[0]["project_alias"] == "broken"
+        assert errors[0]["error_code"] == "UNEXPECTED_ERROR"
+        assert "Connection pool exhausted" in errors[0]["message"]
+
+        # Client must still be closed
+        mock_client.close.assert_called_once()
+
+    def test_unexpected_error_does_not_block_healthy_projects(self, tmp_config_dir: Path) -> None:
+        """One project with RuntimeError does not block other projects."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "good",
+            ProjectConfig(
+                stack_url="https://good.com",
+                token="901-good-abcdefghijklmnop",
+                project_name="Good",
+                project_id=1,
+            ),
+        )
+        store.add_project(
+            "broken",
+            ProjectConfig(
+                stack_url="https://broken.com",
+                token="902-broken-abcdefghijklmn",
+                project_name="Broken",
+                project_id=2,
+            ),
+        )
+
+        good_client = _make_list_jobs_client(SAMPLE_JOBS)
+        broken_client = MagicMock()
+        broken_client.list_jobs.side_effect = RuntimeError("Unexpected crash")
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "good" in token:
+                return good_client
+            return broken_client
+
+        service = JobService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        result = service.list_jobs()
+        jobs = result["jobs"]
+        errors = result["errors"]
+
+        assert len(jobs) == 2
+        assert all(j["project_alias"] == "good" for j in jobs)
+        assert len(errors) == 1
+        assert errors[0]["error_code"] == "UNEXPECTED_ERROR"
+
+        good_client.close.assert_called_once()
+        broken_client.close.assert_called_once()
+
+
+class TestStatusParallel:
+    """Tests for ProjectService.get_status() parallel behaviour."""
+
+    def test_status_multiple_projects_sorted_by_alias(self, tmp_config_dir: Path) -> None:
+        """get_status with multiple projects returns results sorted by alias."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "z-project",
+            ProjectConfig(
+                stack_url="https://z.com",
+                token="901-zzz-abcdefghijklmnop",
+                project_name="Z Project",
+                project_id=100,
+            ),
+        )
+        store.add_project(
+            "a-project",
+            ProjectConfig(
+                stack_url="https://a.com",
+                token="902-aaa-abcdefghijklmnop",
+                project_name="A Project",
+                project_id=200,
+            ),
+        )
+        store.add_project(
+            "m-project",
+            ProjectConfig(
+                stack_url="https://m.com",
+                token="903-mmm-abcdefghijklmnop",
+                project_name="M Project",
+                project_id=300,
+            ),
+        )
+
+        mock_client = _make_mock_client(project_name="Generic", project_id=1)
+
+        service = ProjectService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        # Run multiple times to verify deterministic ordering
+        for _ in range(5):
+            result = service.get_status()
+
+            assert len(result) == 3
+            assert result[0]["alias"] == "a-project"
+            assert result[1]["alias"] == "m-project"
+            assert result[2]["alias"] == "z-project"
+            assert all(r["status"] == "ok" for r in result)
+
+    def test_status_keboola_api_error_produces_status_error(self, tmp_config_dir: Path) -> None:
+        """KeboolaApiError produces a status='error' entry (not in errors list)."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "bad",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-bad-abcdefghijklmnopq",
+                project_name="Bad",
+                project_id=1,
+            ),
+        )
+
+        mock_client = _make_failing_client(
+            KeboolaApiError(
+                message="Token expired",
+                status_code=401,
+                error_code="INVALID_TOKEN",
+                retryable=False,
+            )
+        )
+
+        service = ProjectService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.get_status()
+
+        # KeboolaApiError returns a status entry (3-tuple), not an error
+        assert len(result) == 1
+        assert result[0]["alias"] == "bad"
+        assert result[0]["status"] == "error"
+        assert result[0]["error_code"] == "INVALID_TOKEN"
+        assert "Token expired" in result[0]["error"]
+        assert "response_time_ms" in result[0]
+
+    def test_status_unexpected_runtime_error(self, tmp_config_dir: Path) -> None:
+        """Unexpected RuntimeError produces an error-like status entry."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "broken",
+            ProjectConfig(
+                stack_url="https://broken.com",
+                token="901-broken-abcdefghijklmn",
+                project_name="Broken",
+                project_id=999,
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.verify_token.side_effect = RuntimeError("DNS resolution failed")
+
+        service = ProjectService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.get_status()
+
+        # Unexpected errors are converted to status entries with status='error'
+        assert len(result) == 1
+        assert result[0]["alias"] == "broken"
+        assert result[0]["status"] == "error"
+        assert result[0]["error_code"] == "UNEXPECTED_ERROR"
+        assert "DNS resolution failed" in result[0]["error"]
+
+    def test_status_mixed_ok_api_error_runtime_error(self, tmp_config_dir: Path) -> None:
+        """get_status handles a mix of OK, KeboolaApiError, and RuntimeError projects."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "a-ok",
+            ProjectConfig(
+                stack_url="https://ok.com",
+                token="901-ok-abcdefghijklmnopq",
+                project_name="OK Project",
+                project_id=1,
+            ),
+        )
+        store.add_project(
+            "b-expired",
+            ProjectConfig(
+                stack_url="https://expired.com",
+                token="902-expired-abcdefghijkl",
+                project_name="Expired Project",
+                project_id=2,
+            ),
+        )
+        store.add_project(
+            "c-crash",
+            ProjectConfig(
+                stack_url="https://crash.com",
+                token="903-crash-abcdefghijklmno",
+                project_name="Crash Project",
+                project_id=3,
+            ),
+        )
+
+        ok_client = _make_mock_client(project_name="OK Project", project_id=1)
+        expired_client = _make_failing_client(
+            KeboolaApiError(
+                message="Token expired",
+                status_code=401,
+                error_code="INVALID_TOKEN",
+                retryable=False,
+            )
+        )
+        crash_client = MagicMock()
+        crash_client.verify_token.side_effect = RuntimeError("Segfault simulation")
+
+        def factory(url: str, token: str) -> MagicMock:
+            if "ok" in token:
+                return ok_client
+            elif "expired" in token:
+                return expired_client
+            return crash_client
+
+        service = ProjectService(
+            config_store=store,
+            client_factory=factory,
+        )
+
+        result = service.get_status()
+
+        assert len(result) == 3
+
+        # Sorted by alias: a-ok, b-expired, c-crash
+        assert result[0]["alias"] == "a-ok"
+        assert result[0]["status"] == "ok"
+        assert result[0]["project_name"] == "OK Project"
+
+        assert result[1]["alias"] == "b-expired"
+        assert result[1]["status"] == "error"
+        assert result[1]["error_code"] == "INVALID_TOKEN"
+
+        assert result[2]["alias"] == "c-crash"
+        assert result[2]["status"] == "error"
+        assert result[2]["error_code"] == "UNEXPECTED_ERROR"
+        assert "Segfault simulation" in result[2]["error"]

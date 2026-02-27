@@ -4,36 +4,18 @@ Orchestrates config persistence and API calls without knowing about CLI or HTTP 
 """
 
 import time
-from collections.abc import Callable
 from typing import Any
 
-from ..client import KeboolaClient
-from ..config_store import ConfigStore
 from ..errors import ConfigError, KeboolaApiError, mask_token
 from ..models import ProjectConfig
-
-ClientFactory = Callable[[str, str], KeboolaClient]
-
-
-def default_client_factory(stack_url: str, token: str) -> KeboolaClient:
-    """Create a KeboolaClient with the given stack URL and token."""
-    return KeboolaClient(stack_url=stack_url, token=token)
+from .base import BaseService
 
 
-class ProjectService:
+class ProjectService(BaseService):
     """Business logic for managing Keboola project connections.
 
-    Uses dependency injection for config_store and client_factory to enable
-    easy testing with mocks.
+    Uses dependency injection for config_store and client_factory.
     """
-
-    def __init__(
-        self,
-        config_store: ConfigStore,
-        client_factory: ClientFactory | None = None,
-    ) -> None:
-        self._config_store = config_store
-        self._client_factory = client_factory or default_client_factory
 
     def add_project(self, alias: str, stack_url: str, token: str) -> dict[str, Any]:
         """Add a new project connection after verifying the token.
@@ -171,11 +153,59 @@ class ProjectService:
             )
         return result
 
+    def _check_project_status(
+        self, alias: str, project: ProjectConfig
+    ) -> tuple[str, dict[str, Any]] | tuple[str, dict[str, str]]:
+        """Check connectivity for a single project (runs in a worker thread).
+
+        Creates its own KeboolaClient, verifies the token, and measures response time.
+        Returns (alias, status_entry) on both success AND KeboolaApiError (since an
+        API error still produces a valid status entry with status="error").
+        Only truly unexpected exceptions return a 2-tuple error.
+
+        Note: For this worker, both success and KeboolaApiError return 3-tuples
+        (alias, status_entry, True) to distinguish from error 2-tuples in _run_parallel.
+        """
+        status_entry: dict[str, Any] = {
+            "alias": alias,
+            "stack_url": project.stack_url,
+            "token": mask_token(project.token),
+        }
+
+        client = self._client_factory(project.stack_url, project.token)
+        start_time = time.monotonic()
+        try:
+            token_info = client.verify_token()
+            elapsed = time.monotonic() - start_time
+            status_entry["status"] = "ok"
+            status_entry["response_time_ms"] = round(elapsed * 1000)
+            status_entry["project_name"] = token_info.project_name
+            status_entry["project_id"] = token_info.project_id
+            return (alias, status_entry, True)
+        except KeboolaApiError as exc:
+            elapsed = time.monotonic() - start_time
+            status_entry["status"] = "error"
+            status_entry["response_time_ms"] = round(elapsed * 1000)
+            status_entry["error"] = exc.message
+            status_entry["error_code"] = exc.error_code
+            return (alias, status_entry, True)
+        except Exception as exc:
+            return (
+                alias,
+                {
+                    "project_alias": alias,
+                    "error_code": "UNEXPECTED_ERROR",
+                    "message": str(exc),
+                },
+            )
+        finally:
+            client.close()
+
     def get_status(self, aliases: list[str] | None = None) -> list[dict[str, Any]]:
         """Check connectivity status for one or more projects.
 
         For each project, verifies the token against the API and measures
-        response time.
+        response time in parallel using ThreadPoolExecutor.
 
         Args:
             aliases: Specific project aliases to check (None = all projects).
@@ -186,43 +216,30 @@ class ProjectService:
         Raises:
             ConfigError: If a specified alias does not exist.
         """
-        config = self._config_store.load()
+        projects = self.resolve_projects(aliases)
 
-        if aliases:
-            projects_to_check = {}
-            for alias in aliases:
-                if alias not in config.projects:
-                    raise ConfigError(f"Project '{alias}' not found.")
-                projects_to_check[alias] = config.projects[alias]
-        else:
-            projects_to_check = config.projects
+        successes, errors = self._run_parallel(projects, self._check_project_status)
 
-        results = []
-        for alias, project in projects_to_check.items():
-            status_entry: dict[str, Any] = {
-                "alias": alias,
-                "stack_url": project.stack_url,
-                "token": mask_token(project.token),
-            }
-
-            client = self._client_factory(project.stack_url, project.token)
-            start_time = time.monotonic()
-            try:
-                token_info = client.verify_token()
-                elapsed = time.monotonic() - start_time
-                status_entry["status"] = "ok"
-                status_entry["response_time_ms"] = round(elapsed * 1000)
-                status_entry["project_name"] = token_info.project_name
-                status_entry["project_id"] = token_info.project_id
-            except KeboolaApiError as exc:
-                elapsed = time.monotonic() - start_time
-                status_entry["status"] = "error"
-                status_entry["response_time_ms"] = round(elapsed * 1000)
-                status_entry["error"] = exc.message
-                status_entry["error_code"] = exc.error_code
-            finally:
-                client.close()
-
+        # Extract status entries from successes (3-tuples: alias, status_entry, True)
+        results: list[dict[str, Any]] = []
+        for _alias, status_entry, _flag in successes:
             results.append(status_entry)
+
+        # Convert unexpected errors to status entries
+        for error in errors:
+            results.append(
+                {
+                    "alias": error["project_alias"],
+                    "stack_url": "",
+                    "token": "",
+                    "status": "error",
+                    "response_time_ms": 0,
+                    "error": error["message"],
+                    "error_code": error["error_code"],
+                }
+            )
+
+        # Sort for deterministic output
+        results.sort(key=lambda r: r.get("alias", ""))
 
         return results

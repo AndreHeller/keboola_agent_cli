@@ -5,28 +5,15 @@ a graph of data flow edges between projects. Fetches buckets from
 all projects in parallel using ThreadPoolExecutor.
 """
 
-import os
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from ..client import KeboolaClient
-from ..config_store import ConfigStore
-from ..errors import ConfigError, KeboolaApiError
+from ..errors import KeboolaApiError
 from ..models import ProjectConfig
-
-# Env var name for overriding max_parallel_workers from config.json
-ENV_MAX_PARALLEL_WORKERS = "KBAGENT_MAX_PARALLEL_WORKERS"
-
-ClientFactory = Callable[[str, str], KeboolaClient]
+from .base import BaseService
 
 
-def default_client_factory(stack_url: str, token: str) -> KeboolaClient:
-    """Create a KeboolaClient with the given stack URL and token."""
-    return KeboolaClient(stack_url=stack_url, token=token)
-
-
-class LineageService:
+class LineageService(BaseService):
     """Business logic for cross-project data lineage via bucket sharing.
 
     Queries each project's Storage API for bucket sharing metadata,
@@ -35,57 +22,6 @@ class LineageService:
 
     Uses dependency injection for config_store and client_factory.
     """
-
-    def __init__(
-        self,
-        config_store: ConfigStore,
-        client_factory: ClientFactory | None = None,
-    ) -> None:
-        self._config_store = config_store
-        self._client_factory = client_factory or default_client_factory
-
-    def _resolve_max_workers(self) -> int:
-        """Resolve max parallel workers: env var > config.json > default (10).
-
-        Returns:
-            Positive integer for ThreadPoolExecutor max_workers.
-        """
-        env_val = os.environ.get(ENV_MAX_PARALLEL_WORKERS)
-        if env_val is not None:
-            try:
-                val = int(env_val)
-                if val > 0:
-                    return val
-            except ValueError:
-                pass
-
-        config = self._config_store.load()
-        return config.max_parallel_workers
-
-    def resolve_projects(self, aliases: list[str] | None = None) -> dict[str, ProjectConfig]:
-        """Resolve project aliases to ProjectConfig instances.
-
-        Args:
-            aliases: Specific project aliases. If None, returns all.
-
-        Returns:
-            Dict mapping alias to ProjectConfig.
-
-        Raises:
-            ConfigError: If any specified alias is not found.
-        """
-        config = self._config_store.load()
-
-        if not aliases:
-            return dict(config.projects)
-
-        resolved: dict[str, ProjectConfig] = {}
-        for alias in aliases:
-            if alias not in config.projects:
-                raise ConfigError(f"Project '{alias}' not found.")
-            resolved[alias] = config.projects[alias]
-
-        return resolved
 
     def _fetch_project_buckets(
         self, alias: str, project: ProjectConfig

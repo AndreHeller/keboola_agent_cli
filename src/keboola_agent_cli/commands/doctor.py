@@ -23,7 +23,7 @@ from ..errors import KeboolaApiError
 from ..models import AppConfig
 from ..output import OutputFormatter
 from ..services.mcp_service import McpService
-from ..services.project_service import ClientFactory, default_client_factory
+from ..services.base import ClientFactory, default_client_factory
 
 
 def _get_formatter(ctx: typer.Context) -> OutputFormatter:

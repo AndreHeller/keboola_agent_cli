@@ -8,7 +8,8 @@ import pytest
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
 from keboola_agent_cli.models import ProjectConfig
-from keboola_agent_cli.services.lineage_service import ENV_MAX_PARALLEL_WORKERS, LineageService
+from keboola_agent_cli.services.base import ENV_MAX_PARALLEL_WORKERS
+from keboola_agent_cli.services.lineage_service import LineageService
 
 
 def _make_lineage_client(buckets: list[dict]) -> MagicMock:

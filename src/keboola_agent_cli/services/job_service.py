@@ -1,68 +1,72 @@
 """Job listing service - business logic for listing jobs from Queue API.
 
-Orchestrates multi-project job retrieval, filtering, and aggregation
-without knowing about CLI or HTTP details.
+Orchestrates multi-project job retrieval in parallel, filtering,
+and aggregation without knowing about CLI or HTTP details.
 """
 
-from collections.abc import Callable
 from typing import Any
 
-from ..client import KeboolaClient
-from ..config_store import ConfigStore
-from ..errors import ConfigError, KeboolaApiError
+from ..errors import KeboolaApiError
 from ..models import ProjectConfig
-
-ClientFactory = Callable[[str, str], KeboolaClient]
-
-
-def default_client_factory(stack_url: str, token: str) -> KeboolaClient:
-    """Create a KeboolaClient with the given stack URL and token."""
-    return KeboolaClient(stack_url=stack_url, token=token)
+from .base import BaseService
 
 
-class JobService:
+class JobService(BaseService):
     """Business logic for listing Keboola jobs from the Queue API.
 
-    Supports multi-project aggregation: queries multiple projects in sequence,
-    collects results, and reports per-project errors without stopping others.
+    Supports multi-project aggregation: queries multiple projects in parallel
+    using ThreadPoolExecutor, collects results, and reports per-project errors
+    without stopping others.
 
-    Uses dependency injection for config_store and client_factory to enable
-    easy testing with mocks.
+    Uses dependency injection for config_store and client_factory.
     """
 
-    def __init__(
+    def _fetch_project_jobs(
         self,
-        config_store: ConfigStore,
-        client_factory: ClientFactory | None = None,
-    ) -> None:
-        self._config_store = config_store
-        self._client_factory = client_factory or default_client_factory
+        alias: str,
+        project: ProjectConfig,
+        component_id: str | None = None,
+        config_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> tuple[str, list[dict[str, Any]], bool] | tuple[str, dict[str, str]]:
+        """Fetch jobs for a single project (runs in a worker thread).
 
-    def resolve_projects(self, aliases: list[str] | None = None) -> dict[str, ProjectConfig]:
-        """Resolve project aliases to ProjectConfig instances.
-
-        Args:
-            aliases: Specific project aliases to resolve. If None or empty,
-                     returns all configured projects.
-
-        Returns:
-            Dict mapping alias to ProjectConfig for the resolved projects.
-
-        Raises:
-            ConfigError: If any specified alias is not found in the config.
+        Creates its own KeboolaClient, fetches jobs, and closes the client.
+        Returns either (alias, jobs_list, True) on success or (alias, error_dict)
+        on failure. The 3-tuple convention is required by _run_parallel().
         """
-        config = self._config_store.load()
-
-        if not aliases:
-            return dict(config.projects)
-
-        resolved: dict[str, ProjectConfig] = {}
-        for alias in aliases:
-            if alias not in config.projects:
-                raise ConfigError(f"Project '{alias}' not found.")
-            resolved[alias] = config.projects[alias]
-
-        return resolved
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            jobs = client.list_jobs(
+                component_id=component_id,
+                config_id=config_id,
+                status=status,
+                limit=limit,
+            )
+            for job in jobs:
+                job["project_alias"] = alias
+            return (alias, jobs, True)
+        except KeboolaApiError as exc:
+            return (
+                alias,
+                {
+                    "project_alias": alias,
+                    "error_code": exc.error_code,
+                    "message": exc.message,
+                },
+            )
+        except Exception as exc:
+            return (
+                alias,
+                {
+                    "project_alias": alias,
+                    "error_code": "UNEXPECTED_ERROR",
+                    "message": str(exc),
+                },
+            )
+        finally:
+            client.close()
 
     def list_jobs(
         self,
@@ -74,9 +78,9 @@ class JobService:
     ) -> dict[str, Any]:
         """List jobs across one or multiple projects.
 
-        Queries each resolved project's Queue API for jobs, aggregates
-        results into a unified list. Per-project errors are collected
-        but do not stop other projects from being queried.
+        Queries each resolved project's Queue API for jobs in parallel,
+        aggregates results into a unified list. Per-project errors are
+        collected but do not stop other projects from being queried.
 
         Args:
             aliases: Project aliases to query. None means all projects.
@@ -96,31 +100,23 @@ class JobService:
         """
         projects = self.resolve_projects(aliases)
 
-        all_jobs: list[dict[str, Any]] = []
-        errors: list[dict[str, str]] = []
+        def worker(alias: str, project: ProjectConfig) -> tuple[Any, ...]:
+            return self._fetch_project_jobs(
+                alias, project, component_id, config_id, status, limit
+            )
 
-        for alias, project in projects.items():
-            client = self._client_factory(project.stack_url, project.token)
-            try:
-                jobs = client.list_jobs(
-                    component_id=component_id,
-                    config_id=config_id,
-                    status=status,
-                    limit=limit,
-                )
-                for job in jobs:
-                    job["project_alias"] = alias
-                    all_jobs.append(job)
-            except KeboolaApiError as exc:
-                errors.append(
-                    {
-                        "project_alias": alias,
-                        "error_code": exc.error_code,
-                        "message": exc.message,
-                    }
-                )
-            finally:
-                client.close()
+        successes, errors = self._run_parallel(projects, worker)
+
+        # Flatten jobs from all successful projects
+        all_jobs: list[dict[str, Any]] = []
+        for _alias, jobs, _ok in successes:
+            all_jobs.extend(jobs)
+
+        # Sort for deterministic output
+        all_jobs.sort(
+            key=lambda j: (j.get("project_alias", ""), str(j.get("id", "")))
+        )
+        errors.sort(key=lambda e: e.get("project_alias", ""))
 
         return {"jobs": all_jobs, "errors": errors}
 

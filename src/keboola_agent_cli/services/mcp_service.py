@@ -17,6 +17,7 @@ from mcp.client.stdio import stdio_client
 from ..config_store import ConfigStore
 from ..errors import ConfigError
 from ..models import ProjectConfig
+from .base import BaseService, ClientFactory
 
 # Timeout for individual MCP operations (seconds)
 MCP_TOOL_TIMEOUT_SECONDS = 60
@@ -305,7 +306,7 @@ def _extract_ids(content_items: list[Any], key: str) -> list[str]:
     return ids
 
 
-class McpService:
+class McpService(BaseService):
     """Business logic for MCP tool operations across projects.
 
     Wraps keboola-mcp-server as subprocess via MCP SDK.
@@ -315,33 +316,12 @@ class McpService:
     Uses the same DI pattern as JobService/ConfigService.
     """
 
-    def __init__(self, config_store: ConfigStore) -> None:
-        self._config_store = config_store
-
-    def resolve_projects(self, aliases: list[str] | None = None) -> dict[str, ProjectConfig]:
-        """Resolve project aliases to ProjectConfig instances.
-
-        Args:
-            aliases: Specific project aliases. If None, returns all.
-
-        Returns:
-            Dict mapping alias to ProjectConfig.
-
-        Raises:
-            ConfigError: If any specified alias is not found.
-        """
-        config = self._config_store.load()
-
-        if not aliases:
-            return dict(config.projects)
-
-        resolved: dict[str, ProjectConfig] = {}
-        for alias in aliases:
-            if alias not in config.projects:
-                raise ConfigError(f"Project '{alias}' not found.")
-            resolved[alias] = config.projects[alias]
-
-        return resolved
+    def __init__(
+        self,
+        config_store: ConfigStore,
+        client_factory: ClientFactory | None = None,
+    ) -> None:
+        super().__init__(config_store, client_factory)
 
     def resolve_project(self, alias: str | None = None) -> tuple[str, ProjectConfig]:
         """Resolve a single project alias (or the default project).

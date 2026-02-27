@@ -80,7 +80,7 @@ The `org setup` command requires a Manage API token to list organization project
 
 ### Parallel execution
 
-Multi-project operations (`lineage show`, `tool call` for read tools) run in parallel using a thread pool. The concurrency is configurable:
+All multi-project read operations (`config list`, `job list`, `project status`, `lineage show`, `tool call` for read tools) run in parallel using a thread pool. The concurrency is configurable:
 
 | Priority | Method | Example |
 |----------|--------|---------|

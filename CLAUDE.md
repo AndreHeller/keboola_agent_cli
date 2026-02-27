@@ -54,6 +54,7 @@ src/keboola_agent_cli/
     context.py          # LAYER 1: Agent usage instructions
     doctor.py           # LAYER 1: Health check command
   services/
+    base.py             # LAYER 2: BaseService - shared parallel execution infrastructure
     project_service.py  # LAYER 2: Business logic for projects
     config_service.py   # LAYER 2: Business logic for configurations
     job_service.py      # LAYER 2: Business logic for job history
@@ -70,7 +71,8 @@ tests/
   test_errors.py        # mask_token() tests
   test_models.py        # Pydantic model tests
   test_output.py        # OutputFormatter tests
-  test_services.py      # Business logic tests (project, config)
+  test_services.py      # Business logic tests (project, config, parallel)
+  test_base_service.py     # BaseService unit tests (resolve, workers, parallel)
   test_lineage_service.py  # Lineage service tests
   test_mcp_service.py      # MCP service tests
   test_org_service.py      # Org service tests (slugify, setup, idempotency)

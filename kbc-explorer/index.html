@@ -3,49 +3,58 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>IR Project Explorer - Keboola</title>
+<title>KBC Explorer - Keboola Project Catalog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0f1117;
-    --bg-card: #1a1d27;
-    --bg-hover: #222633;
-    --border: #2a2e3d;
-    --text: #e1e4eb;
-    --text-dim: #8b90a0;
-    --accent: #4f8ff7;
-    --accent-dim: #2a5eb0;
-    --green: #3ecf8e;
-    --red: #ef5350;
-    --orange: #ff9800;
-    --yellow: #ffc107;
-    --purple: #b388ff;
-    --cyan: #26c6da;
-    --l0: #4f8ff7;
-    --l1: #b388ff;
-    --l2: #3ecf8e;
+    --bg: #F5F7FA;
+    --bg-card: #FFFFFF;
+    --bg-hover: rgba(243, 244, 246, 0.5);
+    --border: #E5E7EB;
+    --border-light: #F3F4F6;
+    --text: #1A253C;
+    --text-dim: #6B7280;
+    --accent: #0073D1;
+    --accent-light: rgba(0, 115, 209, 0.1);
+    --accent-dim: rgba(0, 115, 209, 0.15);
+    --green: #10B77F;
+    --red: #EA580C;
+    --orange: #F59F0A;
+    --yellow: #F59F0A;
+    --purple: #7C3AED;
+    --cyan: #0891B2;
+    --l0: #0073D1;
+    --l1: #7C3AED;
+    --l2: #10B77F;
+    --shadow-sm: rgba(0, 0, 0, 0.05) 0px 1px 2px 0px;
+    --shadow-md: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.1) 0px 1px 2px -1px;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
     overflow-x: hidden;
+    font-size: 14px;
   }
 
   /* Layout */
   .app { display: flex; height: 100vh; }
 
   .sidebar {
-    width: 280px;
-    min-width: 280px;
+    width: 240px;
+    min-width: 240px;
     background: var(--bg-card);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
 
   .sidebar-header {
@@ -129,7 +138,7 @@
   }
 
   .nav-item:hover { background: var(--bg-hover); }
-  .nav-item.active { background: var(--accent-dim); color: #fff; }
+  .nav-item.active { background: var(--accent-light); color: var(--accent); font-weight: 500; }
 
   .nav-item .health {
     width: 6px; height: 6px; border-radius: 50%;
@@ -153,7 +162,7 @@
   }
 
   .nav-special:hover { background: var(--bg-hover); }
-  .nav-special.active { background: var(--accent-dim); color: #fff; }
+  .nav-special.active { background: var(--accent-light); color: var(--accent); }
 
   /* Main content */
   .main {
@@ -185,8 +194,9 @@
   .kpi-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 16px;
+    box-shadow: var(--shadow-sm);
   }
 
   .kpi-card .kpi-label {
@@ -212,9 +222,10 @@
   .section {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     margin-bottom: 16px;
     overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
 
   .section-header {
@@ -238,13 +249,12 @@
 
   th {
     text-align: left;
-    padding: 8px 12px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
     color: var(--text-dim);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--bg);
   }
 
   td {
@@ -265,19 +275,19 @@
     font-weight: 600;
   }
 
-  .badge-extractor { background: #1a3a5c; color: var(--accent); }
-  .badge-writer { background: #1a3c2c; color: var(--green); }
-  .badge-transformation { background: #2d1f4e; color: var(--purple); }
-  .badge-application { background: #3c2a10; color: var(--orange); }
-  .badge-other { background: #2a2e3d; color: var(--text-dim); }
+  .badge-extractor { background: rgba(0, 115, 209, 0.1); color: var(--accent); }
+  .badge-writer { background: rgba(16, 183, 127, 0.1); color: var(--green); }
+  .badge-transformation { background: rgba(124, 58, 237, 0.1); color: var(--purple); }
+  .badge-application { background: rgba(245, 159, 10, 0.1); color: var(--orange); }
+  .badge-other { background: var(--border-light); color: var(--text-dim); }
 
-  .badge-success { background: #1a3c2c; color: var(--green); }
-  .badge-error { background: #3c1a1a; color: var(--red); }
-  .badge-warning { background: #3c2a10; color: var(--orange); }
+  .badge-success { background: rgba(16, 183, 127, 0.1); color: var(--green); }
+  .badge-error { background: rgba(234, 88, 12, 0.1); color: var(--red); }
+  .badge-warning { background: rgba(245, 159, 10, 0.1); color: var(--orange); }
 
-  .badge-l0 { background: #1a3a5c; color: var(--l0); }
-  .badge-l1 { background: #2d1f4e; color: var(--l1); }
-  .badge-l2 { background: #1a3c2c; color: var(--l2); }
+  .badge-l0 { background: rgba(0, 115, 209, 0.1); color: var(--l0); }
+  .badge-l1 { background: rgba(124, 58, 237, 0.1); color: var(--l1); }
+  .badge-l2 { background: rgba(16, 183, 127, 0.1); color: var(--l2); }
 
   /* Progress bar */
   .progress-bar {
@@ -312,34 +322,23 @@
   }
 
   .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab.active { color: var(--accent); font-weight: 500; border-bottom-color: var(--accent); }
 
   /* Lineage graph */
   .lineage-container {
     position: relative;
     width: 100%;
     height: 600px;
-    background: var(--bg);
+    background: var(--bg-card);
     border-radius: 8px;
     border: 1px solid var(--border);
     overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
 
   .lineage-container svg {
     width: 100%;
     height: 100%;
-  }
-
-  .lineage-container .node-label {
-    font-size: 10px;
-    fill: var(--text);
-    pointer-events: none;
-  }
-
-  .lineage-container .edge-line {
-    stroke: var(--border);
-    stroke-width: 1;
-    fill: none;
   }
 
   .lineage-tooltip {
@@ -353,6 +352,7 @@
     display: none;
     z-index: 100;
     max-width: 300px;
+    box-shadow: var(--shadow-md);
   }
 
   /* Sharing matrix */
@@ -413,9 +413,10 @@
   .flow-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     margin-bottom: 16px;
     overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
 
   .flow-card.disabled { opacity: 0.5; }
@@ -481,9 +482,9 @@
   }
 
   .phase-block {
-    background: var(--bg);
+    background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     overflow: hidden;
   }
 
@@ -492,7 +493,7 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--accent);
-    background: rgba(79,143,247,0.06);
+    background: var(--bg);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -543,12 +544,12 @@
     flex-shrink: 0;
   }
 
-  .task-type-badge.EX { background: #1a3a5c; color: var(--accent); }
-  .task-type-badge.WR { background: #1a3c2c; color: var(--green); }
-  .task-type-badge.TR { background: #2d1f4e; color: var(--purple); }
-  .task-type-badge.AP { background: #3c2a10; color: var(--orange); }
-  .task-type-badge.FL { background: #2a3a3c; color: var(--cyan); }
-  .task-type-badge.OT { background: #2a2e3d; color: var(--text-dim); }
+  .task-type-badge.EX { background: rgba(0, 115, 209, 0.1); color: var(--accent); }
+  .task-type-badge.WR { background: rgba(16, 183, 127, 0.1); color: var(--green); }
+  .task-type-badge.TR { background: rgba(124, 58, 237, 0.1); color: var(--purple); }
+  .task-type-badge.AP { background: rgba(245, 159, 10, 0.1); color: var(--orange); }
+  .task-type-badge.FL { background: rgba(8, 145, 178, 0.1); color: var(--cyan); }
+  .task-type-badge.OT { background: var(--border-light); color: var(--text-dim); }
 
   .task-comp {
     font-size: 10px;
@@ -697,7 +698,7 @@
 <div class="app">
   <div class="sidebar">
     <div class="sidebar-header">
-      <h1>IR Explorer</h1>
+      <h1>KBC Explorer</h1>
       <div class="subtitle">Keboola Project Catalog</div>
     </div>
     <div class="search-box">
@@ -863,7 +864,7 @@
       .reduce((s, p, _, a) => s + p.job_stats.success_rate_pct / a.length, 0);
 
     main.innerHTML = '';
-    main.appendChild(h('div', {className: 'page-title'}, 'IR Project Ecosystem'));
+    main.appendChild(h('div', {className: 'page-title'}, 'KBC Project Ecosystem'));
     main.appendChild(h('div', {className: 'page-subtitle'},
       `${projects.length} projects across 3 tiers | ${CATALOG.lineage.summary.total_edges} data sharing links | Generated: ${CATALOG.metadata.generated_at}`));
 
@@ -1370,7 +1371,7 @@
     main.innerHTML = '';
     main.appendChild(h('div', {className: 'page-title'}, 'Data Lineage Graph'));
     main.appendChild(h('div', {className: 'page-subtitle'},
-      `${CATALOG.lineage.summary.total_edges} data sharing connections across the IR ecosystem`));
+      `${CATALOG.lineage.summary.total_edges} data sharing connections across the project ecosystem`));
 
     const container = h('div', {className: 'lineage-container'});
     const tooltip = h('div', {className: 'lineage-tooltip'});
@@ -1499,11 +1500,11 @@
       line.setAttribute('y1', s.y);
       line.setAttribute('x2', t.x);
       line.setAttribute('y2', t.y);
-      line.setAttribute('stroke', 'rgba(79,143,247,0.15)');
+      line.setAttribute('stroke', 'rgba(0,115,209,0.18)');
       line.setAttribute('stroke-width', Math.min(4, 1 + e.buckets.length * 0.3));
 
       line.addEventListener('mouseenter', (ev) => {
-        line.setAttribute('stroke', 'rgba(79,143,247,0.6)');
+        line.setAttribute('stroke', 'rgba(0,115,209,0.5)');
         line.setAttribute('stroke-width', Math.min(6, 2 + e.buckets.length * 0.5));
         tooltip.style.display = 'block';
         tooltip.innerHTML = `<strong>${s.name} \u2192 ${t.name}</strong><br><br>${e.buckets.map(b => `<code style="font-size:10px">${b}</code>`).join('<br>')}`;
@@ -1514,7 +1515,7 @@
         tooltip.style.top = (ev.clientY - cr.top + 10) + 'px';
       });
       line.addEventListener('mouseleave', () => {
-        line.setAttribute('stroke', 'rgba(79,143,247,0.15)');
+        line.setAttribute('stroke', 'rgba(0,115,209,0.18)');
         line.setAttribute('stroke-width', Math.min(4, 1 + e.buckets.length * 0.3));
         tooltip.style.display = 'none';
       });
@@ -1533,7 +1534,7 @@
     marker.setAttribute('orient', 'auto');
     const arrowPath = document.createElementNS(ns, 'path');
     arrowPath.setAttribute('d', 'M0,0 L6,2 L0,4 Z');
-    arrowPath.setAttribute('fill', 'rgba(79,143,247,0.3)');
+    arrowPath.setAttribute('fill', 'rgba(0,115,209,0.35)');
     marker.appendChild(arrowPath);
     defs.appendChild(marker);
     svg.appendChild(defs);
@@ -1548,7 +1549,7 @@
       circle.setAttribute('cy', n.y);
       circle.setAttribute('r', 8);
       circle.setAttribute('fill', tierColor(n.tier === 'L0' ? 'L0' : n.tier === 'L1' ? 'L1' : n.tier === 'L2' ? 'L2' : 'L0'));
-      circle.setAttribute('stroke', 'var(--bg)');
+      circle.setAttribute('stroke', 'var(--bg-card)');
       circle.setAttribute('stroke-width', '2');
 
       const proj = CATALOG.projects[n.alias];
@@ -1573,7 +1574,7 @@
       });
       g.addEventListener('mouseleave', () => {
         circle.setAttribute('r', 8);
-        circle.setAttribute('stroke', 'var(--bg)');
+        circle.setAttribute('stroke', 'var(--bg-card)');
         circle.setAttribute('stroke-width', '2');
       });
 

@@ -3,14 +3,14 @@
 A standalone HTML viewer for analyzing a Keboola project ecosystem. It provides
 an interactive dashboard with project details, configuration inventories, job
 health metrics, data lineage graphs, and orchestration (flow) diagrams -- all
-rendered client-side from two static data files.
+rendered client-side from a single static data file.
 
 No backend server is required. The viewer runs entirely in the browser.
 
 ## Quick Start
 
 1. Open `index.html` in any modern browser (Chrome, Firefox, Safari, Edge).
-2. The page loads `catalog.js` and `orchestrations.js` from the same directory.
+2. The page loads `catalog.js` from the same directory.
 3. Browse projects, inspect configurations, review job stats, explore data
    lineage, and drill into orchestration flows.
 
@@ -19,15 +19,13 @@ No backend server is required. The viewer runs entirely in the browser.
 ```
 kbc-explorer/
   index.html           # Single-page application (HTML + CSS + JS)
-  catalog.js           # Project data wrapped as: const CATALOG = { ... };
+  catalog.js           # All data wrapped as: const CATALOG = { ... };
   catalog.json         # Same data as catalog.js, plain JSON (for tooling)
-  orchestrations.js    # Flow data wrapped as: const ORCHESTRATIONS = { ... };
-  orchestrations.json  # Same data as orchestrations.js, plain JSON (for tooling)
   schema.json          # JSON Schema (draft-07) describing catalog.json structure
   README.md            # This file
 ```
 
-The `.js` files are what the HTML page actually loads via `<script>` tags. The
+The `.js` file is what the HTML page actually loads via a `<script>` tag. The
 `.json` files contain the same data without the variable wrapper and are useful
 for validation, processing, or feeding into other tools.
 
@@ -51,8 +49,8 @@ environment):
 
 ```
 Collect data for the KBC Explorer dashboard. For every project registered in
-kbagent, run the following commands and aggregate the results into two files:
-catalog.json and orchestrations.json.
+kbagent, run the following commands and aggregate the results into catalog.json
+(orchestrations are included under the "orchestrations" key).
 
 Step 1 -- Configurations:
   For each project alias, run:
@@ -83,21 +81,17 @@ Step 4 -- Orchestrations (flows):
 
 Step 5 -- Assemble catalog.json:
   Combine all collected data into a single JSON object following the schema
-  in schema.json. The top-level keys are: metadata, tiers, projects, lineage.
-  Assign each project to a tier (L0/L1/L2) based on its alias naming
-  convention or manual mapping.
-
-Step 6 -- Assemble orchestrations.json:
-  Build a flat dictionary keyed by "PROJECT_ALIAS|CONFIG_ID" containing the
-  flow details: name, description, is_disabled, version, last_modified,
+  in schema.json. The top-level keys are: metadata, tiers, projects, lineage,
+  orchestrations. Assign each project to a tier (L0/L1/L2) based on its
+  alias naming convention or manual mapping. The "orchestrations" key is a
+  flat dictionary keyed by "PROJECT_ALIAS|CONFIG_ID" containing the flow
+  details: name, description, is_disabled, version, last_modified,
   last_modified_by, phases (with tasks), total_tasks, total_phases, and a
   mermaid graph string.
 
-Step 7 -- Create JS wrappers:
+Step 6 -- Create JS wrapper:
   Write catalog.js containing:
     const CATALOG = <contents of catalog.json>;
-  Write orchestrations.js containing:
-    const ORCHESTRATIONS = <contents of orchestrations.json>;
 
 Do NOT include any API tokens, secrets, or credentials in the output files.
 ```
@@ -210,9 +204,10 @@ structure is:
 }
 ```
 
-### orchestrations.json
+### orchestrations (within catalog.json)
 
-A flat dictionary keyed by `"PROJECT_ALIAS|CONFIG_ID"`. Each value has:
+The `orchestrations` key in `catalog.json` is a flat dictionary keyed by
+`"PROJECT_ALIAS|CONFIG_ID"`. Each value has:
 
 ```
 {

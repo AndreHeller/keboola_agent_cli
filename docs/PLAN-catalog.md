@@ -3,8 +3,8 @@
 ## Problem Statement
 
 KBC Explorer (`kbc-explorer/index.html`) is a powerful CDO-grade dashboard for
-visualizing a Keboola project ecosystem. However, its data files — `catalog.json`
-and `orchestrations.json` — are currently produced through a **manual 7-step
+visualizing a Keboola project ecosystem. However, its data file — `catalog.json`
+(including orchestrations) — is currently produced through a **manual 7-step
 process** described in `kbc-explorer/README.md`, typically executed by giving a
 long prompt to an AI assistant.
 
@@ -34,10 +34,8 @@ kbagent --json catalog generate
 ```
 
 Expected output files:
-- `catalog.json` — plain JSON (for tooling, validation)
+- `catalog.json` — plain JSON (for tooling, validation), includes orchestrations under the `orchestrations` key
 - `catalog.js` — JS wrapper (`const CATALOG = {...};`) for the HTML viewer
-- `orchestrations.json` — plain JSON
-- `orchestrations.js` — JS wrapper (`const ORCHESTRATIONS = {...};`)
 
 ---
 
@@ -175,14 +173,11 @@ Global:
 ### Phase 4: Assembly & Validation
 
 ```
-1. Assemble catalog.json structure (metadata + tiers + projects + lineage)
+1. Assemble catalog.json structure (metadata + tiers + projects + lineage + orchestrations)
 2. Validate against schema.json (using jsonschema library)
-3. Assemble orchestrations.json (flat dict keyed by "alias|config_id")
-4. Write output files:
+3. Write output files:
    ├── catalog.json
-   ├── catalog.js    (wrapped: const CATALOG = ...;)
-   ├── orchestrations.json
-   └── orchestrations.js (wrapped: const ORCHESTRATIONS = ...;)
+   └── catalog.js    (wrapped: const CATALOG = ...;)
 ```
 
 ---
@@ -284,12 +279,12 @@ def aggregate_job_stats(jobs: list[dict]) -> dict:
 ## Orchestration Assembly Logic
 
 For each `keboola.orchestrator` config, the detail response contains phases
-and tasks. The assembly transforms this into the `orchestrations.json` format:
+and tasks. The assembly transforms this into the `orchestrations` entry format:
 
 ```python
 def assemble_orchestration(alias: str, config_detail: dict) -> dict:
     """
-    Transform config detail response into orchestrations.json entry.
+    Transform config detail response into orchestration catalog entry.
 
     Input: raw response from client.get_config_detail()
     Output: orchestration entry with phases, tasks, mermaid graph
@@ -360,7 +355,7 @@ def assemble_orchestration(alias: str, config_detail: dict) -> dict:
 ```
 Usage: kbagent catalog generate [OPTIONS]
 
-  Generate catalog.json and orchestrations.json for KBC Explorer.
+  Generate catalog.json (with orchestrations) for KBC Explorer.
 
 Options:
   --output DIR          Output directory (default: ./kbc-explorer/)
@@ -438,7 +433,7 @@ Output:
 - `_aggregate_job_stats(raw_jobs)` — compute all job_stats fields
 - `_build_configurations(raw_configs)` — group by type, count
 - `_build_lineage(all_project_lineage)` — deduplicate edges, compute summary
-- `_build_orchestrations(flow_details)` — assemble orchestrations.json entries
+- `_build_orchestrations(flow_details)` — assemble orchestration entries for catalog
 
 ### Step 4: Schema validation
 
@@ -455,7 +450,7 @@ Output:
 
 - `_write_json(data, path)` — write JSON with consistent formatting
 - `_write_js_wrapper(data, variable_name, path)` — write `const X = {...};`
-- Write all 4 files atomically (write to .tmp, then rename)
+- Write both files atomically (write to .tmp, then rename)
 
 ### Step 6: CLI command
 
@@ -492,7 +487,7 @@ These represent CDO questions that the current explorer cannot answer:
 | **Cost/volume metrics** | "How many credits per tier? Costliest project?" | Keboola Telemetry API (new data source) |
 | **Change timeline** | "What changed this week? New configs, deleted flows?" | `catalog diff` between snapshots |
 | **Alerting rules view** | "Which projects have no monitoring?" | Custom metadata (not in API) |
-| **Flow Gantt chart** | "What runs in parallel vs sequential?" | `orchestrations.json` phases (already available) |
+| **Flow Gantt chart** | "What runs in parallel vs sequential?" | `catalog.orchestrations` phases (already available) |
 | **Table-level lineage** | "Where does table X originate and flow to?" | MCP `get_lineage` tool or Storage API metadata |
 | **Config parameter audit** | "Which extractors target which external systems?" | Would require config parameter access (security risk) |
 

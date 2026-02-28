@@ -987,7 +987,6 @@
 </div>
 
 <script src="catalog.js"></script>
-<script src="orchestrations.js"></script>
 <script>
 (function() {
   'use strict';
@@ -1292,7 +1291,7 @@
     main.appendChild(kpiGrid);
 
     // Count flows for this project
-    const projectFlows = Object.values(typeof ORCHESTRATIONS !== 'undefined' ? ORCHESTRATIONS : {})
+    const projectFlows = Object.values(CATALOG.orchestrations || {})
       .filter(o => o.project_alias === alias);
     const activeFlows = projectFlows.filter(o => !o.is_disabled);
 

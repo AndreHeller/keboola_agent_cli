@@ -386,6 +386,25 @@ def format_job_detail(console: Console, data: dict[str, Any]) -> None:
     console.print(panel)
 
 
+def _format_tool_params(schema: dict[str, Any]) -> str:
+    """Format inputSchema properties as a compact param string.
+
+    Required params are marked with *, optional are dim.
+    Example: "sql_query*, query_name*"
+    """
+    props = schema.get("properties", {})
+    required = set(schema.get("required", []))
+    if not props:
+        return "[dim](none)[/dim]"
+    parts = []
+    for name in props:
+        if name in required:
+            parts.append(f"[bold]{name}[/bold]*")
+        else:
+            parts.append(f"[dim]{name}[/dim]")
+    return ", ".join(parts)
+
+
 def format_tools_table(console: Console, data: dict[str, Any]) -> None:
     """Render a Rich table of MCP tools.
 
@@ -413,13 +432,16 @@ def format_tools_table(console: Console, data: dict[str, Any]) -> None:
 
     table = Table(title="MCP Tools")
     table.add_column("Tool Name", style="bold cyan")
+    table.add_column("Parameters")
     table.add_column("Multi-Project", justify="center")
     table.add_column("Description", max_width=60)
 
     for tool in tools:
         multi = "[green]yes[/green]" if tool.get("multi_project") else "[dim]no[/dim]"
+        params_str = _format_tool_params(tool.get("inputSchema", {}))
         table.add_row(
             tool["name"],
+            params_str,
             multi,
             tool.get("description", ""),
         )

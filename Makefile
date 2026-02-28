@@ -1,12 +1,15 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install sync test test-unit test-integration test-file lint lint-fix format format-check check clean
+.PHONY: help install install-mcp sync test test-unit test-integration test-file lint lint-fix format format-check check clean
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install in development mode (editable)
 	uv pip install -e ".[dev]"
+
+install-mcp: ## Install Keboola MCP server (required for 'tool' commands)
+	uv pip install keboola-mcp-server
 
 sync: ## Sync dependencies from lockfile
 	uv sync

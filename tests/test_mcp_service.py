@@ -701,10 +701,6 @@ class TestMcpTimeoutFromEnv:
 
         import keboola_agent_cli.services.mcp_service as mcp_mod
 
-        # Save original values
-        orig_tool = mcp_mod.MCP_TOOL_TIMEOUT_SECONDS
-        orig_init = mcp_mod.MCP_INIT_TIMEOUT_SECONDS
-
         try:
             with patch.dict(
                 os.environ,

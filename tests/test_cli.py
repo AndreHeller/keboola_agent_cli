@@ -6,20 +6,17 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from typer.testing import CliRunner
 
+from helpers import make_mock_client
 from keboola_agent_cli.cli import app
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
-from keboola_agent_cli.models import ProjectConfig, TokenVerifyResponse
+from keboola_agent_cli.models import ProjectConfig
 from keboola_agent_cli.services.config_service import ConfigService
 from keboola_agent_cli.services.job_service import JobService
 from keboola_agent_cli.services.lineage_service import LineageService
-from keboola_agent_cli.services.org_service import OrgService
 from keboola_agent_cli.services.project_service import ProjectService
-
-from helpers import make_mock_client
 
 TEST_TOKEN = "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"
 
@@ -2589,7 +2586,7 @@ class TestHelp:
         assert "--limit" in result.output
 
 
-class TestVerboseFlag:
+class TestVerboseFlagBasic:
     """Tests for --verbose global flag."""
 
     def test_verbose_flag_accepted(self, tmp_path: Path) -> None:
@@ -3457,8 +3454,8 @@ def _make_list_buckets_client(buckets: list[dict]) -> MagicMock:
     return mock_client
 
 
-class TestLineageShow:
-    """Tests for `kbagent lineage show` command."""
+class TestLineageShowIntegration:
+    """Tests for `kbagent lineage show` command with real LineageService."""
 
     def test_lineage_json_output(self, tmp_path: Path) -> None:
         """lineage show --json returns structured JSON with edges and summary."""
@@ -3707,8 +3704,8 @@ class TestLineageShow:
         assert "edges" in output["data"]
 
 
-class TestOrgSetup:
-    """Tests for `kbagent org setup` command."""
+class TestOrgSetupBasic:
+    """Tests for `kbagent org setup` command - basic mock patterns."""
 
     def _make_org_service_mock(self, result: dict) -> MagicMock:
         """Create a mock OrgService that returns the given result."""

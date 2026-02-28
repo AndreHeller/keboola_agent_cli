@@ -16,7 +16,6 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from ..config_store import ConfigStore
 from ..constants import (
     DEFAULT_MCP_INIT_TIMEOUT,
     DEFAULT_MCP_TOOL_TIMEOUT,
@@ -25,7 +24,7 @@ from ..constants import (
 )
 from ..errors import ConfigError
 from ..models import ProjectConfig
-from .base import BaseService, ClientFactory
+from .base import BaseService
 
 logger = logging.getLogger(__name__)
 
@@ -580,7 +579,7 @@ class McpService(BaseService):
         all_results: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
 
-        for alias, outcome in zip(aliases, outcomes):
+        for alias, outcome in zip(aliases, outcomes, strict=False):
             if isinstance(outcome, BaseException):
                 errors.append(
                     {

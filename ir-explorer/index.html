@@ -1,0 +1,1677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IR Project Explorer - Keboola</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg-card: #1a1d27;
+    --bg-hover: #222633;
+    --border: #2a2e3d;
+    --text: #e1e4eb;
+    --text-dim: #8b90a0;
+    --accent: #4f8ff7;
+    --accent-dim: #2a5eb0;
+    --green: #3ecf8e;
+    --red: #ef5350;
+    --orange: #ff9800;
+    --yellow: #ffc107;
+    --purple: #b388ff;
+    --cyan: #26c6da;
+    --l0: #4f8ff7;
+    --l1: #b388ff;
+    --l2: #3ecf8e;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+
+  /* Layout */
+  .app { display: flex; height: 100vh; }
+
+  .sidebar {
+    width: 280px;
+    min-width: 280px;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .sidebar-header .subtitle {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .search-box {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .search-box input {
+    width: 100%;
+    padding: 7px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+
+  .search-box input:focus { border-color: var(--accent); }
+
+  .nav-section {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  .nav-group-label {
+    padding: 8px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .nav-group-label .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block;
+  }
+
+  .nav-group-label .count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  .nav-item {
+    padding: 5px 16px 5px 28px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-item:hover { background: var(--bg-hover); }
+  .nav-item.active { background: var(--accent-dim); color: #fff; }
+
+  .nav-item .health {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .nav-item .nav-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-special {
+    padding: 5px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+    font-weight: 500;
+  }
+
+  .nav-special:hover { background: var(--bg-hover); }
+  .nav-special.active { background: var(--accent-dim); color: #fff; }
+
+  /* Main content */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 32px;
+  }
+
+  .page-title {
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .page-subtitle {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+  }
+
+  /* KPI cards */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .kpi-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+
+  .kpi-card .kpi-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+  }
+
+  .kpi-card .kpi-value {
+    font-size: 28px;
+    font-weight: 700;
+  }
+
+  .kpi-card .kpi-detail {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Sections */
+  .section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .section-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-body { padding: 16px 18px; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg-hover); }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .badge-extractor { background: #1a3a5c; color: var(--accent); }
+  .badge-writer { background: #1a3c2c; color: var(--green); }
+  .badge-transformation { background: #2d1f4e; color: var(--purple); }
+  .badge-application { background: #3c2a10; color: var(--orange); }
+  .badge-other { background: #2a2e3d; color: var(--text-dim); }
+
+  .badge-success { background: #1a3c2c; color: var(--green); }
+  .badge-error { background: #3c1a1a; color: var(--red); }
+  .badge-warning { background: #3c2a10; color: var(--orange); }
+
+  .badge-l0 { background: #1a3a5c; color: var(--l0); }
+  .badge-l1 { background: #2d1f4e; color: var(--l1); }
+  .badge-l2 { background: #1a3c2c; color: var(--l2); }
+
+  /* Progress bar */
+  .progress-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    width: 100%;
+  }
+
+  .progress-bar .fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  .tab {
+    padding: 10px 18px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    transition: all 0.15s;
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Lineage graph */
+  .lineage-container {
+    position: relative;
+    width: 100%;
+    height: 600px;
+    background: var(--bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .lineage-container svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .lineage-container .node-label {
+    font-size: 10px;
+    fill: var(--text);
+    pointer-events: none;
+  }
+
+  .lineage-container .edge-line {
+    stroke: var(--border);
+    stroke-width: 1;
+    fill: none;
+  }
+
+  .lineage-tooltip {
+    position: absolute;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    pointer-events: none;
+    display: none;
+    z-index: 100;
+    max-width: 300px;
+  }
+
+  /* Sharing matrix */
+  .sharing-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sharing-item:last-child { border-bottom: none; }
+
+  .sharing-arrow {
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .sharing-details {
+    flex: 1;
+  }
+
+  .sharing-details .bucket-name {
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .sharing-details .project-name {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .sharing-details .sharing-type {
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .sidebar { width: 60px; min-width: 60px; }
+    .sidebar-header h1, .sidebar-header .subtitle,
+    .search-box, .nav-group-label, .nav-item .nav-label { display: none; }
+    .nav-item { padding: 8px 0; justify-content: center; }
+    .main { padding: 16px; }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* Flow diagrams */
+  .flow-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .flow-card.disabled { opacity: 0.5; }
+
+  .flow-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  .flow-header:hover { background: var(--bg-hover); }
+
+  .flow-title { font-size: 14px; font-weight: 600; flex: 1; }
+
+  .flow-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    gap: 12px;
+  }
+
+  .flow-body { padding: 0 18px 18px; display: none; }
+  .flow-body.open { display: block; }
+
+  .flow-desc {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin: 12px 0;
+    white-space: pre-wrap;
+    max-height: 100px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+
+  .flow-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--accent);
+    text-decoration: none;
+    margin: 8px 0 12px;
+  }
+
+  .flow-link:hover { text-decoration: underline; }
+
+  /* Phase pipeline */
+  .phase-pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+
+  .phase-connector {
+    width: 2px;
+    height: 12px;
+    background: var(--border);
+    margin-left: 20px;
+  }
+
+  .phase-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .phase-head {
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(79,143,247,0.06);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .phase-head .phase-deps {
+    font-weight: 400;
+    color: var(--text-dim);
+    font-size: 10px;
+    margin-left: auto;
+  }
+
+  .task-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+
+  .task-row:last-child { border-bottom: none; }
+  .task-row:hover { background: var(--bg-hover); }
+  .task-row.disabled-task { opacity: 0.35; }
+
+  .task-row a {
+    color: var(--text);
+    text-decoration: none;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .task-row a:hover { color: var(--accent); text-decoration: underline; }
+
+  .task-type-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .task-type-badge.EX { background: #1a3a5c; color: var(--accent); }
+  .task-type-badge.WR { background: #1a3c2c; color: var(--green); }
+  .task-type-badge.TR { background: #2d1f4e; color: var(--purple); }
+  .task-type-badge.AP { background: #3c2a10; color: var(--orange); }
+  .task-type-badge.FL { background: #2a3a3c; color: var(--cyan); }
+  .task-type-badge.OT { background: #2a2e3d; color: var(--text-dim); }
+
+  .task-comp {
+    font-size: 10px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    font-family: monospace;
+  }
+
+  .task-cof {
+    font-size: 9px;
+    color: var(--orange);
+    flex-shrink: 0;
+    border: 1px solid var(--orange);
+    border-radius: 3px;
+    padding: 0 3px;
+  }
+
+  /* Config table links */
+  .config-link {
+    color: var(--text);
+    text-decoration: none;
+  }
+  .config-link:hover { color: var(--accent); text-decoration: underline; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* Config description */
+  .config-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Clickable project links */
+  .project-link {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .project-link:hover { text-decoration: underline; }
+
+  /* Component stats bar chart */
+  .bar-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .bar-label {
+    width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-align: right;
+    color: var(--text-dim);
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 14px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+  }
+
+  .bar-fill-success {
+    height: 100%;
+    background: var(--green);
+    transition: width 0.3s;
+  }
+
+  .bar-fill-error {
+    height: 100%;
+    background: var(--red);
+    transition: width 0.3s;
+  }
+
+  .bar-value {
+    width: 40px;
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  /* Tier summary cards */
+  .tier-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .tier-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    border-left: 3px solid;
+  }
+
+  .tier-card.l0 { border-left-color: var(--l0); }
+  .tier-card.l1 { border-left-color: var(--l1); }
+  .tier-card.l2 { border-left-color: var(--l2); }
+
+  .tier-card .tier-name {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .tier-card .tier-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .tier-card .tier-stats {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+  }
+
+  .tier-card .tier-stat-value {
+    font-weight: 700;
+    font-size: 18px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h1>IR Explorer</h1>
+      <div class="subtitle">Keboola Project Catalog</div>
+    </div>
+    <div class="search-box">
+      <input type="text" id="search" placeholder="Search projects..." autocomplete="off">
+    </div>
+    <div class="nav-section" id="nav"></div>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<script src="catalog.js"></script>
+<script src="orchestrations.js"></script>
+<script>
+(function() {
+  'use strict';
+
+  const $ = id => document.getElementById(id);
+  const h = (tag, attrs, ...children) => {
+    const el = document.createElement(tag);
+    if (attrs) Object.entries(attrs).forEach(([k, v]) => {
+      if (k === 'className') el.className = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
+      else if (k === 'innerHTML') el.innerHTML = v;
+      else el.setAttribute(k, v);
+    });
+    children.flat().forEach(c => {
+      if (c == null) return;
+      el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    });
+    return el;
+  };
+
+  // State
+  let currentView = 'dashboard';
+  let currentProject = null;
+  let currentTab = 'flows';
+
+  // Helper functions
+  function tierColor(tier) {
+    return tier === 'L0' ? 'var(--l0)' : tier === 'L1' ? 'var(--l1)' : 'var(--l2)';
+  }
+
+  function healthColor(rate) {
+    if (rate >= 95) return 'var(--green)';
+    if (rate >= 80) return 'var(--orange)';
+    if (rate > 0) return 'var(--red)';
+    return 'var(--text-dim)';
+  }
+
+  function healthBadge(rate) {
+    if (rate >= 95) return 'badge-success';
+    if (rate >= 80) return 'badge-warning';
+    return 'badge-error';
+  }
+
+  function typeBadge(type) {
+    const map = {
+      extractor: 'badge-extractor',
+      writer: 'badge-writer',
+      transformation: 'badge-transformation',
+      application: 'badge-application'
+    };
+    return map[type] || 'badge-other';
+  }
+
+  function shortComponent(compId) {
+    return compId.replace('keboola.', '').replace('ex-generic-v2', 'generic-extractor');
+  }
+
+  function formatDuration(seconds) {
+    if (!seconds) return '-';
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.round(seconds/60)}m`;
+    return `${Math.round(seconds/3600)}h ${Math.round((seconds%3600)/60)}m`;
+  }
+
+  function projectLink(alias) {
+    const proj = CATALOG.projects[alias];
+    const name = proj ? proj.name : alias;
+    const el = h('span', {className: 'project-link'}, name);
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigateTo('project', alias);
+    });
+    return el;
+  }
+
+  // Navigation
+  function buildNav(filter) {
+    const nav = $('nav');
+    nav.innerHTML = '';
+
+    // Dashboard link
+    const dashItem = h('div', {
+      className: 'nav-special' + (currentView === 'dashboard' ? ' active' : ''),
+      onClick: () => navigateTo('dashboard')
+    }, 'Dashboard');
+    nav.appendChild(dashItem);
+
+    // Lineage link
+    const linItem = h('div', {
+      className: 'nav-special' + (currentView === 'lineage' ? ' active' : ''),
+      onClick: () => navigateTo('lineage')
+    }, 'Lineage Graph');
+    nav.appendChild(linItem);
+
+    // Matrix link
+    const matItem = h('div', {
+      className: 'nav-special' + (currentView === 'matrix' ? ' active' : ''),
+      onClick: () => navigateTo('matrix')
+    }, 'Sharing Matrix');
+    nav.appendChild(matItem);
+
+    const filterLc = (filter || '').toLowerCase();
+
+    for (const tier of ['L0', 'L1', 'L2']) {
+      const projects = CATALOG.tiers[tier].projects.filter(a =>
+        !filterLc || a.includes(filterLc) || CATALOG.projects[a].name.toLowerCase().includes(filterLc)
+      );
+      if (projects.length === 0 && filterLc) continue;
+
+      const label = h('div', {className: 'nav-group-label'},
+        h('span', {className: 'dot', style: `background:${tierColor(tier)}`}),
+        `${tier} - ${CATALOG.tiers[tier].name}`,
+        h('span', {className: 'count'}, `${projects.length}`)
+      );
+      nav.appendChild(label);
+
+      for (const alias of projects) {
+        const p = CATALOG.projects[alias];
+        const rate = p.job_stats?.success_rate_pct ?? -1;
+        const color = rate < 0 ? 'var(--text-dim)' : healthColor(rate);
+        const shortName = p.name.replace(/^IR L\d\s*[-\[\]]*\s*(\[Data Processes\]\s*)?/, '');
+
+        const item = h('div', {
+          className: 'nav-item' + (currentView === 'project' && currentProject === alias ? ' active' : ''),
+          onClick: () => navigateTo('project', alias),
+          title: p.name
+        },
+          h('span', {className: 'health', style: `background:${color}`}),
+          h('span', {className: 'nav-label'}, shortName)
+        );
+        nav.appendChild(item);
+      }
+    }
+  }
+
+  function navigateTo(view, project) {
+    currentView = view;
+    currentProject = project || null;
+    currentTab = 'flows';
+    buildNav($('search').value);
+    renderView();
+  }
+
+  // Dashboard view
+  function renderDashboard() {
+    const main = $('main');
+    const projects = Object.values(CATALOG.projects);
+    const totalConfigs = projects.reduce((s, p) => s + (p.configurations?.total_configs || 0), 0);
+    const totalJobs = projects.reduce((s, p) => s + (p.job_stats?.total_jobs || 0), 0);
+    const avgSuccess = projects.filter(p => p.job_stats?.total_jobs > 0)
+      .reduce((s, p, _, a) => s + p.job_stats.success_rate_pct / a.length, 0);
+
+    main.innerHTML = '';
+    main.appendChild(h('div', {className: 'page-title'}, 'IR Project Ecosystem'));
+    main.appendChild(h('div', {className: 'page-subtitle'},
+      `${projects.length} projects across 3 tiers | ${CATALOG.lineage.summary.total_edges} data sharing links | Generated: ${CATALOG.metadata.generated_at}`));
+
+    // KPIs
+    const kpiGrid = h('div', {className: 'kpi-grid'});
+    const kpis = [
+      { label: 'Projects', value: projects.length, detail: `L0: ${CATALOG.tiers.L0.projects.length}, L1: ${CATALOG.tiers.L1.projects.length}, L2: ${CATALOG.tiers.L2.projects.length}` },
+      { label: 'Configurations', value: totalConfigs.toLocaleString(), detail: 'Across all projects' },
+      { label: 'Recent Jobs', value: totalJobs.toLocaleString(), detail: 'Last 100 per project' },
+      { label: 'Avg Success Rate', value: `${avgSuccess.toFixed(1)}%`, detail: 'Weighted by project' },
+      { label: 'Lineage Edges', value: CATALOG.lineage.summary.total_edges, detail: `${CATALOG.lineage.summary.projects_sharing_out} sharing out` },
+    ];
+    for (const kpi of kpis) {
+      kpiGrid.appendChild(h('div', {className: 'kpi-card'},
+        h('div', {className: 'kpi-label'}, kpi.label),
+        h('div', {className: 'kpi-value'}, String(kpi.value)),
+        h('div', {className: 'kpi-detail'}, kpi.detail)
+      ));
+    }
+    main.appendChild(kpiGrid);
+
+    // Tier cards
+    const tierCards = h('div', {className: 'tier-cards'});
+    for (const tier of ['L0', 'L1', 'L2']) {
+      const info = CATALOG.tiers[tier];
+      const tProjects = info.projects.map(a => CATALOG.projects[a]);
+      const tConfigs = tProjects.reduce((s, p) => s + (p.configurations?.total_configs || 0), 0);
+      const tSuccess = tProjects.filter(p => p.job_stats?.total_jobs > 0)
+        .reduce((s, p, _, a) => s + p.job_stats.success_rate_pct / a.length, 0);
+
+      tierCards.appendChild(h('div', {className: `tier-card ${tier.toLowerCase()}`},
+        h('div', {className: 'tier-name'}, `${tier}: ${info.name}`),
+        h('div', {className: 'tier-desc'}, info.description),
+        h('div', {className: 'tier-stats'},
+          h('div', {},
+            h('div', {className: 'tier-stat-value'}, String(info.projects.length)),
+            h('div', {style: 'color:var(--text-dim);font-size:11px'}, 'Projects')),
+          h('div', {},
+            h('div', {className: 'tier-stat-value'}, tConfigs.toLocaleString()),
+            h('div', {style: 'color:var(--text-dim);font-size:11px'}, 'Configs')),
+          h('div', {},
+            h('div', {className: 'tier-stat-value', style: `color:${healthColor(tSuccess)}`}, `${tSuccess.toFixed(0)}%`),
+            h('div', {style: 'color:var(--text-dim);font-size:11px'}, 'Success'))
+        )
+      ));
+    }
+    main.appendChild(tierCards);
+
+    // Projects table
+    const section = h('div', {className: 'section'});
+    section.appendChild(h('div', {className: 'section-header'}, 'All Projects'));
+    const tbody = h('tbody');
+    const table = h('table', {},
+      h('thead', {}, h('tr', {},
+        h('th', {}, 'Tier'),
+        h('th', {}, 'Project'),
+        h('th', {}, 'Configs'),
+        h('th', {}, 'Success Rate'),
+        h('th', {}, 'Health'),
+        h('th', {}, 'Shares Out'),
+        h('th', {}, 'Receives In'),
+      )),
+      tbody
+    );
+
+    for (const alias of [...CATALOG.tiers.L0.projects, ...CATALOG.tiers.L1.projects, ...CATALOG.tiers.L2.projects]) {
+      const p = CATALOG.projects[alias];
+      const rate = p.job_stats?.success_rate_pct ?? -1;
+      const nConfigs = p.configurations?.total_configs || 0;
+
+      const progressBar = h('div', {className: 'progress-bar'},
+        h('div', {className: 'fill', style: `width:${rate >= 0 ? rate : 0}%;background:${healthColor(Math.max(0,rate))}`})
+      );
+
+      const row = h('tr', {style: 'cursor:pointer', onClick: () => navigateTo('project', alias)},
+        h('td', {}, h('span', {className: `badge badge-${p.tier.toLowerCase()}`}, p.tier)),
+        h('td', {}, p.name),
+        h('td', {}, String(nConfigs)),
+        h('td', {style: 'width:150px'},
+          h('div', {style: 'display:flex;align-items:center;gap:8px'},
+            progressBar,
+            h('span', {style: `font-size:12px;color:${healthColor(Math.max(0,rate))}`}, rate >= 0 ? `${rate}%` : 'N/A')
+          )
+        ),
+        h('td', {},
+          rate >= 95 ? h('span', {className: 'badge badge-success'}, 'Healthy') :
+          rate >= 80 ? h('span', {className: 'badge badge-warning'}, 'Degraded') :
+          rate > 0 ? h('span', {className: 'badge badge-error'}, 'Failing') :
+          h('span', {className: 'badge badge-other'}, rate === 0 ? 'No jobs' : 'N/A')
+        ),
+        h('td', {}, String(p.sharing_out?.length || 0)),
+        h('td', {}, String(p.sharing_in?.length || 0)),
+      );
+      tbody.appendChild(row);
+    }
+    const body = h('div', {className: 'section-body', style: 'padding:0'});
+    body.appendChild(table);
+    section.appendChild(body);
+    main.appendChild(section);
+  }
+
+  // Project detail view
+  function renderProjectDetail(alias) {
+    const main = $('main');
+    const p = CATALOG.projects[alias];
+    if (!p) { main.innerHTML = '<div class="empty-state">Project not found</div>'; return; }
+
+    main.innerHTML = '';
+    main.appendChild(h('div', {style: 'display:flex;align-items:center;gap:12px;margin-bottom:4px'},
+      h('span', {className: `badge badge-${p.tier.toLowerCase()}`}, p.tier),
+      h('div', {className: 'page-title'}, p.name)
+    ));
+    main.appendChild(h('div', {className: 'page-subtitle'},
+      `Project ID: ${p.project_id} | Alias: ${alias}`));
+
+    // KPIs
+    const nConfigs = p.configurations?.total_configs || 0;
+    const rate = p.job_stats?.success_rate_pct ?? -1;
+    const totalJobs = p.job_stats?.total_jobs || 0;
+    const avgDur = p.job_stats?.avg_duration_seconds || 0;
+
+    const kpiGrid = h('div', {className: 'kpi-grid'});
+    kpiGrid.appendChild(h('div', {className: 'kpi-card'},
+      h('div', {className: 'kpi-label'}, 'Configurations'),
+      h('div', {className: 'kpi-value'}, String(nConfigs)),
+      h('div', {className: 'kpi-detail'}, Object.entries(p.configurations?.by_type || {}).map(([t,v]) => `${t}: ${v.count}`).join(', ') || '-')
+    ));
+    kpiGrid.appendChild(h('div', {className: 'kpi-card'},
+      h('div', {className: 'kpi-label'}, 'Success Rate'),
+      h('div', {className: 'kpi-value', style: `color:${healthColor(Math.max(0,rate))}`}, rate >= 0 ? `${rate}%` : 'N/A'),
+      h('div', {className: 'kpi-detail'}, `${totalJobs} recent jobs`)
+    ));
+    kpiGrid.appendChild(h('div', {className: 'kpi-card'},
+      h('div', {className: 'kpi-label'}, 'Avg Duration'),
+      h('div', {className: 'kpi-value'}, formatDuration(avgDur)),
+      h('div', {className: 'kpi-detail'}, 'Per job run')
+    ));
+    kpiGrid.appendChild(h('div', {className: 'kpi-card'},
+      h('div', {className: 'kpi-label'}, 'Data Sharing'),
+      h('div', {className: 'kpi-value'}, `${(p.sharing_out||[]).length} / ${(p.sharing_in||[]).length}`),
+      h('div', {className: 'kpi-detail'}, 'Out / In')
+    ));
+    main.appendChild(kpiGrid);
+
+    // Count flows for this project
+    const projectFlows = Object.values(typeof ORCHESTRATIONS !== 'undefined' ? ORCHESTRATIONS : {})
+      .filter(o => o.project_alias === alias);
+    const activeFlows = projectFlows.filter(o => !o.is_disabled);
+
+    // Tabs
+    const tabs = h('div', {className: 'tabs'});
+    const tabDefs = [
+      {id: 'flows', label: `Flows (${activeFlows.length}/${projectFlows.length})`},
+      {id: 'configs', label: `Configurations (${nConfigs})`},
+      {id: 'jobs', label: `Job Health (${totalJobs})`},
+      {id: 'sharing-out', label: `Sharing Out (${(p.sharing_out||[]).length})`},
+      {id: 'sharing-in', label: `Sharing In (${(p.sharing_in||[]).length})`},
+    ];
+    for (const t of tabDefs) {
+      tabs.appendChild(h('div', {
+        className: 'tab' + (currentTab === t.id ? ' active' : ''),
+        onClick: () => { currentTab = t.id; renderProjectDetail(alias); }
+      }, t.label));
+    }
+    main.appendChild(tabs);
+
+    // Tab content
+    if (currentTab === 'flows') renderFlowsTab(main, alias, projectFlows);
+    else if (currentTab === 'configs') renderConfigsTab(main, p);
+    else if (currentTab === 'jobs') renderJobsTab(main, p);
+    else if (currentTab === 'sharing-out') renderSharingTab(main, p.sharing_out || [], 'out');
+    else if (currentTab === 'sharing-in') renderSharingTab(main, p.sharing_in || [], 'in');
+  }
+
+  function renderConfigsTab(main, p) {
+    const byType = p.configurations?.by_type || {};
+    const projectId = p.project_id;
+
+    for (const [type, data] of Object.entries(byType)) {
+      const section = h('div', {className: 'section'});
+      section.appendChild(h('div', {className: 'section-header'},
+        h('span', {className: `badge ${typeBadge(type)}`}, type),
+        ` (${data.count})`
+      ));
+
+      const tbody = h('tbody');
+      for (const c of data.configs) {
+        const url = kbcConfigUrl(projectId, c.component_id, c.config_id);
+        tbody.appendChild(h('tr', {},
+          h('td', {},
+            h('a', {className: 'config-link', href: url, target: '_blank', rel: 'noopener'}, c.config_name || '-')
+          ),
+          h('td', {}, h('code', {style: 'font-size:11px;color:var(--text-dim)'}, shortComponent(c.component_id))),
+          h('td', {}, h('span', {className: 'config-desc', title: c.config_description}, c.config_description || '-')),
+          h('td', {}, h('code', {style: 'font-size:11px;color:var(--text-dim)'}, c.config_id)),
+        ));
+      }
+
+      const table = h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Name'),
+          h('th', {}, 'Component'),
+          h('th', {}, 'Description'),
+          h('th', {}, 'Config ID'),
+        )),
+        tbody
+      );
+      const body = h('div', {className: 'section-body', style: 'padding:0'});
+      body.appendChild(table);
+      section.appendChild(body);
+      main.appendChild(section);
+    }
+
+    if (Object.keys(byType).length === 0) {
+      main.appendChild(h('div', {className: 'empty-state'}, 'No configurations found'));
+    }
+  }
+
+  function renderJobsTab(main, p) {
+    const stats = p.job_stats || {};
+    if (!stats.total_jobs) {
+      main.appendChild(h('div', {className: 'empty-state'}, 'No job data available'));
+      return;
+    }
+
+    // Status breakdown
+    const statusSection = h('div', {className: 'section'});
+    statusSection.appendChild(h('div', {className: 'section-header'}, 'Job Status Breakdown'));
+    const statusBody = h('div', {className: 'section-body'});
+    const statusCounts = stats.status_counts || {};
+    const statusGrid = h('div', {className: 'kpi-grid'});
+    for (const [status, count] of Object.entries(statusCounts)) {
+      const pct = ((count / stats.total_jobs) * 100).toFixed(1);
+      const color = status === 'success' ? 'var(--green)' : status === 'error' ? 'var(--red)' : 'var(--orange)';
+      statusGrid.appendChild(h('div', {className: 'kpi-card'},
+        h('div', {className: 'kpi-label'}, status),
+        h('div', {className: 'kpi-value', style: `color:${color}`}, String(count)),
+        h('div', {className: 'kpi-detail'}, `${pct}% of total`)
+      ));
+    }
+    statusBody.appendChild(statusGrid);
+    statusSection.appendChild(statusBody);
+    main.appendChild(statusSection);
+
+    // Date range
+    if (stats.date_range?.earliest) {
+      const rangeSection = h('div', {className: 'section'});
+      rangeSection.appendChild(h('div', {className: 'section-header'}, 'Time Range'));
+      rangeSection.appendChild(h('div', {className: 'section-body'},
+        h('div', {style: 'font-size:13px'},
+          `From: ${new Date(stats.date_range.earliest).toLocaleString()} `,
+          h('br'),
+          `To: ${new Date(stats.date_range.latest).toLocaleString()}`
+        )
+      ));
+      main.appendChild(rangeSection);
+    }
+
+    // Component stats chart
+    const compSection = h('div', {className: 'section'});
+    compSection.appendChild(h('div', {className: 'section-header'}, 'Component Health'));
+    const chart = h('div', {className: 'bar-chart'});
+    const compStats = stats.component_stats || {};
+    const maxTotal = Math.max(...Object.values(compStats).map(s => s.total), 1);
+
+    for (const [comp, s] of Object.entries(compStats)) {
+      const successW = (s.success / maxTotal) * 100;
+      const errorW = (s.error / maxTotal) * 100;
+
+      chart.appendChild(h('div', {className: 'bar-row'},
+        h('div', {className: 'bar-label', title: comp}, shortComponent(comp)),
+        h('div', {className: 'bar-track'},
+          h('div', {className: 'bar-fill-success', style: `width:${successW}%`}),
+          h('div', {className: 'bar-fill-error', style: `width:${errorW}%`})
+        ),
+        h('div', {className: 'bar-value'}, `${s.total}`)
+      ));
+    }
+    compSection.appendChild(h('div', {className: 'section-body'}, chart));
+    main.appendChild(compSection);
+
+    // Failing configs
+    if (stats.failing_configs?.length > 0) {
+      const failSection = h('div', {className: 'section'});
+      failSection.appendChild(h('div', {className: 'section-header'},
+        h('span', {style: 'color:var(--red)'}, 'Failing Configurations')
+      ));
+
+      const tbody = h('tbody');
+      for (const fc of stats.failing_configs) {
+        tbody.appendChild(h('tr', {},
+          h('td', {}, h('code', {style: 'font-size:11px'}, shortComponent(fc.component_id))),
+          h('td', {}, h('code', {style: 'font-size:11px;color:var(--text-dim)'}, fc.config_key.split('/')[1] || '')),
+          h('td', {}, h('span', {style: 'color:var(--red)'}, String(fc.error_count))),
+          h('td', {}, String(fc.total_runs)),
+          h('td', {},
+            h('span', {className: `badge ${healthBadge(100 - fc.error_rate_pct)}`}, `${fc.error_rate_pct}%`)
+          ),
+          h('td', {style: 'font-size:11px;color:var(--text-dim)'}, fc.last_run ? new Date(fc.last_run).toLocaleDateString() : '-'),
+        ));
+      }
+
+      const table = h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Component'),
+          h('th', {}, 'Config ID'),
+          h('th', {}, 'Errors'),
+          h('th', {}, 'Total'),
+          h('th', {}, 'Error Rate'),
+          h('th', {}, 'Last Run'),
+        )),
+        tbody
+      );
+      const body = h('div', {className: 'section-body', style: 'padding:0'});
+      body.appendChild(table);
+      failSection.appendChild(body);
+      main.appendChild(failSection);
+    }
+  }
+
+  function renderSharingTab(main, items, direction) {
+    if (items.length === 0) {
+      main.appendChild(h('div', {className: 'empty-state'},
+        direction === 'out' ? 'This project does not share any data' : 'This project does not receive shared data'));
+      return;
+    }
+
+    // Group by target/source project
+    const grouped = {};
+    for (const item of items) {
+      const key = direction === 'out' ? item.target_project : item.source_project;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(item);
+    }
+
+    for (const [projAlias, shares] of Object.entries(grouped).sort((a,b) => a[0].localeCompare(b[0]))) {
+      const proj = CATALOG.projects[projAlias];
+      const projName = proj?.name || shares[0]?.[direction === 'out' ? 'target_project_name' : 'source_project_name'] || projAlias;
+      const tier = proj?.tier;
+
+      const section = h('div', {className: 'section'});
+      const headerContent = h('div', {className: 'section-header', style: 'cursor:pointer'},
+        direction === 'out' ? '\u2192' : '\u2190',
+        ' ',
+        tier ? h('span', {className: `badge badge-${tier.toLowerCase()}`}, tier) : null,
+        ' '
+      );
+      headerContent.appendChild(projectLink(projAlias));
+      headerContent.appendChild(h('span', {className: 'count', style: 'margin-left:auto;color:var(--text-dim);font-size:12px'}, `${shares.length} buckets`));
+      section.appendChild(headerContent);
+
+      const body = h('div', {className: 'section-body'});
+      for (const share of shares) {
+        const srcBucket = direction === 'out' ? share.bucket : share.source_bucket;
+        const tgtBucket = direction === 'out' ? share.target_bucket : share.bucket;
+
+        body.appendChild(h('div', {className: 'sharing-item'},
+          h('div', {className: 'sharing-arrow', style: `color:${direction === 'out' ? 'var(--green)' : 'var(--accent)'}`},
+            direction === 'out' ? '\u2192' : '\u2190'),
+          h('div', {className: 'sharing-details'},
+            h('div', {className: 'bucket-name'},
+              h('code', {style: 'font-size:12px'}, srcBucket),
+              ' \u2192 ',
+              h('code', {style: 'font-size:12px'}, tgtBucket)
+            ),
+            h('div', {className: 'sharing-type'}, share.sharing_type)
+          )
+        ));
+      }
+      section.appendChild(body);
+      main.appendChild(section);
+    }
+  }
+
+  // Flows tab
+  const KBC_BASE = 'https://connection.us-east4.gcp.keboola.com/admin/projects';
+
+  function kbcConfigUrl(projectId, componentId, configId) {
+    // Transformations have their own URL pattern
+    if (componentId.includes('transformation')) {
+      return `${KBC_BASE}/${projectId}/transformations-v2/${componentId}/${configId}`;
+    }
+    // Orchestrators / flows
+    if (componentId === 'keboola.orchestrator') {
+      return `${KBC_BASE}/${projectId}/flows/${configId}`;
+    }
+    // All other components (extractors, writers, applications)
+    return `${KBC_BASE}/${projectId}/components/${componentId}/${configId}`;
+  }
+
+  function kbcFlowUrl(projectId, configId) {
+    return `${KBC_BASE}/${projectId}/flows/${configId}`;
+  }
+
+  function renderFlowsTab(main, alias, flows) {
+    if (flows.length === 0) {
+      main.appendChild(h('div', {className: 'empty-state'}, 'No orchestrations/flows found'));
+      return;
+    }
+
+    const projectId = CATALOG.projects[alias]?.project_id;
+
+    // Sort: active first, then by name
+    flows.sort((a, b) => {
+      if (a.is_disabled !== b.is_disabled) return a.is_disabled ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+
+    for (const flow of flows) {
+      const card = h('div', {className: `flow-card ${flow.is_disabled ? 'disabled' : ''}`});
+
+      // Header
+      const header = h('div', {className: 'flow-header'});
+      header.appendChild(h('div', {className: 'flow-title'},
+        flow.is_disabled ? '[DISABLED] ' : '',
+        flow.name
+      ));
+      header.appendChild(h('div', {className: 'flow-meta'},
+        h('span', {}, `${flow.total_phases} phases`),
+        h('span', {}, `${flow.total_tasks} tasks`),
+        h('span', {}, `v${flow.version}`),
+        flow.last_modified_by ? h('span', {}, flow.last_modified_by.split('@')[0]) : null
+      ));
+
+      // Body
+      const body = h('div', {className: 'flow-body'});
+
+      // Toggle
+      header.addEventListener('click', () => {
+        body.classList.toggle('open');
+      });
+
+      // Link to Keboola UI
+      if (projectId) {
+        body.appendChild(h('a', {
+          className: 'flow-link',
+          href: kbcFlowUrl(projectId, flow.config_id),
+          target: '_blank',
+          rel: 'noopener'
+        }, '\u2197 Open in Keboola'));
+      }
+
+      // Description
+      if (flow.description) {
+        body.appendChild(h('div', {className: 'flow-desc'}, flow.description));
+      }
+
+      // Phase pipeline
+      const pipeline = h('div', {className: 'phase-pipeline'});
+
+      for (let i = 0; i < flow.phases.length; i++) {
+        const phase = flow.phases[i];
+        if (i > 0) {
+          pipeline.appendChild(h('div', {className: 'phase-connector'}));
+        }
+
+        const block = h('div', {className: 'phase-block'});
+
+        // Phase header
+        const deps = phase.depends_on.length > 0
+          ? `after: ${phase.depends_on.map(d => {
+              const dep = flow.phases.find(p => p.id === d);
+              return dep ? dep.name : `#${d}`;
+            }).join(', ')}`
+          : 'start';
+
+        block.appendChild(h('div', {className: 'phase-head'},
+          `${i + 1}. ${phase.name}`,
+          h('span', {className: 'phase-deps'}, deps)
+        ));
+
+        // Tasks
+        for (const task of phase.tasks) {
+          const url = projectId ? kbcConfigUrl(projectId, task.component_id, task.config_id) : null;
+
+          const row = h('div', {className: `task-row ${task.enabled ? '' : 'disabled-task'}`},
+            h('span', {className: `task-type-badge ${task.type_icon}`}, task.type_icon),
+            url
+              ? h('a', {href: url, target: '_blank', rel: 'noopener', title: `${task.component_id} / ${task.config_id}`}, task.name)
+              : h('span', {style: 'flex:1'}, task.name),
+            h('span', {className: 'task-comp'}, task.component_short),
+            task.continue_on_failure ? h('span', {className: 'task-cof', title: 'Continue on failure'}, 'CoF') : null
+          );
+          block.appendChild(row);
+        }
+
+        if (phase.tasks.length === 0) {
+          block.appendChild(h('div', {className: 'task-row', style: 'color:var(--text-dim);font-style:italic'}, 'No enabled tasks'));
+        }
+
+        pipeline.appendChild(block);
+      }
+
+      body.appendChild(pipeline);
+      card.appendChild(header);
+      card.appendChild(body);
+      main.appendChild(card);
+    }
+  }
+
+  // Lineage graph view
+  function renderLineageGraph() {
+    const main = $('main');
+    main.innerHTML = '';
+    main.appendChild(h('div', {className: 'page-title'}, 'Data Lineage Graph'));
+    main.appendChild(h('div', {className: 'page-subtitle'},
+      `${CATALOG.lineage.summary.total_edges} data sharing connections across the IR ecosystem`));
+
+    const container = h('div', {className: 'lineage-container'});
+    const tooltip = h('div', {className: 'lineage-tooltip'});
+    container.appendChild(tooltip);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    container.appendChild(svg);
+    main.appendChild(container);
+
+    // Build unique nodes and edges
+    const nodeSet = new Set();
+    const edges = [];
+    const edgeMap = {};
+
+    for (const edge of CATALOG.lineage.edges) {
+      nodeSet.add(edge.source_project_alias);
+      nodeSet.add(edge.target_project_alias);
+      const key = `${edge.source_project_alias}|${edge.target_project_alias}`;
+      if (!edgeMap[key]) {
+        edgeMap[key] = { source: edge.source_project_alias, target: edge.target_project_alias, buckets: [] };
+      }
+      edgeMap[key].buckets.push(`${edge.source_bucket_id} -> ${edge.target_bucket_id}`);
+    }
+    const uniqueEdges = Object.values(edgeMap);
+
+    // Layout: force-directed simulation (simple)
+    const nodes = [];
+    let idx = 0;
+    const rect = container.getBoundingClientRect();
+    const W = rect.width || 900;
+    const H = rect.height || 600;
+
+    for (const alias of nodeSet) {
+      const proj = CATALOG.projects[alias];
+      const tier = proj?.tier || 'EXT';
+      const tx = tier === 'L0' ? 0.2 : tier === 'L1' ? 0.5 : tier === 'L2' ? 0.8 : 0.95;
+      nodes.push({
+        alias,
+        name: proj?.name || alias,
+        tier,
+        x: tx * W + (Math.random() - 0.5) * W * 0.15,
+        y: (idx / nodeSet.size) * H * 0.85 + H * 0.08,
+        vx: 0, vy: 0
+      });
+      idx++;
+    }
+
+    const nodeMap = {};
+    nodes.forEach(n => nodeMap[n.alias] = n);
+
+    // Simple force simulation
+    function simulate(iterations) {
+      for (let iter = 0; iter < iterations; iter++) {
+        // Repulsion between nodes
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            let dx = nodes[j].x - nodes[i].x;
+            let dy = nodes[j].y - nodes[i].y;
+            let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+            let force = 5000 / (dist * dist);
+            let fx = dx / dist * force;
+            let fy = dy / dist * force;
+            nodes[i].vx -= fx; nodes[i].vy -= fy;
+            nodes[j].vx += fx; nodes[j].vy += fy;
+          }
+        }
+
+        // Attraction along edges
+        for (const e of uniqueEdges) {
+          const s = nodeMap[e.source];
+          const t = nodeMap[e.target];
+          if (!s || !t) continue;
+          let dx = t.x - s.x;
+          let dy = t.y - s.y;
+          let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+          let force = (dist - 150) * 0.01;
+          let fx = dx / dist * force;
+          let fy = dy / dist * force;
+          s.vx += fx; s.vy += fy;
+          t.vx -= fx; t.vy -= fy;
+        }
+
+        // Tier column attraction
+        for (const n of nodes) {
+          const targetX = n.tier === 'L0' ? W * 0.18 : n.tier === 'L1' ? W * 0.50 : n.tier === 'L2' ? W * 0.82 : W * 0.95;
+          n.vx += (targetX - n.x) * 0.05;
+        }
+
+        // Apply velocities
+        for (const n of nodes) {
+          n.vx *= 0.7; n.vy *= 0.7;
+          n.x += n.vx; n.y += n.vy;
+          n.x = Math.max(40, Math.min(W - 40, n.x));
+          n.y = Math.max(30, Math.min(H - 30, n.y));
+        }
+      }
+    }
+
+    simulate(200);
+
+    // Render SVG
+    const ns = 'http://www.w3.org/2000/svg';
+
+    // Tier labels
+    for (const [tier, tx] of [['L0', 0.18], ['L1', 0.50], ['L2', 0.82]]) {
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', W * tx);
+      label.setAttribute('y', 18);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('fill', tierColor(tier));
+      label.setAttribute('font-size', '12');
+      label.setAttribute('font-weight', '600');
+      label.setAttribute('opacity', '0.6');
+      label.textContent = `${tier}: ${CATALOG.tiers[tier]?.name || tier}`;
+      svg.appendChild(label);
+    }
+
+    // Edges
+    for (const e of uniqueEdges) {
+      const s = nodeMap[e.source];
+      const t = nodeMap[e.target];
+      if (!s || !t) continue;
+
+      const line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', s.x);
+      line.setAttribute('y1', s.y);
+      line.setAttribute('x2', t.x);
+      line.setAttribute('y2', t.y);
+      line.setAttribute('stroke', 'rgba(79,143,247,0.15)');
+      line.setAttribute('stroke-width', Math.min(4, 1 + e.buckets.length * 0.3));
+
+      line.addEventListener('mouseenter', (ev) => {
+        line.setAttribute('stroke', 'rgba(79,143,247,0.6)');
+        line.setAttribute('stroke-width', Math.min(6, 2 + e.buckets.length * 0.5));
+        tooltip.style.display = 'block';
+        tooltip.innerHTML = `<strong>${s.name} \u2192 ${t.name}</strong><br><br>${e.buckets.map(b => `<code style="font-size:10px">${b}</code>`).join('<br>')}`;
+      });
+      line.addEventListener('mousemove', (ev) => {
+        const cr = container.getBoundingClientRect();
+        tooltip.style.left = (ev.clientX - cr.left + 10) + 'px';
+        tooltip.style.top = (ev.clientY - cr.top + 10) + 'px';
+      });
+      line.addEventListener('mouseleave', () => {
+        line.setAttribute('stroke', 'rgba(79,143,247,0.15)');
+        line.setAttribute('stroke-width', Math.min(4, 1 + e.buckets.length * 0.3));
+        tooltip.style.display = 'none';
+      });
+
+      svg.appendChild(line);
+    }
+
+    // Arrow markers
+    const defs = document.createElementNS(ns, 'defs');
+    const marker = document.createElementNS(ns, 'marker');
+    marker.setAttribute('id', 'arrowhead');
+    marker.setAttribute('markerWidth', '6');
+    marker.setAttribute('markerHeight', '4');
+    marker.setAttribute('refX', '6');
+    marker.setAttribute('refY', '2');
+    marker.setAttribute('orient', 'auto');
+    const arrowPath = document.createElementNS(ns, 'path');
+    arrowPath.setAttribute('d', 'M0,0 L6,2 L0,4 Z');
+    arrowPath.setAttribute('fill', 'rgba(79,143,247,0.3)');
+    marker.appendChild(arrowPath);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    // Nodes
+    for (const n of nodes) {
+      const g = document.createElementNS(ns, 'g');
+      g.style.cursor = 'pointer';
+
+      const circle = document.createElementNS(ns, 'circle');
+      circle.setAttribute('cx', n.x);
+      circle.setAttribute('cy', n.y);
+      circle.setAttribute('r', 8);
+      circle.setAttribute('fill', tierColor(n.tier === 'L0' ? 'L0' : n.tier === 'L1' ? 'L1' : n.tier === 'L2' ? 'L2' : 'L0'));
+      circle.setAttribute('stroke', 'var(--bg)');
+      circle.setAttribute('stroke-width', '2');
+
+      const proj = CATALOG.projects[n.alias];
+      const shortName = n.name.replace(/^IR L\d\s*[-\[\]]*\s*(\[Data Processes\]\s*)?/, '');
+
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', n.x);
+      text.setAttribute('y', n.y + 18);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('fill', 'var(--text-dim)');
+      text.setAttribute('font-size', '9');
+      text.textContent = shortName;
+
+      g.appendChild(circle);
+      g.appendChild(text);
+
+      g.addEventListener('click', () => navigateTo('project', n.alias));
+      g.addEventListener('mouseenter', () => {
+        circle.setAttribute('r', 11);
+        circle.setAttribute('stroke', tierColor(n.tier));
+        circle.setAttribute('stroke-width', '3');
+      });
+      g.addEventListener('mouseleave', () => {
+        circle.setAttribute('r', 8);
+        circle.setAttribute('stroke', 'var(--bg)');
+        circle.setAttribute('stroke-width', '2');
+      });
+
+      svg.appendChild(g);
+    }
+  }
+
+  // Sharing matrix view
+  function renderMatrix() {
+    const main = $('main');
+    main.innerHTML = '';
+    main.appendChild(h('div', {className: 'page-title'}, 'Data Sharing Matrix'));
+    main.appendChild(h('div', {className: 'page-subtitle'},
+      'Which projects share data with which - grouped by source project'));
+
+    // Group edges by source
+    const bySource = {};
+    for (const edge of CATALOG.lineage.edges) {
+      const src = edge.source_project_alias;
+      if (!bySource[src]) bySource[src] = [];
+      bySource[src].push(edge);
+    }
+
+    for (const [src, edges] of Object.entries(bySource).sort((a,b) => a[0].localeCompare(b[0]))) {
+      const srcProj = CATALOG.projects[src];
+      const tier = srcProj?.tier;
+
+      const section = h('div', {className: 'section'});
+      const header = h('div', {className: 'section-header'},
+        tier ? h('span', {className: `badge badge-${tier.toLowerCase()}`}, tier) : null,
+        ' '
+      );
+      header.appendChild(projectLink(src));
+      header.appendChild(h('span', {style: 'margin-left:auto;font-size:12px;color:var(--text-dim)'}, `${edges.length} shares`));
+      section.appendChild(header);
+
+      // Group by target
+      const byTarget = {};
+      for (const e of edges) {
+        const tgt = e.target_project_alias;
+        if (!byTarget[tgt]) byTarget[tgt] = [];
+        byTarget[tgt].push(e);
+      }
+
+      const tbody = h('tbody');
+      for (const [tgt, tgtEdges] of Object.entries(byTarget).sort((a,b) => a[0].localeCompare(b[0]))) {
+        const tgtProj = CATALOG.projects[tgt];
+        const tgtTier = tgtProj?.tier;
+
+        for (let i = 0; i < tgtEdges.length; i++) {
+          const e = tgtEdges[i];
+          const row = h('tr', {},
+            i === 0 ? h('td', {rowspan: String(tgtEdges.length), style: 'vertical-align:top'},
+              tgtTier ? h('span', {className: `badge badge-${tgtTier.toLowerCase()}`, style: 'margin-right:6px'}, tgtTier) : null,
+              projectLink(tgt)
+            ) : null,
+            h('td', {}, h('code', {style: 'font-size:11px'}, e.source_bucket_id)),
+            h('td', {style: 'color:var(--text-dim)'}, '\u2192'),
+            h('td', {}, h('code', {style: 'font-size:11px'}, e.target_bucket_id)),
+            h('td', {}, h('span', {style: 'font-size:11px;color:var(--accent)'}, e.sharing_type))
+          );
+          tbody.appendChild(row);
+        }
+      }
+
+      const table = h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, 'Target Project'),
+          h('th', {}, 'Source Bucket'),
+          h('th', {}, ''),
+          h('th', {}, 'Target Bucket'),
+          h('th', {}, 'Type'),
+        )),
+        tbody
+      );
+      const body = h('div', {className: 'section-body', style: 'padding:0'});
+      body.appendChild(table);
+      section.appendChild(body);
+      main.appendChild(section);
+    }
+  }
+
+  // Router
+  function renderView() {
+    switch (currentView) {
+      case 'dashboard': renderDashboard(); break;
+      case 'project': renderProjectDetail(currentProject); break;
+      case 'lineage': renderLineageGraph(); break;
+      case 'matrix': renderMatrix(); break;
+    }
+  }
+
+  // Init
+  $('search').addEventListener('input', (e) => buildNav(e.target.value));
+
+  buildNav('');
+  renderDashboard();
+})();
+</script>
+</body>
+</html>

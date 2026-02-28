@@ -389,6 +389,95 @@
     color: var(--text-dim);
   }
 
+  .lineage-search-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 380px;
+  }
+
+  .lineage-search-wrap .lineage-search {
+    width: 100%;
+    max-width: none;
+  }
+
+  .lineage-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: var(--shadow-md);
+    max-height: 340px;
+    overflow-y: auto;
+    z-index: 200;
+    display: none;
+    font-size: 12px;
+  }
+
+  .lineage-dropdown.open {
+    display: block;
+  }
+
+  .lineage-dropdown .dd-group-label {
+    padding: 6px 10px 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border-light);
+    position: sticky;
+    top: 0;
+  }
+
+  .lineage-dropdown .dd-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.1s;
+  }
+
+  .lineage-dropdown .dd-item:hover,
+  .lineage-dropdown .dd-item.active {
+    background: var(--accent-light);
+  }
+
+  .lineage-dropdown .dd-item .dd-project {
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .lineage-dropdown .dd-item .dd-match {
+    color: var(--text-dim);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .lineage-dropdown .dd-item .dd-tier {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: white;
+    flex-shrink: 0;
+  }
+
+  .lineage-dropdown .dd-empty {
+    padding: 12px 10px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
   .lineage-container {
     position: relative;
     width: 100%;
@@ -1572,14 +1661,18 @@
     const btnZoomOut = h('button', {title: 'Zoom Out'}, '\u2212');
     const btnFit = h('button', {title: 'Fit All', style: 'width:auto;padding:0 10px;font-size:12px'}, 'Fit');
     const btnReset = h('button', {title: 'Reset View', style: 'width:auto;padding:0 10px;font-size:12px'}, 'Reset');
-    const searchInput = h('input', {className: 'lineage-search', type: 'text', placeholder: 'Search projects... (Enter to focus)'});
+    const searchWrap = h('div', {className: 'lineage-search-wrap'});
+    const searchInput = h('input', {className: 'lineage-search', type: 'text', placeholder: 'Search projects, configs, buckets...'});
+    const dropdown = h('div', {className: 'lineage-dropdown'});
+    searchWrap.appendChild(searchInput);
+    searchWrap.appendChild(dropdown);
     toolbar.appendChild(btnZoomIn);
     toolbar.appendChild(btnZoomOut);
     toolbar.appendChild(h('div', {className: 'separator'}));
     toolbar.appendChild(btnFit);
     toolbar.appendChild(btnReset);
     toolbar.appendChild(h('div', {className: 'separator'}));
-    toolbar.appendChild(searchInput);
+    toolbar.appendChild(searchWrap);
     main.appendChild(toolbar);
 
     // --- Container & SVG ---
@@ -1627,6 +1720,65 @@
       connCount[alias] = (adjOut[alias]?.length || 0) + (adjIn[alias]?.length || 0);
     }
     const maxConn = Math.max(1, ...Object.values(connCount));
+
+    // --- Build search index: maps search terms to projects ---
+    // Each entry: { alias, type: 'project'|'config'|'bucket'|'component', text: matched string }
+    const searchIndex = [];
+    for (const alias of nodeSet) {
+      const proj = CATALOG.projects[alias];
+      if (!proj) continue;
+
+      // Project name & alias
+      searchIndex.push({ alias, type: 'project', text: proj.name });
+
+      // Configuration names
+      if (proj.configurations?.by_type) {
+        for (const [typeName, typeData] of Object.entries(proj.configurations.by_type)) {
+          if (typeData.configs) {
+            for (const cfg of typeData.configs) {
+              if (cfg.config_name) {
+                searchIndex.push({ alias, type: 'config', text: cfg.config_name });
+              }
+              if (cfg.component_name) {
+                searchIndex.push({ alias, type: 'component', text: cfg.component_name });
+              }
+            }
+          }
+        }
+      }
+
+      // Sharing out buckets
+      if (proj.sharing_out) {
+        for (const share of proj.sharing_out) {
+          if (share.bucket) {
+            searchIndex.push({ alias, type: 'bucket', text: share.bucket });
+          }
+        }
+      }
+
+      // Sharing in buckets
+      if (proj.sharing_in) {
+        for (const share of proj.sharing_in) {
+          if (share.source_bucket) {
+            searchIndex.push({ alias, type: 'bucket', text: share.source_bucket });
+          }
+          if (share.linked_bucket) {
+            searchIndex.push({ alias, type: 'bucket', text: share.linked_bucket });
+          }
+        }
+      }
+    }
+
+    // Deduplicate component names per project (many configs share same component)
+    const compSeen = new Set();
+    const searchIndexDeduped = searchIndex.filter(entry => {
+      if (entry.type === 'component') {
+        const key = `${entry.alias}|${entry.text}`;
+        if (compSeen.has(key)) return false;
+        compSeen.add(key);
+      }
+      return true;
+    });
 
     // --- Layout: force-directed simulation with tier columns ---
     const nodes = [];
@@ -2271,88 +2423,217 @@
     });
 
     // ========================================================
-    // SEARCH & FOCUS
+    // SEARCH & FOCUS (with deep index: configs, buckets, components)
     // ========================================================
     let searchTimeout = null;
+    let ddActiveIdx = -1;
+    let ddItems = []; // current dropdown items (DOM elements)
+
+    function searchAndShowResults(q) {
+      if (!q) {
+        dropdown.classList.remove('open');
+        dropdown.innerHTML = '';
+        clearAllHighlights();
+        ddItems = [];
+        ddActiveIdx = -1;
+        return;
+      }
+
+      // Search the index
+      const results = []; // { alias, type, text, matchSnippet }
+      const seen = new Map(); // alias -> best match type priority
+
+      // Priority: project > config > bucket > component
+      const typePriority = { project: 0, config: 1, bucket: 2, component: 3 };
+
+      for (const entry of searchIndexDeduped) {
+        if (entry.text.toLowerCase().includes(q)) {
+          const existing = results.find(r => r.alias === entry.alias && r.type === entry.type && r.text === entry.text);
+          if (!existing) {
+            results.push(entry);
+          }
+        }
+      }
+
+      // Also check alias directly (not in index)
+      for (const alias of nodeSet) {
+        if (alias.toLowerCase().includes(q) && !results.some(r => r.alias === alias && r.type === 'project')) {
+          const proj = CATALOG.projects[alias];
+          if (proj) results.push({ alias, type: 'project', text: proj.name });
+        }
+      }
+
+      // Group by type, then deduplicate projects within each group
+      const groups = { project: [], config: [], bucket: [], component: [] };
+      for (const r of results) {
+        groups[r.type]?.push(r);
+      }
+
+      // Limit results per group to keep dropdown manageable
+      const MAX_PER_GROUP = 8;
+      for (const type of Object.keys(groups)) {
+        groups[type] = groups[type].slice(0, MAX_PER_GROUP);
+      }
+
+      // Get unique matching project aliases
+      const matchAliases = new Set(results.map(r => r.alias));
+
+      // Highlight matching nodes in graph
+      selectedNode = null;
+      for (const ne of nodeElements) {
+        if (matchAliases.has(ne.data.alias)) {
+          ne.el.style.opacity = '1';
+          ne.circle.setAttribute('stroke', tierColor(ne.data.tier));
+          ne.circle.setAttribute('stroke-width', '3');
+        } else {
+          ne.el.style.opacity = '0.08';
+        }
+      }
+      for (const ee of edgeElements) {
+        if (matchAliases.has(ee.data.source) || matchAliases.has(ee.data.target)) {
+          ee.el.style.opacity = '0.4';
+        } else {
+          ee.el.style.opacity = '0.05';
+        }
+      }
+
+      // Build dropdown
+      dropdown.innerHTML = '';
+      ddItems = [];
+      ddActiveIdx = -1;
+
+      const groupLabels = {
+        project: 'Projects',
+        config: 'Configurations',
+        bucket: 'Buckets',
+        component: 'Components'
+      };
+
+      let totalShown = 0;
+      for (const type of ['project', 'config', 'bucket', 'component']) {
+        if (groups[type].length === 0) continue;
+
+        dropdown.appendChild(h('div', {className: 'dd-group-label'}, groupLabels[type]));
+
+        for (const r of groups[type]) {
+          const proj = CATALOG.projects[r.alias];
+          const shortName = (proj?.name || r.alias).replace(/^IR L\d\s*[-\[\]]*\s*(\[Data Processes\]\s*)?/, '');
+          const tier = proj?.tier || 'L0';
+
+          const item = h('div', {className: 'dd-item'});
+          item.appendChild(h('span', {className: 'dd-tier', style: `background:${tierColor(tier)}`}, tier));
+          item.appendChild(h('span', {className: 'dd-project'}, shortName));
+
+          // Show what matched (for non-project matches)
+          if (type !== 'project') {
+            // Highlight the matching portion
+            const matchText = r.text;
+            const lIdx = matchText.toLowerCase().indexOf(q);
+            let displayText = matchText;
+            if (lIdx >= 0) {
+              displayText = matchText.substring(0, lIdx)
+                + '\u00AB' + matchText.substring(lIdx, lIdx + q.length) + '\u00BB'
+                + matchText.substring(lIdx + q.length);
+            }
+            item.appendChild(h('span', {className: 'dd-match'}, displayText));
+          }
+
+          item.dataset.alias = r.alias;
+          item.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            selectSearchResult(r.alias);
+          });
+
+          dropdown.appendChild(item);
+          ddItems.push(item);
+          totalShown++;
+        }
+      }
+
+      if (totalShown === 0) {
+        dropdown.appendChild(h('div', {className: 'dd-empty'}, 'No matching projects, configs, or buckets found.'));
+      }
+
+      // Update info panel with count
+      const projectCount = matchAliases.size;
+      if (projectCount > 0) {
+        infoPanel.classList.add('visible');
+        infoPanel.textContent = `Found ${totalShown} result${totalShown !== 1 ? 's' : ''} across ${projectCount} project${projectCount !== 1 ? 's' : ''} - click a result or press Enter`;
+      } else {
+        infoPanel.classList.add('visible');
+        infoPanel.textContent = 'No matching results found.';
+      }
+
+      dropdown.classList.add('open');
+    }
+
+    function selectSearchResult(alias) {
+      dropdown.classList.remove('open');
+      dropdown.innerHTML = '';
+      ddItems = [];
+      ddActiveIdx = -1;
+
+      // Zoom to node
+      const ne = nodeElements.find(n => n.data.alias === alias);
+      if (ne) {
+        const svgRect = svg.getBoundingClientRect();
+        const sw = svgRect.width || W;
+        const sh = svgRect.height || H;
+        zoom = 1.5;
+        panX = (sw / 2) - ne.data.x * zoom;
+        panY = (sh / 2) - ne.data.y * zoom;
+        applyTransform(true);
+
+        clearAllHighlights();
+        highlightPath(alias);
+      }
+    }
 
     searchInput.addEventListener('input', () => {
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(() => {
         const q = searchInput.value.trim().toLowerCase();
-        if (!q) {
-          clearAllHighlights();
-          return;
-        }
-        selectedNode = null;
-
-        const matches = nodeElements.filter(ne =>
-          ne.shortName.toLowerCase().includes(q) ||
-          ne.data.alias.toLowerCase().includes(q) ||
-          ne.data.name.toLowerCase().includes(q)
-        );
-
-        const matchAliases = new Set(matches.map(m => m.data.alias));
-
-        for (const ne of nodeElements) {
-          if (matchAliases.has(ne.data.alias)) {
-            ne.el.style.opacity = '1';
-            // Pulse effect
-            ne.circle.setAttribute('stroke', tierColor(ne.data.tier));
-            ne.circle.setAttribute('stroke-width', '3');
-          } else {
-            ne.el.style.opacity = '0.08';
-          }
-        }
-
-        // Dim edges not connected to matches
-        for (const ee of edgeElements) {
-          if (matchAliases.has(ee.data.source) || matchAliases.has(ee.data.target)) {
-            ee.el.style.opacity = '0.4';
-          } else {
-            ee.el.style.opacity = '0.05';
-          }
-        }
-
-        // Update info panel
-        if (matches.length > 0) {
-          infoPanel.classList.add('visible');
-          infoPanel.textContent = `Found ${matches.length} project${matches.length !== 1 ? 's' : ''}: ${matches.map(m => m.shortName).join(', ')}`;
-        } else {
-          infoPanel.classList.add('visible');
-          infoPanel.textContent = 'No matching projects found.';
-        }
-      }, 200);
+        searchAndShowResults(q);
+      }, 150);
     });
 
-    // Enter in search = zoom to first match
     searchInput.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') {
-        const q = searchInput.value.trim().toLowerCase();
-        if (!q) return;
-        const match = nodeElements.find(ne =>
-          ne.shortName.toLowerCase().includes(q) ||
-          ne.data.alias.toLowerCase().includes(q) ||
-          ne.data.name.toLowerCase().includes(q)
-        );
-        if (match) {
-          // Pan & zoom to center on matched node
-          const svgRect = svg.getBoundingClientRect();
-          const sw = svgRect.width || W;
-          const sh = svgRect.height || H;
-          zoom = 1.5;
-          panX = (sw / 2) - match.data.x * zoom;
-          panY = (sh / 2) - match.data.y * zoom;
-          applyTransform(true);
-
-          // Also trace path
-          clearAllHighlights();
-          highlightPath(match.data.alias);
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        if (ddItems.length > 0) {
+          ddActiveIdx = Math.min(ddActiveIdx + 1, ddItems.length - 1);
+          ddItems.forEach((it, i) => it.classList.toggle('active', i === ddActiveIdx));
+          ddItems[ddActiveIdx]?.scrollIntoView({ block: 'nearest' });
         }
-      }
-      if (ev.key === 'Escape') {
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (ddItems.length > 0) {
+          ddActiveIdx = Math.max(ddActiveIdx - 1, 0);
+          ddItems.forEach((it, i) => it.classList.toggle('active', i === ddActiveIdx));
+          ddItems[ddActiveIdx]?.scrollIntoView({ block: 'nearest' });
+        }
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (ddActiveIdx >= 0 && ddItems[ddActiveIdx]) {
+          selectSearchResult(ddItems[ddActiveIdx].dataset.alias);
+        } else if (ddItems.length > 0) {
+          selectSearchResult(ddItems[0].dataset.alias);
+        }
+      } else if (ev.key === 'Escape') {
+        dropdown.classList.remove('open');
+        dropdown.innerHTML = '';
+        ddItems = [];
+        ddActiveIdx = -1;
         searchInput.value = '';
         clearAllHighlights();
         searchInput.blur();
+      }
+    });
+
+    // Close dropdown on outside click
+    document.addEventListener('click', (ev) => {
+      if (!searchWrap.contains(ev.target)) {
+        dropdown.classList.remove('open');
       }
     });
 

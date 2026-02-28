@@ -17,6 +17,17 @@ uv run kbagent --help
 kbagent --json project list
 ```
 
+A `Makefile` provides shortcuts for common tasks. Run `make help` to see all targets, or use:
+
+```bash
+make install        # install in dev mode
+make test           # run all tests
+make lint           # run ruff linter
+make format         # format code
+make check          # lint + format-check + test (CI-like)
+make clean          # remove caches and build artifacts
+```
+
 ## Testing
 
 ```bash
@@ -38,6 +49,8 @@ src/keboola_agent_cli/
   __init__.py           # __version__ = "0.1.0"
   __main__.py           # python -m support
   cli.py                # Typer root app, global options, subcommand wiring
+  constants.py          # Shared constants (retry params, timeouts, defaults)
+  http_base.py          # BaseHttpClient - shared HTTP foundation for both clients
   client.py             # LAYER 3: HTTP client (Storage API + Queue API)
   manage_client.py      # LAYER 3: HTTP client (Manage API, X-KBC-ManageApiToken)
   config_store.py       # JSON persistence for config.json (0600 permissions)
@@ -45,6 +58,7 @@ src/keboola_agent_cli/
   output.py             # OutputFormatter: JSON vs Rich dual-mode output
   errors.py             # KeboolaApiError, ConfigError, mask_token()
   commands/
+    _helpers.py         # Shared command-layer helpers (formatter, service factory, error mapping)
     project.py          # LAYER 1: CLI commands for project management
     config.py           # LAYER 1: CLI commands for config browsing
     job.py              # LAYER 1: CLI commands for job history (Queue API)
@@ -61,9 +75,11 @@ src/keboola_agent_cli/
     lineage_service.py  # LAYER 2: Cross-project lineage via bucket sharing
     org_service.py      # LAYER 2: Organization setup orchestration
     mcp_service.py      # LAYER 2: MCP tool integration (keboola-mcp-server wrapper)
+    doctor_service.py   # LAYER 2: Health check business logic
 
 tests/
   conftest.py           # Shared fixtures (tmp_config_dir, config_store, formatters)
+  helpers.py            # Shared test utilities
   test_cli.py           # End-to-end CLI tests via CliRunner
   test_client.py        # API client tests with mocked HTTP
   test_manage_client.py # Manage API client tests with mocked HTTP
@@ -76,6 +92,9 @@ tests/
   test_lineage_service.py  # Lineage service tests
   test_mcp_service.py      # MCP service tests
   test_org_service.py      # Org service tests (slugify, setup, idempotency)
+  test_doctor_service.py   # Doctor service tests
+  test_http_base.py        # BaseHttpClient tests
+  test_helpers.py          # Command helpers tests
   test_integration.py      # Integration tests (edge cases, linting)
 ```
 
@@ -95,7 +114,7 @@ CLI Commands (commands/)  -->  Services (services/)  -->  API Client (client.py,
 - **KeboolaClient** (`client.py`): Storage API + Queue API, auth via `X-StorageApi-Token`
 - **ManageClient** (`manage_client.py`): Manage API, auth via `X-KBC-ManageApiToken`
 
-Both share the same retry/backoff pattern (429/5xx, exponential backoff, 3 retries).
+Both inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/backoff logic (429/5xx, exponential backoff, 3 retries) and common HTTP infrastructure.
 
 ### MCP Integration
 
@@ -126,7 +145,7 @@ Both share the same retry/backoff pattern (429/5xx, exponential backoff, 3 retri
 
 9. **Tests**: use `typer.testing.CliRunner` for CLI tests, `unittest.mock` for mocking services and clients, `pytest` fixtures from `conftest.py`.
 
-10. **Dependencies**: typer, rich, httpx, pydantic, platformdirs, mcp. Dev: pytest, pytest-httpx.
+10. **Dependencies**: typer, rich, httpx, pydantic, platformdirs, mcp. Dev: pytest, pytest-httpx, pytest-asyncio, ruff.
 
 11. **Error accumulation**: multi-project operations collect per-project errors without stopping. One project failing doesn't block others (see `lineage_service.py`, `org_service.py`).
 
@@ -137,6 +156,8 @@ Both share the same retry/backoff pattern (429/5xx, exponential backoff, 3 retri
 ## All CLI Commands
 
 ```
+# Global options: --json, --verbose, --no-color
+
 kbagent project add --alias NAME --url URL --token TOKEN
 kbagent project list
 kbagent project remove --alias NAME
@@ -149,7 +170,7 @@ kbagent config detail --project NAME --component-id ID --config-id ID
 kbagent job list [--project NAME] [--component-id ID] [--status STATUS] [--limit N]
 kbagent job detail --project NAME --job-id ID
 
-kbagent lineage [--project NAME]
+kbagent lineage show [--project NAME]   # also works as just: kbagent lineage
 
 kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
 

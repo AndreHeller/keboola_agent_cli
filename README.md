@@ -19,7 +19,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `project` | Add, remove, edit, list, and check status of connected Keboola projects |
 | `config` | Browse configurations (extractors, writers, transformations, applications) across projects |
 | `job` | Browse job history -- list and inspect jobs from the Queue API |
-| `lineage` | Analyze cross-project data flow via bucket sharing (parallel across all projects) |
+| `lineage show` | Analyze cross-project data flow via bucket sharing (parallel across all projects) |
 | `org setup` | Bulk-onboard all projects from a Keboola organization (uses Manage API) |
 | `tool` | List and call MCP tools from keboola-mcp-server (read tools run across all projects in parallel) |
 | `context` | Print comprehensive usage instructions for AI agents |
@@ -117,12 +117,29 @@ Works with any Keboola stack -- AWS, Azure, GCP. Examples:
 - `https://connection.europe-west3.gcp.keboola.com` (GCP)
 - `https://connection.us-east4.gcp.keboola.com` (GCP)
 
+## KBC Explorer
+
+A standalone HTML viewer for interactive visualization of cross-project data lineage graphs. Located in `kbc-explorer/` -- see [kbc-explorer/README.md](kbc-explorer/README.md) for details.
+
 ## Development
 
 ```bash
 uv pip install -e ".[dev]"
 uv run pytest tests/ -v
 uv run kbagent --help
+```
+
+A `Makefile` provides shortcuts for common development tasks:
+
+```bash
+make help           # show all available targets
+make install        # install in dev mode
+make test           # run all tests
+make test-unit      # run unit tests only
+make lint           # run ruff linter
+make format         # format code with ruff
+make check          # run lint + format-check + test (CI-like)
+make clean          # remove caches and build artifacts
 ```
 
 ## License

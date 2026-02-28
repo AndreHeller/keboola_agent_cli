@@ -24,9 +24,9 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
 
 ## Quick Start
 
-### Option A: Add a single project (set token via env var)
+### Option A: Add a single project
 
-  KBC_TOKEN=your-storage-token kbagent --json project add --alias my-project --url https://connection.keboola.com
+  kbagent --json project add --alias my-project --url https://connection.keboola.com --token YOUR_TOKEN
 
 ### Option B: Bulk-onboard all projects from an organization
 
@@ -37,23 +37,16 @@ Then explore:
   kbagent --json project list
   kbagent --json config list
 
-## Security Note
-
-Tokens are NEVER passed as CLI arguments (they would be visible in `ps aux`).
-Use environment variables:
-- KBC_TOKEN for Storage API tokens (project add/edit)
-- KBC_MANAGE_API_TOKEN for Manage API tokens (org setup)
-
 ## All Commands
 
 ### Project Management
 
-  KBC_TOKEN=TOKEN kbagent project add --alias NAME [--url STACK_URL]
+  kbagent project add --alias NAME --url STACK_URL --token TOKEN
     Add a new Keboola project connection. The token is verified against the API.
-    Token source: KBC_TOKEN env var (required for AI agents, no --token flag).
+    Token can be passed via --token, KBC_TOKEN env var, or interactive prompt.
     Default URL: https://connection.keboola.com (or KBC_STORAGE_API_URL env var).
     Example:
-      KBC_TOKEN=901-xxxxx kbagent --json project add --alias prod --url https://connection.keboola.com
+      kbagent --json project add --alias prod --url https://connection.keboola.com --token 901-xxxxx
 
   kbagent project list
     List all connected projects with their details (tokens are always masked).
@@ -65,13 +58,11 @@ Use environment variables:
     Example:
       kbagent --json project remove --alias prod
 
-  kbagent project edit --alias NAME [--url NEW_URL] [--new-token]
-    Edit an existing project connection.
-    --url changes the stack URL.
-    --new-token flag triggers token update (reads from KBC_TOKEN env var).
+  kbagent project edit --alias NAME [--url NEW_URL] [--token NEW_TOKEN]
+    Edit an existing project connection. If token changes, it is re-verified via API.
     Examples:
       kbagent --json project edit --alias prod --url https://connection.north-europe.azure.keboola.com
-      KBC_TOKEN=new-token kbagent --json project edit --alias prod --new-token
+      kbagent --json project edit --alias prod --token new-901-xxxxx
 
   kbagent project status [--project NAME]
     Test connectivity to projects. Shows OK/ERROR with response time.
@@ -228,15 +219,15 @@ Use environment variables:
      kbagent --json tool call list_configs --project prod        # List configs from one project
      kbagent --json tool call create_config --project prod --input '{{...}}'  # Write to one project
 
-10. Environment variables (critical for AI agents -- no interactive prompts):
-     KBC_TOKEN             - Storage API token (used by: project add, project edit --new-token)
-     KBC_STORAGE_API_URL   - Default stack URL (used by: project add, org setup)
-     KBC_MANAGE_API_TOKEN  - Manage API token (used by: org setup)
+10. Environment variables (alternative to CLI arguments):
+     KBC_TOKEN             - Storage API token (fallback for --token in project add/edit)
+     KBC_STORAGE_API_URL   - Default stack URL (fallback for --url in project add, org setup)
+     KBC_MANAGE_API_TOKEN  - Manage API token (for org setup)
 
 11. Setting up projects -- two approaches:
 
     a) Single project (you have a Storage API token):
-       KBC_TOKEN=901-xxxxx kbagent --json project add --alias my-proj --url https://connection.keboola.com
+       kbagent --json project add --alias my-proj --url https://connection.keboola.com --token 901-xxxxx
 
     b) Entire organization (you have a Manage API token):
        KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes

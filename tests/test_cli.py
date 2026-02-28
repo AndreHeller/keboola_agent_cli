@@ -2548,13 +2548,12 @@ class TestHelp:
         assert "detail" in result.output
 
     def test_project_add_help(self) -> None:
-        """project add --help shows options but NOT --token (security)."""
+        """project add --help shows all options including --token."""
         result = runner.invoke(app, ["project", "add", "--help"])
         assert result.exit_code == 0
         assert "--alias" in result.output
         assert "--url" in result.output
-        # --token must NOT appear as a CLI option (S1 security fix)
-        assert "--token" not in result.output
+        assert "--token" in result.output
 
     def test_config_list_help(self) -> None:
         """config list --help shows options."""
@@ -2720,7 +2719,7 @@ class TestProjectEditTokenReverify:
     """Tests for project edit with token changes."""
 
     def test_project_edit_token_reverify_json(self, tmp_path: Path) -> None:
-        """project edit --new-token triggers re-verification and returns updated info."""
+        """project edit --token triggers re-verification and returns updated info."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         mock_client = make_mock_client(project_name="Original", project_id=100)
@@ -2760,7 +2759,7 @@ class TestProjectEditTokenReverify:
                 ],
             )
 
-            # Edit with new token via --new-token flag + env var
+            # Edit with new token via --token flag
             result = runner.invoke(
                 app,
                 [
@@ -2769,7 +2768,8 @@ class TestProjectEditTokenReverify:
                     "edit",
                     "--alias",
                     "test",
-                    "--new-token",
+                    "--token",
+                    "new-test-token-456",
                 ],
             )
 

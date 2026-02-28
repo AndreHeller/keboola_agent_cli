@@ -142,6 +142,10 @@ make check          # run lint + format-check + test (CI-like)
 make clean          # remove caches and build artifacts
 ```
 
+## Contributors
+
+- [Jordan Burger](https://github.com/jordanrburger)
+
 ## License
 
 MIT

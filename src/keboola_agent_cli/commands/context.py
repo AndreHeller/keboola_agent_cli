@@ -162,6 +162,32 @@ Then explore:
       kbagent explorer --project prod --project dev --no-open
       kbagent explorer --tiers tiers.yaml
 
+  kbagent explorer init-tiers [--output FILE]
+    Generate a tiers.yaml template from registered projects.
+    Auto-detects tier from alias naming convention (-l0-, -l1-, -l2-).
+    Projects that cannot be classified are marked with TODO comments.
+    --output / -o: output path (default: tiers.yaml)
+    Example:
+      kbagent explorer init-tiers
+      kbagent explorer init-tiers -o my-tiers.yaml
+
+    The generated YAML has this structure:
+      description: "Project catalog"
+      tiers:
+        L0:
+          name: "Data Sources / Extraction"
+          description: "Raw data extraction from external systems"
+        L1:
+          name: "Processing / Transformation"
+          description: "Data processing, transformation, and modeling"
+        L2:
+          name: "Output / Delivery"
+          description: "Final data products, dashboards, and data sharing"
+      projects:
+        my-l0-extract: L0
+        my-l1-transform: L1
+        unclassified-project: L0  # TODO: assign correct tier
+
 ### Utility Commands
 
   kbagent context

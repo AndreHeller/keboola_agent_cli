@@ -45,6 +45,9 @@ def explorer(
     ),
 ) -> None:
     """Generate explorer data from connected projects and open the dashboard."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     formatter = get_formatter(ctx)
     service = get_service(ctx, "explorer_service")
 
@@ -84,3 +87,48 @@ def explorer(
             formatter.console.print("Opening dashboard in browser...")
 
         emit_project_warnings(formatter, result)
+
+
+@explorer_app.command("init-tiers")
+def init_tiers(
+    ctx: typer.Context,
+    output: Path = typer.Option(
+        "tiers.yaml",
+        "--output",
+        "-o",
+        help="Output path for the YAML file (default: tiers.yaml)",
+    ),
+) -> None:
+    """Generate a tiers.yaml template from registered projects.
+
+    Auto-detects tier from alias naming convention (-l0-, -l1-, -l2-).
+    Projects that cannot be classified are marked with a TODO comment.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "explorer_service")
+
+    try:
+        result = service.init_tiers(output_path=output)
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        total = result["total_projects"]
+        classified = result["auto_classified"]
+        unclassified = result["unclassified"]
+        path = result["output_path"]
+
+        formatter.console.print(
+            f"[bold green]Tiers template created![/bold green] "
+            f"{total} projects ({classified} auto-classified, "
+            f"{unclassified} need manual assignment)"
+        )
+        formatter.console.print(f"Output: {path}")
+        if unclassified > 0:
+            formatter.console.print(
+                f"[yellow]Edit the file and fix {unclassified} TODO entries, "
+                f"then run: kbagent explorer --tiers {path}[/yellow]"
+            )

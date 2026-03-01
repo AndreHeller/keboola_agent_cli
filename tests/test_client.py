@@ -1303,7 +1303,6 @@ class TestQueueUrlWarning:
 
     def test_non_standard_url_warns(self) -> None:
         """Non-standard URL without 'connection.' in hostname logs warning."""
-        import logging
 
         with patch(
             "keboola_agent_cli.client.logger"

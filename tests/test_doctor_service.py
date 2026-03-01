@@ -1,10 +1,7 @@
 """Tests for DoctorService - health check logic extracted from doctor command."""
 
-import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import KeboolaApiError

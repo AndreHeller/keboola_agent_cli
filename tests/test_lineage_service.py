@@ -5,13 +5,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from helpers import setup_single_project, setup_two_projects
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
-from keboola_agent_cli.models import ProjectConfig
 from keboola_agent_cli.services.base import ENV_MAX_PARALLEL_WORKERS
 from keboola_agent_cli.services.lineage_service import LineageService
-
-from helpers import setup_single_project, setup_two_projects
 
 
 def _make_lineage_client(buckets: list[dict]) -> MagicMock:

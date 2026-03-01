@@ -9,8 +9,6 @@ Inherits shared retry/error logic from BaseHttpClient.
 
 from typing import Any
 
-import httpx
-
 from . import __version__
 from .constants import DEFAULT_TIMEOUT
 from .http_base import BaseHttpClient

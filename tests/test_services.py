@@ -5,14 +5,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from helpers import make_failing_client, make_mock_client
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
-from keboola_agent_cli.models import ProjectConfig, TokenVerifyResponse
+from keboola_agent_cli.models import ProjectConfig
 from keboola_agent_cli.services.config_service import ConfigService
 from keboola_agent_cli.services.job_service import JobService
 from keboola_agent_cli.services.project_service import ProjectService
-
-from helpers import make_failing_client, make_mock_client
 
 
 class TestAddProject:

@@ -8,6 +8,7 @@ import typer
 from .commands.config import config_app
 from .commands.context import context_command
 from .commands.doctor import doctor_command
+from .commands.explorer import explorer_app
 from .commands.job import job_app
 from .commands.lineage import lineage_app
 from .commands.org import org_app
@@ -17,6 +18,7 @@ from .config_store import ConfigStore
 from .output import OutputFormatter
 from .services.config_service import ConfigService
 from .services.doctor_service import DoctorService
+from .services.explorer_service import ExplorerService
 from .services.job_service import JobService
 from .services.lineage_service import LineageService
 from .services.mcp_service import McpService
@@ -35,6 +37,7 @@ app.add_typer(job_app, name="job")
 app.add_typer(lineage_app, name="lineage")
 app.add_typer(org_app, name="org")
 app.add_typer(tool_app, name="tool")
+app.add_typer(explorer_app, name="explorer")
 app.command("context")(context_command)
 app.command("doctor")(doctor_command)
 
@@ -86,6 +89,12 @@ def main(
     org_service = OrgService(config_store=config_store)
     mcp_service = McpService(config_store=config_store)
     doctor_service = DoctorService(config_store=config_store, mcp_service=mcp_service)
+    explorer_service = ExplorerService(
+        config_store=config_store,
+        config_service=config_service,
+        job_service=job_service,
+        lineage_service=lineage_service,
+    )
 
     ctx.ensure_object(dict)
     ctx.obj["formatter"] = formatter
@@ -100,3 +109,4 @@ def main(
     ctx.obj["org_service"] = org_service
     ctx.obj["mcp_service"] = mcp_service
     ctx.obj["doctor_service"] = doctor_service
+    ctx.obj["explorer_service"] = explorer_service

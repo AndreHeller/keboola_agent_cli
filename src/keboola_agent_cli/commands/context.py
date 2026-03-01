@@ -20,6 +20,7 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
 - Browse job history (running, succeeded, failed jobs)
 - Check connectivity and health of project connections
 - Analyze cross-project data lineage via bucket sharing
+- Generate a visual explorer dashboard with catalog, orchestrations, and lineage
 - Get structured JSON output suitable for programmatic consumption
 
 ## Quick Start
@@ -144,6 +145,22 @@ Then explore:
       kbagent org setup --org-id 123 --url https://connection.keboola.com --dry-run
       kbagent --json org setup --org-id 123 --url https://connection.keboola.com
       KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
+
+### Explorer Dashboard
+
+  kbagent explorer [--project NAME] [--output-dir DIR] [--job-limit N] [--tiers FILE] [--no-open]
+    Generate catalog and orchestration data files for the KBC Explorer dashboard,
+    then open the dashboard in a browser.
+    Collects configs, jobs, lineage, and flow details across all connected projects.
+    --project can be repeated to limit to specific projects.
+    --output-dir: directory for output files (default: kbc-explorer/)
+    --job-limit: max jobs per project for statistics (default: 500)
+    --tiers: YAML file mapping project aliases to tiers (L0/L1/L2)
+    --no-open: generate files without opening the browser
+    Examples:
+      kbagent --json explorer --no-open
+      kbagent explorer --project prod --project dev --no-open
+      kbagent explorer --tiers tiers.yaml
 
 ### Utility Commands
 

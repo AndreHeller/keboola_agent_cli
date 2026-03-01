@@ -177,6 +177,127 @@ class TestBuildMermaid:
 
 
 # ---------------------------------------------------------------------------
+# _parse_orchestration tests (real API structure)
+# ---------------------------------------------------------------------------
+
+class TestParseOrchestration:
+    """Tests for _parse_orchestration with realistic Keboola Flow API responses.
+
+    The API returns phases and tasks as separate arrays:
+    - configuration.phases: [{id, name, dependsOn: [int, ...]}]
+    - configuration.tasks: [{id, name, phase: <phase_id>, task: {componentId, configId}, ...}]
+    """
+
+    def test_phases_and_tasks_linked_by_phase_id(self) -> None:
+        cfg = {"config_name": "My Flow", "config_description": "Desc"}
+        detail = {
+            "configuration": {
+                "parameters": {},
+                "phases": [
+                    {"id": 100, "name": "Extract", "dependsOn": []},
+                    {"id": 200, "name": "Transform", "dependsOn": [100]},
+                ],
+                "tasks": [
+                    {
+                        "id": 1, "name": "pull-data", "phase": 100,
+                        "task": {"componentId": "keboola.ex-google-drive", "configId": "abc"},
+                        "enabled": True, "continueOnFailure": False,
+                    },
+                    {
+                        "id": 2, "name": "snowflake-sql", "phase": 200,
+                        "task": {"componentId": "keboola.snowflake-transformation", "configId": "def"},
+                        "enabled": True, "continueOnFailure": True,
+                    },
+                ],
+            },
+            "name": "My Flow",
+            "description": "Desc",
+            "isDisabled": False,
+            "version": 5,
+            "changeDescription": "Updated",
+        }
+        result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
+
+        assert result["total_phases"] == 2
+        assert result["total_tasks"] == 2
+        assert result["phases"][0]["name"] == "Extract"
+        assert result["phases"][0]["depends_on"] == []
+        assert len(result["phases"][0]["tasks"]) == 1
+        assert result["phases"][0]["tasks"][0]["component_id"] == "keboola.ex-google-drive"
+        assert result["phases"][0]["tasks"][0]["type_icon"] == "EX"
+
+        assert result["phases"][1]["name"] == "Transform"
+        assert result["phases"][1]["depends_on"] == [100]
+        assert len(result["phases"][1]["tasks"]) == 1
+        assert result["phases"][1]["tasks"][0]["type_icon"] == "TR"
+        assert result["phases"][1]["tasks"][0]["continue_on_failure"] is True
+
+    def test_depends_on_as_raw_integers(self) -> None:
+        """dependsOn from the API is a list of integers, not objects."""
+        cfg = {"config_name": "Flow", "config_description": ""}
+        detail = {
+            "configuration": {
+                "phases": [
+                    {"id": 1, "name": "A", "dependsOn": []},
+                    {"id": 2, "name": "B", "dependsOn": [1]},
+                    {"id": 3, "name": "C", "dependsOn": [1, 2]},
+                ],
+                "tasks": [],
+            },
+            "name": "Flow", "description": "", "isDisabled": False, "version": 1,
+        }
+        result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
+        assert result["phases"][0]["depends_on"] == []
+        assert result["phases"][1]["depends_on"] == [1]
+        assert result["phases"][2]["depends_on"] == [1, 2]
+
+    def test_depends_on_as_dict_objects(self) -> None:
+        """Handle legacy format where dependsOn contains {phaseId: N} objects."""
+        cfg = {"config_name": "Flow", "config_description": ""}
+        detail = {
+            "configuration": {
+                "phases": [
+                    {"id": 1, "name": "A", "dependsOn": []},
+                    {"id": 2, "name": "B", "dependsOn": [{"phaseId": 1}]},
+                ],
+                "tasks": [],
+            },
+            "name": "Flow", "description": "", "isDisabled": False, "version": 1,
+        }
+        result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
+        assert result["phases"][1]["depends_on"] == [1]
+
+    def test_empty_orchestration(self) -> None:
+        cfg = {"config_name": "Empty", "config_description": ""}
+        detail = {
+            "configuration": {"phases": [], "tasks": []},
+            "name": "Empty", "description": "", "isDisabled": False, "version": 1,
+        }
+        result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
+        assert result["total_phases"] == 0
+        assert result["total_tasks"] == 0
+        assert result["phases"] == []
+        assert result["mermaid"] == "graph TD"
+
+    def test_task_with_non_dict_task_field(self) -> None:
+        """Guard against task.task being a string instead of a dict."""
+        cfg = {"config_name": "Flow", "config_description": ""}
+        detail = {
+            "configuration": {
+                "phases": [{"id": 1, "name": "A", "dependsOn": []}],
+                "tasks": [
+                    {"id": 1, "name": "odd-task", "phase": 1, "task": "some-string",
+                     "enabled": True, "continueOnFailure": False},
+                ],
+            },
+            "name": "Flow", "description": "", "isDisabled": False, "version": 1,
+        }
+        result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
+        assert result["total_tasks"] == 1
+        assert result["phases"][0]["tasks"][0]["component_id"] == ""
+
+
+# ---------------------------------------------------------------------------
 # Service tests with mocked dependencies
 # ---------------------------------------------------------------------------
 
@@ -198,7 +319,7 @@ def _make_mock_services(alias: str = "prod"):
         "errors": [],
     }
     config_svc.get_config_detail.return_value = {
-        "configuration": {"phases": []},
+        "configuration": {"phases": [], "tasks": []},
         "name": "My Extractor",
         "description": "",
         "isDisabled": False,
@@ -244,7 +365,7 @@ class TestExplorerServiceGenerate:
         assert result["projects_count"] == 1
         assert result["configs_count"] == 1
         assert result["jobs_sampled"] == 1
-        assert len(result["files_written"]) == 4
+        assert len(result["files_written"]) == 2
 
         # Verify catalog structure
         catalog = json.loads((output_dir / "catalog.json").read_text())
@@ -252,6 +373,7 @@ class TestExplorerServiceGenerate:
         assert "tiers" in catalog
         assert "projects" in catalog
         assert "lineage" in catalog
+        assert "orchestrations" in catalog
         assert "l0-prod" in catalog["projects"]
         assert catalog["projects"]["l0-prod"]["tier"] == "L0"
 
@@ -270,10 +392,8 @@ class TestExplorerServiceGenerate:
 
         assert (output_dir / "catalog.json").exists()
         assert (output_dir / "catalog.js").exists()
-        assert (output_dir / "orchestrations.json").exists()
-        assert (output_dir / "orchestrations.js").exists()
 
-        # JS files wrap JSON in a variable assignment
+        # JS file wraps JSON in a variable assignment
         js_content = (output_dir / "catalog.js").read_text()
         assert js_content.startswith("const CATALOG = ")
 

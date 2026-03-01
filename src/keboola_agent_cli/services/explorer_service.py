@@ -417,6 +417,7 @@ class ExplorerService(BaseService):
                     "projects_receiving_in": receiving_in_count,
                 },
             },
+            "orchestrations": orchestrations,
         }
 
         # Step 8b: Schema validation
@@ -447,17 +448,12 @@ class ExplorerService(BaseService):
 
         catalog_json_path = output_dir / "catalog.json"
         catalog_js_path = output_dir / "catalog.js"
-        orch_json_path = output_dir / "orchestrations.json"
-        orch_js_path = output_dir / "orchestrations.js"
 
         catalog_json_str = json.dumps(catalog, indent=2)
-        orch_json_str = json.dumps(orchestrations, indent=2)
 
         for path, content in [
             (catalog_json_path, catalog_json_str),
             (catalog_js_path, f"const CATALOG = {catalog_json_str};\n"),
-            (orch_json_path, orch_json_str),
-            (orch_js_path, f"const ORCHESTRATIONS = {orch_json_str};\n"),
         ]:
             tmp_path = path.with_suffix(path.suffix + ".tmp")
             tmp_path.write_text(content)
@@ -485,8 +481,6 @@ class ExplorerService(BaseService):
             "files_written": [
                 str(catalog_json_path),
                 str(catalog_js_path),
-                str(orch_json_path),
-                str(orch_js_path),
             ],
         }
 
@@ -541,26 +535,47 @@ class ExplorerService(BaseService):
         configs_by_project: dict[str, list[dict[str, Any]]],
         all_errors: list[dict[str, str]],
     ) -> dict[str, Any]:
-        """Collect orchestration details for all keboola.orchestrator configs."""
+        """Collect orchestration details for all keboola.orchestrator configs.
+
+        Uses ThreadPoolExecutor to fetch all orchestration details in parallel.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         orchestrations: dict[str, Any] = {}
 
+        # Build list of (alias, cfg) tuples for all orchestrator configs
+        orch_items: list[tuple[str, dict[str, Any]]] = []
         for alias, configs in configs_by_project.items():
-            orch_configs = [
-                c for c in configs if c.get("component_id") == "keboola.orchestrator"
-            ]
-            for cfg in orch_configs:
+            for cfg in configs:
+                if cfg.get("component_id") == "keboola.orchestrator":
+                    orch_items.append((alias, cfg))
+
+        if not orch_items:
+            return orchestrations
+
+        def _fetch_one(alias: str, cfg: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+            config_id = cfg["config_id"]
+            detail = self._config_service.get_config_detail(
+                alias=alias,
+                component_id="keboola.orchestrator",
+                config_id=config_id,
+            )
+            parsed = self._parse_orchestration(alias, config_id, cfg, detail)
+            return alias, config_id, parsed
+
+        max_workers = min(len(orch_items), self._resolve_max_workers())
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_fetch_one, alias, cfg): (alias, cfg)
+                for alias, cfg in orch_items
+            }
+            for future in as_completed(futures):
+                alias, cfg = futures[future]
                 config_id = cfg["config_id"]
-                key = f"{alias}|{config_id}"
                 try:
-                    detail = self._config_service.get_config_detail(
-                        alias=alias,
-                        component_id="keboola.orchestrator",
-                        config_id=config_id,
-                    )
-                    orchestrations[key] = self._parse_orchestration(
-                        alias, config_id, cfg, detail
-                    )
-                except (KeboolaApiError, ConfigError, Exception) as exc:
+                    _, _, parsed = future.result()
+                    orchestrations[f"{alias}|{config_id}"] = parsed
+                except Exception as exc:
                     logger.warning(
                         "Failed to fetch orchestration %s/%s: %s", alias, config_id, exc
                     )
@@ -579,18 +594,38 @@ class ExplorerService(BaseService):
         cfg: dict[str, Any],
         detail: dict[str, Any],
     ) -> dict[str, Any]:
-        """Parse an orchestration config detail into the explorer format."""
+        """Parse an orchestration config detail into the explorer format.
+
+        The Keboola Flow API stores phases and tasks as separate arrays:
+        - ``configuration.phases``: list of {id, name, dependsOn}
+        - ``configuration.tasks``: list of {id, name, phase, task: {componentId, configId}, ...}
+
+        Tasks reference their phase via ``task["phase"] == phase["id"]``.
+        ``dependsOn`` is a list of raw phase-id integers (not objects).
+        """
         config_data = detail.get("configuration", {})
         phases_raw = config_data.get("phases", [])
+        tasks_raw = config_data.get("tasks", [])
+
+        # Index tasks by their parent phase id
+        tasks_by_phase: dict[int | str, list[dict[str, Any]]] = {}
+        for task in tasks_raw:
+            phase_id = task.get("phase")
+            tasks_by_phase.setdefault(phase_id, []).append(task)
 
         phases = []
         for phase in phases_raw:
+            phase_id = phase.get("id", 0)
+            phase_tasks = tasks_by_phase.get(phase_id, [])
             tasks = []
-            for task in phase.get("tasks", []):
+            for task in phase_tasks:
                 task_cfg = task.get("task", {})
+                # task_cfg may be a dict or a plain string; guard against both
+                if not isinstance(task_cfg, dict):
+                    task_cfg = {}
                 comp_id = task_cfg.get("componentId", "")
                 tasks.append({
-                    "name": task_cfg.get("name", task.get("name", "")),
+                    "name": task.get("name", ""),
                     "component_id": comp_id,
                     "component_short": comp_id.split(".")[-1] if comp_id else "",
                     "config_id": str(task_cfg.get("configId", task_cfg.get("configurationId", ""))),
@@ -598,10 +633,18 @@ class ExplorerService(BaseService):
                     "continue_on_failure": task.get("continueOnFailure", False),
                     "type_icon": _type_icon(comp_id),
                 })
+
+            # dependsOn is a list of raw integers (phase ids)
+            depends_on_raw = phase.get("dependsOn", [])
+            depends_on = [
+                d.get("phaseId", d) if isinstance(d, dict) else d
+                for d in depends_on_raw
+            ]
+
             phases.append({
-                "id": phase.get("id", 0),
+                "id": phase_id,
                 "name": phase.get("name", ""),
-                "depends_on": [d.get("phaseId", d) for d in phase.get("dependsOn", [])],
+                "depends_on": depends_on,
                 "tasks": tasks,
             })
 

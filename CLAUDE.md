@@ -65,6 +65,7 @@ src/keboola_agent_cli/
     lineage.py          # LAYER 1: CLI commands for cross-project data lineage
     org.py              # LAYER 1: CLI commands for organization bulk onboarding
     tool.py             # LAYER 1: CLI commands for MCP tool list/call
+    explorer.py         # LAYER 1: CLI commands for KBC Explorer dashboard generation
     context.py          # LAYER 1: Agent usage instructions
     doctor.py           # LAYER 1: Health check command
   services/
@@ -75,6 +76,7 @@ src/keboola_agent_cli/
     lineage_service.py  # LAYER 2: Cross-project lineage via bucket sharing
     org_service.py      # LAYER 2: Organization setup orchestration
     mcp_service.py      # LAYER 2: MCP tool integration (keboola-mcp-server wrapper)
+    explorer_service.py # LAYER 2: KBC Explorer catalog/orchestration generation
     doctor_service.py   # LAYER 2: Health check business logic
 
 tests/
@@ -92,6 +94,7 @@ tests/
   test_lineage_service.py  # Lineage service tests
   test_mcp_service.py      # MCP service tests
   test_org_service.py      # Org service tests (slugify, setup, idempotency)
+  test_explorer_service.py # Explorer service tests (tier assignment, job stats, generation)
   test_doctor_service.py   # Doctor service tests
   test_http_base.py        # BaseHttpClient tests
   test_helpers.py          # Command helpers tests
@@ -145,7 +148,7 @@ Both inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/
 
 9. **Tests**: use `typer.testing.CliRunner` for CLI tests, `unittest.mock` for mocking services and clients, `pytest` fixtures from `conftest.py`.
 
-10. **Dependencies**: typer, rich, httpx, pydantic, platformdirs, mcp. Dev: pytest, pytest-httpx, pytest-asyncio, ruff.
+10. **Dependencies**: typer, rich, httpx, pydantic, platformdirs, mcp, jsonschema, pyyaml. Dev: pytest, pytest-httpx, pytest-asyncio, ruff.
 
 11. **Error accumulation**: multi-project operations collect per-project errors without stopping. One project failing doesn't block others (see `lineage_service.py`, `org_service.py`).
 
@@ -176,6 +179,8 @@ kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description
 
 kbagent tool list [--project NAME]
 kbagent tool call TOOL_NAME [--project NAME] [--input JSON]
+
+kbagent explorer [--project NAME] [--output-dir DIR] [--job-limit N] [--tiers FILE] [--no-open]
 
 kbagent context
 kbagent doctor

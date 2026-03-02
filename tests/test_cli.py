@@ -3241,6 +3241,7 @@ class TestToolCall:
             tool_name="list_configs",
             tool_input={},
             alias=None,
+            branch_id=None,
         )
 
     def test_tool_call_write_json(self, tmp_path: Path) -> None:
@@ -3297,6 +3298,7 @@ class TestToolCall:
             tool_name="create_config",
             tool_input={"name": "New Config", "component_id": "keboola.ex-db-snowflake"},
             alias="prod",
+            branch_id=None,
         )
 
     def test_tool_call_invalid_input(self, tmp_path: Path) -> None:
@@ -4464,6 +4466,264 @@ class TestOrgSetup:
 # ---------------------------------------------------------------------------
 # _resolve_manage_token tests
 # ---------------------------------------------------------------------------
+
+
+class TestBranchList:
+    """Tests for `kbagent branch list` command."""
+
+    def test_branch_list_success_json(self, tmp_path: Path) -> None:
+        """branch list --json returns structured JSON with branches."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+            patch("keboola_agent_cli.cli.BranchService") as MockBranchService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            mock_branch = MagicMock()
+            mock_branch.list_branches.return_value = {
+                "branches": [
+                    {
+                        "project_alias": "prod",
+                        "id": 123,
+                        "name": "main",
+                        "isDefault": True,
+                        "created": "2025-01-01T00:00:00Z",
+                        "description": "",
+                    },
+                    {
+                        "project_alias": "prod",
+                        "id": 456,
+                        "name": "feature-x",
+                        "isDefault": False,
+                        "created": "2025-06-15T10:30:00Z",
+                        "description": "Feature branch",
+                    },
+                ],
+                "errors": [],
+            }
+            MockBranchService.return_value = mock_branch
+
+            result = runner.invoke(app, ["--json", "branch", "list"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        branches = output["data"]["branches"]
+        assert len(branches) == 2
+        assert branches[0]["name"] == "main"
+        assert branches[0]["isDefault"] is True
+        assert branches[1]["name"] == "feature-x"
+        assert branches[1]["isDefault"] is False
+
+    def test_branch_list_no_projects(self, tmp_path: Path) -> None:
+        """branch list with no projects returns exit code 5."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+            patch("keboola_agent_cli.cli.BranchService") as MockBranchService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            mock_branch = MagicMock()
+            mock_branch.list_branches.side_effect = ConfigError(
+                "Project 'nonexistent' not found."
+            )
+            MockBranchService.return_value = mock_branch
+
+            result = runner.invoke(app, ["--json", "branch", "list", "--project", "nonexistent"])
+
+        assert result.exit_code == 5
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "CONFIG_ERROR"
+
+    def test_branch_list_human_output(self, tmp_path: Path) -> None:
+        """branch list in human mode shows Rich table with branch names."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {"prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"}},
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+            patch("keboola_agent_cli.cli.BranchService") as MockBranchService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            mock_branch = MagicMock()
+            mock_branch.list_branches.return_value = {
+                "branches": [
+                    {
+                        "project_alias": "prod",
+                        "id": 123,
+                        "name": "main",
+                        "isDefault": True,
+                        "created": "2025-01-01T00:00:00Z",
+                        "description": "",
+                    },
+                ],
+                "errors": [],
+            }
+            MockBranchService.return_value = mock_branch
+
+            result = runner.invoke(app, ["branch", "list"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "Development Branches" in result.output
+        assert "main" in result.output
+
+
+class TestBranchRequiresProject:
+    """Tests for --branch flag validation requiring --project."""
+
+    def test_tool_list_branch_without_project(self, tmp_path: Path) -> None:
+        """tool list --branch without --project returns exit code 2."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {"prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"}},
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+            patch("keboola_agent_cli.cli.McpService") as MockMcpService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+            MockMcpService.return_value = MagicMock()
+
+            result = runner.invoke(app, ["--json", "tool", "list", "--branch", "123"])
+
+        assert result.exit_code == 2
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "--branch requires --project" in output["error"]["message"]
+
+    def test_tool_call_branch_without_project(self, tmp_path: Path) -> None:
+        """tool call --branch without --project returns exit code 2."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {"prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"}},
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+            patch("keboola_agent_cli.cli.McpService") as MockMcpService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+            MockMcpService.return_value = MagicMock()
+
+            result = runner.invoke(
+                app, ["--json", "tool", "call", "list_configs", "--branch", "123"]
+            )
+
+        assert result.exit_code == 2
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "--branch requires --project" in output["error"]["message"]
+
+    def test_tool_call_branch_with_project_ok(self, tmp_path: Path) -> None:
+        """tool call --branch with --project passes validation."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {"prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"}},
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+            patch("keboola_agent_cli.cli.McpService") as MockMcpService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            mock_mcp = MagicMock()
+            mock_mcp.validate_tool_input.return_value = []
+            mock_mcp.call_tool.return_value = {
+                "results": [
+                    {
+                        "content": [{"configs": ["cfg1"]}],
+                        "isError": False,
+                        "project_alias": "prod",
+                    }
+                ],
+                "errors": [],
+            }
+            MockMcpService.return_value = mock_mcp
+
+            result = runner.invoke(
+                app,
+                ["--json", "tool", "call", "list_configs", "--project", "prod", "--branch", "456"],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        # Verify branch_id was passed to the service
+        mock_mcp.call_tool.assert_called_once_with(
+            tool_name="list_configs",
+            tool_input={},
+            alias="prod",
+            branch_id="456",
+        )
 
 
 class TestResolveManageToken:

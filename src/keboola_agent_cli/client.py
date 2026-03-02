@@ -144,6 +144,15 @@ class KeboolaClient(BaseHttpClient):
         )
         return response.json()
 
+    def list_dev_branches(self) -> list[dict[str, Any]]:
+        """List development branches for the project.
+
+        Returns:
+            List of branch dicts from the API.
+        """
+        response = self._request("GET", "/v2/storage/dev-branches")
+        return response.json()
+
     def list_buckets(self, include: str | None = None) -> list[dict[str, Any]]:
         """List storage buckets with optional extended information.
 

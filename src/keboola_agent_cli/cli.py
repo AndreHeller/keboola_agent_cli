@@ -5,6 +5,7 @@ import sys
 
 import typer
 
+from .commands.branch import branch_app
 from .commands.config import config_app
 from .commands.context import context_command
 from .commands.doctor import doctor_command
@@ -16,6 +17,7 @@ from .commands.project import project_app
 from .commands.tool import tool_app
 from .config_store import ConfigStore
 from .output import OutputFormatter
+from .services.branch_service import BranchService
 from .services.config_service import ConfigService
 from .services.doctor_service import DoctorService
 from .services.explorer_service import ExplorerService
@@ -37,6 +39,7 @@ app.add_typer(job_app, name="job")
 app.add_typer(lineage_app, name="lineage")
 app.add_typer(org_app, name="org")
 app.add_typer(tool_app, name="tool")
+app.add_typer(branch_app, name="branch")
 app.add_typer(explorer_app, name="explorer")
 app.command("context")(context_command)
 app.command("doctor")(doctor_command)
@@ -88,6 +91,7 @@ def main(
     lineage_service = LineageService(config_store=config_store)
     org_service = OrgService(config_store=config_store)
     mcp_service = McpService(config_store=config_store)
+    branch_service = BranchService(config_store=config_store)
     doctor_service = DoctorService(config_store=config_store, mcp_service=mcp_service)
     explorer_service = ExplorerService(
         config_store=config_store,
@@ -108,5 +112,6 @@ def main(
     ctx.obj["lineage_service"] = lineage_service
     ctx.obj["org_service"] = org_service
     ctx.obj["mcp_service"] = mcp_service
+    ctx.obj["branch_service"] = branch_service
     ctx.obj["doctor_service"] = doctor_service
     ctx.obj["explorer_service"] = explorer_service

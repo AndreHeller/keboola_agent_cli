@@ -23,15 +23,27 @@ def tool_list(
         "--project",
         help="Project alias to query tools from (uses first available if not set)",
     ),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help="Development branch ID (requires --project)",
+    ),
 ) -> None:
     """List available MCP tools from the keboola-mcp-server."""
     formatter = get_formatter(ctx)
     service = get_service(ctx, "mcp_service")
 
+    if branch and not project:
+        formatter.error(
+            message="--branch requires --project (branch ID is per-project)",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2) from None
+
     aliases = [project] if project else None
 
     try:
-        result = service.list_tools(aliases=aliases)
+        result = service.list_tools(aliases=aliases, branch_id=branch)
     except ConfigError as exc:
         formatter.error(message=exc.message, error_code="CONFIG_ERROR")
         raise typer.Exit(code=5) from None
@@ -57,6 +69,11 @@ def tool_call(
         "--input",
         help="Tool input as JSON string (e.g. '{\"query\": \"test\"}')",
     ),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help="Development branch ID (requires --project, forces single-project mode)",
+    ),
 ) -> None:
     """Call an MCP tool on keboola-mcp-server.
 
@@ -65,9 +82,19 @@ def tool_call(
 
     Write tools (create_*, update_*, delete_*, add_*) run on a single project.
     Use --project to specify the target, or the default project is used.
+
+    Use --branch to scope the tool call to a specific development branch.
+    This forces single-project mode (branch ID is per-project).
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "mcp_service")
+
+    if branch and not project:
+        formatter.error(
+            message="--branch requires --project (branch ID is per-project)",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2) from None
 
     # Parse tool input JSON
     parsed_input: dict = {}
@@ -94,6 +121,7 @@ def tool_call(
             tool_name=tool_name,
             tool_input=parsed_input,
             aliases=[project] if project else None,
+            branch_id=branch,
         )
     except ConfigError as exc:
         formatter.error(message=exc.message, error_code="CONFIG_ERROR")
@@ -116,6 +144,7 @@ def tool_call(
             tool_name=tool_name,
             tool_input=parsed_input,
             alias=project,
+            branch_id=branch,
         )
     except ConfigError as exc:
         formatter.error(message=exc.message, error_code="CONFIG_ERROR")

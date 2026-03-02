@@ -10,6 +10,7 @@ from keboola_agent_cli.errors import ConfigError
 from keboola_agent_cli.models import ProjectConfig
 from keboola_agent_cli.services.mcp_service import (
     McpService,
+    _build_server_params,
     _extract_ids,
     _is_write_tool,
     detect_mcp_server_command,
@@ -557,7 +558,7 @@ class TestMcpServiceErrorAccumulation:
         """When some projects fail for a read tool, successful results and errors are both returned."""
         call_count = 0
 
-        async def side_effect(project, tool_name, tool_input):
+        async def side_effect(project, tool_name, tool_input, branch_id=None):
             nonlocal call_count
             call_count += 1
             if project.token == "tok-failing":
@@ -840,3 +841,125 @@ class TestExtractIdsDeduplication:
         ]
         result = _extract_ids(content, "id")
         assert result == ["x", "y"]
+
+
+# ---------------------------------------------------------------------------
+# TestBuildServerParamsBranchId
+# ---------------------------------------------------------------------------
+
+
+class TestBuildServerParamsBranchId:
+    """Tests for _build_server_params() with branch_id parameter."""
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_build_server_params_with_branch_id(self, mock_which: MagicMock) -> None:
+        """When branch_id is provided, KBC_BRANCH_ID is set in env."""
+        mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
+
+        project = ProjectConfig(
+            stack_url="https://connection.keboola.com",
+            token="tok-test",
+            project_name="Test",
+            project_id=1234,
+        )
+        params = _build_server_params(project, branch_id="456")
+        assert params.env["KBC_BRANCH_ID"] == "456"
+        assert params.env["KBC_STORAGE_TOKEN"] == "tok-test"
+        assert params.env["KBC_STORAGE_API_URL"] == "https://connection.keboola.com"
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_build_server_params_without_branch_id(self, mock_which: MagicMock) -> None:
+        """When branch_id is None, KBC_BRANCH_ID is NOT set in env."""
+        mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
+
+        project = ProjectConfig(
+            stack_url="https://connection.keboola.com",
+            token="tok-test",
+            project_name="Test",
+            project_id=1234,
+        )
+        params = _build_server_params(project, branch_id=None)
+        assert "KBC_BRANCH_ID" not in params.env
+        assert params.env["KBC_STORAGE_TOKEN"] == "tok-test"
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_build_server_params_default_no_branch(self, mock_which: MagicMock) -> None:
+        """Default call without branch_id argument has no KBC_BRANCH_ID."""
+        mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
+
+        project = ProjectConfig(
+            stack_url="https://connection.keboola.com",
+            token="tok-test",
+            project_name="Test",
+            project_id=1234,
+        )
+        params = _build_server_params(project)
+        assert "KBC_BRANCH_ID" not in params.env
+
+
+# ---------------------------------------------------------------------------
+# TestCallToolWithBranch
+# ---------------------------------------------------------------------------
+
+
+class TestCallToolWithBranch:
+    """Tests for McpService.call_tool() with branch_id - forces single-project mode."""
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_call_read_tool_with_branch_forces_single_project(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """A read tool with branch_id forces single-project mode (write path)."""
+        call_count = 0
+        tools = _sample_tools()
+
+        def side_effect(coro):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return tools
+            return {
+                "content": [{"configs": ["cfg1"]}],
+                "isError": False,
+            }
+
+        mock_run.side_effect = side_effect
+
+        store = _setup_store(
+            tmp_path,
+            projects={
+                "prod": {"token": "tok-prod"},
+                "dev": {"token": "tok-dev"},
+            },
+            default_project="prod",
+        )
+        svc = McpService(config_store=store)
+        result = svc.call_tool(
+            "list_configs",
+            {},
+            alias="prod",
+            branch_id="456",
+        )
+
+        # Should only have 1 result (single-project mode)
+        assert len(result["results"]) == 1
+        assert result["results"][0]["project_alias"] == "prod"
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_tool_list_with_branch(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """list_tools with branch_id passes it through to MCP server."""
+        mock_run.return_value = _sample_tools()
+
+        store = _setup_store(
+            tmp_path,
+            projects={"prod": {"token": "tok-prod"}},
+        )
+        svc = McpService(config_store=store)
+        result = svc.list_tools(aliases=["prod"], branch_id="789")
+
+        assert len(result["tools"]) == 3
+        # Verify branch_id was passed through by checking the coroutine args
+        call_args = mock_run.call_args
+        assert call_args is not None

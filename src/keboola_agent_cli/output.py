@@ -687,6 +687,59 @@ def _render_linked_buckets_table(console: Console, linked_buckets: list[dict[str
     console.print()
 
 
+def format_branches_table(console: Console, data: dict[str, Any]) -> None:
+    """Render a Rich table of development branches grouped by project alias.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with "branches" (list of branch dicts) and "errors" (list of error dicts).
+    """
+    branches = data.get("branches", [])
+    errors = data.get("errors", [])
+
+    for err in errors:
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Project [bold]{err['project_alias']}[/bold]: "
+            f"{err['message']}"
+        )
+
+    if not branches:
+        if not errors:
+            console.print(
+                "No branches found. Use [bold]kbagent project add[/bold] to connect a project first."
+            )
+        else:
+            console.print("No branches retrieved (all projects failed).")
+        return
+
+    table = Table(title="Development Branches")
+    table.add_column("Project", style="bold magenta")
+    table.add_column("Branch ID", justify="right")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Default", justify="center")
+    table.add_column("Created", style="dim")
+
+    prev_alias = None
+    for branch in branches:
+        alias = branch.get("project_alias", "unknown")
+        is_default = branch.get("isDefault", False)
+        default_display = "[green]yes[/green]" if is_default else "[dim]no[/dim]"
+
+        display_alias = alias if alias != prev_alias else ""
+        prev_alias = alias
+
+        table.add_row(
+            display_alias,
+            str(branch.get("id", "")),
+            branch.get("name", ""),
+            default_display,
+            branch.get("created", ""),
+        )
+
+    console.print(table)
+    console.print()
+
+
 def format_doctor_panel(console: Console, data: dict[str, Any]) -> None:
     """Render doctor check results as a Rich panel with colored status indicators.
 

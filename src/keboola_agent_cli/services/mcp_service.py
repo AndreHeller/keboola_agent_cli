@@ -85,11 +85,15 @@ def detect_mcp_server_command() -> list[str] | None:
     return None
 
 
-def _build_server_params(project: ProjectConfig) -> StdioServerParameters:
+def _build_server_params(
+    project: ProjectConfig,
+    branch_id: str | None = None,
+) -> StdioServerParameters:
     """Build StdioServerParameters for a project's MCP server.
 
     Args:
         project: Project config with stack_url and token.
+        branch_id: Optional development branch ID to scope the MCP session.
 
     Returns:
         StdioServerParameters configured for the project.
@@ -104,28 +108,34 @@ def _build_server_params(project: ProjectConfig) -> StdioServerParameters:
             "Install it with: pip install keboola-mcp-server (or: uvx keboola_mcp_server)"
         )
 
+    env: dict[str, str] = {
+        "KBC_STORAGE_TOKEN": project.token,
+        "KBC_STORAGE_API_URL": project.stack_url,
+    }
+    if branch_id is not None:
+        env["KBC_BRANCH_ID"] = branch_id
+
     return StdioServerParameters(
         command=command_parts[0],
         args=[*command_parts[1:], "--transport", "stdio"],
-        env={
-            "KBC_STORAGE_TOKEN": project.token,
-            "KBC_STORAGE_API_URL": project.stack_url,
-        },
+        env=env,
     )
 
 
 async def _connect_and_list_tools(
     project: ProjectConfig,
+    branch_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Connect to MCP server for a project and list available tools.
 
     Args:
         project: Project config.
+        branch_id: Optional development branch ID.
 
     Returns:
         List of tool dicts with name, description, inputSchema.
     """
-    params = _build_server_params(project)
+    params = _build_server_params(project, branch_id=branch_id)
     exit_stack = AsyncExitStack()
 
     logger.info("Starting MCP server for project %s", project.project_name or "unknown")
@@ -179,10 +189,11 @@ def _parse_content(result: Any) -> list[Any]:
 async def _open_session(
     project: ProjectConfig,
     exit_stack: AsyncExitStack,
+    branch_id: str | None = None,
 ) -> "ClientSession":
     """Open an MCP session for a project, managed by the given exit stack."""
     logger.info("Opening MCP session for project %s", project.project_name or "unknown")
-    params = _build_server_params(project)
+    params = _build_server_params(project, branch_id=branch_id)
 
     read_stream, write_stream = await asyncio.wait_for(
         exit_stack.enter_async_context(
@@ -202,6 +213,7 @@ async def _connect_and_call_tool(
     project: ProjectConfig,
     tool_name: str,
     tool_input: dict[str, Any],
+    branch_id: str | None = None,
 ) -> dict[str, Any]:
     """Connect to MCP server for a project and call a specific tool.
 
@@ -209,6 +221,7 @@ async def _connect_and_call_tool(
         project: Project config.
         tool_name: Name of the tool to call.
         tool_input: Input arguments for the tool.
+        branch_id: Optional development branch ID.
 
     Returns:
         Dict with tool result content and error status.
@@ -216,7 +229,7 @@ async def _connect_and_call_tool(
     exit_stack = AsyncExitStack()
 
     try:
-        session = await _open_session(project, exit_stack)
+        session = await _open_session(project, exit_stack, branch_id=branch_id)
 
         result = await asyncio.wait_for(
             session.call_tool(tool_name, tool_input),
@@ -236,6 +249,7 @@ async def _connect_and_auto_expand(
     tool_name: str,
     tool_input: dict[str, Any],
     expand_config: dict[str, str],
+    branch_id: str | None = None,
 ) -> dict[str, Any]:
     """Connect to MCP server and auto-expand a tool call.
 
@@ -247,6 +261,7 @@ async def _connect_and_auto_expand(
         tool_name: Target tool name (e.g. "list_tables").
         tool_input: Base input for the target tool (without the auto-expanded param).
         expand_config: Dict with "param", "resolve_tool", "resolve_key".
+        branch_id: Optional development branch ID.
 
     Returns:
         Dict with aggregated content and error status.
@@ -258,7 +273,7 @@ async def _connect_and_auto_expand(
     exit_stack = AsyncExitStack()
 
     try:
-        session = await _open_session(project, exit_stack)
+        session = await _open_session(project, exit_stack, branch_id=branch_id)
 
         # Step 1: Call resolve tool (e.g. list_buckets)
         resolve_result = await asyncio.wait_for(
@@ -361,7 +376,9 @@ class McpService(BaseService):
         return alias, config.projects[alias]
 
     def list_tools(
-        self, aliases: list[str] | None = None
+        self,
+        aliases: list[str] | None = None,
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
         """List available MCP tools from the first reachable project.
 
@@ -371,6 +388,7 @@ class McpService(BaseService):
 
         Args:
             aliases: Project aliases. Uses first available if None.
+            branch_id: Optional development branch ID.
 
         Returns:
             Dict with "tools" list and "errors" list.
@@ -387,7 +405,9 @@ class McpService(BaseService):
         errors: list[dict[str, str]] = []
         for alias, project in projects.items():
             try:
-                tools = asyncio.run(_connect_and_list_tools(project))
+                tools = asyncio.run(
+                    _connect_and_list_tools(project, branch_id=branch_id)
+                )
                 # Annotate tools with multi_project flag
                 annotated_tools = []
                 for tool in tools:
@@ -407,7 +427,10 @@ class McpService(BaseService):
         return {"tools": [], "errors": errors}
 
     def get_tool_schema(
-        self, tool_name: str, aliases: list[str] | None = None
+        self,
+        tool_name: str,
+        aliases: list[str] | None = None,
+        branch_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Get the input schema for a specific tool.
 
@@ -417,11 +440,12 @@ class McpService(BaseService):
         Args:
             tool_name: Name of the tool.
             aliases: Project aliases to try.
+            branch_id: Optional development branch ID.
 
         Returns:
             The tool's inputSchema dict, or None if tool not found.
         """
-        result = self.list_tools(aliases=aliases)
+        result = self.list_tools(aliases=aliases, branch_id=branch_id)
         for tool in result.get("tools", []):
             if tool["name"] == tool_name:
                 return tool.get("inputSchema", {})
@@ -432,6 +456,7 @@ class McpService(BaseService):
         tool_name: str,
         tool_input: dict[str, Any],
         aliases: list[str] | None = None,
+        branch_id: str | None = None,
     ) -> list[str]:
         """Validate tool input against the tool's schema.
 
@@ -443,11 +468,12 @@ class McpService(BaseService):
             tool_name: Name of the tool.
             tool_input: Input arguments to validate.
             aliases: Project aliases to try for schema lookup.
+            branch_id: Optional development branch ID.
 
         Returns:
             List of missing required parameter names. Empty if all OK.
         """
-        schema = self.get_tool_schema(tool_name, aliases=aliases)
+        schema = self.get_tool_schema(tool_name, aliases=aliases, branch_id=branch_id)
         if schema is None:
             return []  # Tool not found; call_tool will raise ConfigError
 
@@ -467,6 +493,7 @@ class McpService(BaseService):
         tool_name: str,
         tool_input: dict[str, Any] | None = None,
         alias: str | None = None,
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
         """Call an MCP tool.
 
@@ -475,11 +502,15 @@ class McpService(BaseService):
 
         For write tools: runs on a single project (specified by alias or default).
 
+        When branch_id is provided, forces single-project mode regardless of
+        read/write classification (branch ID is per-project).
+
         Args:
             tool_name: Name of the MCP tool to call.
             tool_input: Input arguments for the tool.
             alias: Project alias for write tools. Ignored for read tools
                    unless specified to limit scope.
+            branch_id: Optional development branch ID. Forces single-project mode.
 
         Returns:
             Dict with "results" list and "errors" list.
@@ -491,7 +522,10 @@ class McpService(BaseService):
             tool_input = {}
 
         # Validate tool name exists in the MCP tool list
-        tool_list_result = self.list_tools(aliases=[alias] if alias else None)
+        tool_list_result = self.list_tools(
+            aliases=[alias] if alias else None,
+            branch_id=branch_id,
+        )
         known_tools = {t["name"] for t in tool_list_result.get("tools", [])}
         if known_tools and tool_name not in known_tools:
             raise ConfigError(
@@ -501,22 +535,26 @@ class McpService(BaseService):
 
         is_write = _is_write_tool(tool_name)
 
-        if is_write:
-            return self._call_write_tool(tool_name, tool_input, alias)
+        # When branch_id is set, force single-project mode
+        if branch_id is not None or is_write:
+            return self._call_write_tool(tool_name, tool_input, alias, branch_id=branch_id)
         else:
-            return self._call_read_tool(tool_name, tool_input, alias)
+            return self._call_read_tool(tool_name, tool_input, alias, branch_id=branch_id)
 
     def _call_write_tool(
         self,
         tool_name: str,
         tool_input: dict[str, Any],
         alias: str | None,
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
         """Execute a write tool on a single project."""
         resolved_alias, project = self.resolve_project(alias)
 
         try:
-            result = asyncio.run(_connect_and_call_tool(project, tool_name, tool_input))
+            result = asyncio.run(
+                _connect_and_call_tool(project, tool_name, tool_input, branch_id=branch_id)
+            )
             result["project_alias"] = resolved_alias
             return {"results": [result], "errors": []}
         except Exception as exc:
@@ -536,6 +574,7 @@ class McpService(BaseService):
         tool_name: str,
         tool_input: dict[str, Any],
         alias: str | None,
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
         """Execute a read tool across projects in parallel.
 
@@ -552,11 +591,13 @@ class McpService(BaseService):
         if expand_config and expand_config["param"] not in tool_input:
             return asyncio.run(
                 self._gather_auto_expand_results(
-                    projects, tool_name, tool_input, expand_config
+                    projects, tool_name, tool_input, expand_config, branch_id=branch_id
                 )
             )
 
-        return asyncio.run(self._gather_read_results(projects, tool_name, tool_input))
+        return asyncio.run(
+            self._gather_read_results(projects, tool_name, tool_input, branch_id=branch_id)
+        )
 
     @staticmethod
     async def _gather_results(
@@ -600,6 +641,7 @@ class McpService(BaseService):
         tool_name: str,
         tool_input: dict[str, Any],
         expand_config: dict[str, str],
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
         """Run an auto-expanded tool across multiple projects in parallel.
 
@@ -609,7 +651,9 @@ class McpService(BaseService):
         tasks = {}
         for a, project in projects.items():
             tasks[a] = asyncio.create_task(
-                _connect_and_auto_expand(project, tool_name, tool_input, expand_config)
+                _connect_and_auto_expand(
+                    project, tool_name, tool_input, expand_config, branch_id=branch_id
+                )
             )
         return await self._gather_results(tasks)
 
@@ -618,12 +662,13 @@ class McpService(BaseService):
         projects: dict[str, ProjectConfig],
         tool_name: str,
         tool_input: dict[str, Any],
+        branch_id: str | None = None,
     ) -> dict[str, Any]:
         """Run a read tool across multiple projects in parallel using asyncio.gather."""
         tasks = {}
         for a, project in projects.items():
             tasks[a] = asyncio.create_task(
-                _connect_and_call_tool(project, tool_name, tool_input)
+                _connect_and_call_tool(project, tool_name, tool_input, branch_id=branch_id)
             )
         return await self._gather_results(tasks)
 

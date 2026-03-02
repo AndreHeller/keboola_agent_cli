@@ -188,6 +188,17 @@ Then explore:
         my-l1-transform: L1
         unclassified-project: L0  # TODO: assign correct tier
 
+### Development Branches
+
+  kbagent branch list [--project NAME]
+    List development branches from connected projects.
+    --project can be repeated to query multiple projects.
+    Each branch shows: ID, name, whether it is the default branch, and creation date.
+    Examples:
+      kbagent --json branch list
+      kbagent --json branch list --project prod
+      kbagent --json branch list --project prod --project dev
+
 ### Utility Commands
 
   kbagent context
@@ -206,20 +217,23 @@ Then explore:
 
 ### MCP Tools (Multi-Project)
 
-  kbagent tool list [--project NAME]
+  kbagent tool list [--project NAME] [--branch ID]
     List all available MCP tools from keboola-mcp-server.
+    Use --branch to scope to a development branch (requires --project).
     Each tool is annotated with multi_project flag:
     - multi_project=true: Read tool, runs across ALL connected projects in parallel
     - multi_project=false: Write tool, targets a single project
     Example:
       kbagent --json tool list
 
-  kbagent tool call TOOL_NAME [--project NAME] [--input JSON]
+  kbagent tool call TOOL_NAME [--project NAME] [--input JSON] [--branch ID]
     Call an MCP tool. Read tools automatically query all projects.
     Write tools use --project or the default project.
+    Use --branch to scope the call to a development branch (requires --project).
     Examples:
       kbagent --json tool call list_configs
       kbagent --json tool call list_configs --project prod
+      kbagent --json tool call list_configs --project prod --branch 123
       kbagent --json tool call get_config --input '{{"configuration_id": "12345"}}'
       kbagent --json tool call create_config --project prod --input '{{"component_id": "keboola.ex-db-snowflake", "name": "My Config"}}'
 

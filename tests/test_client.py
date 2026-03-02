@@ -924,6 +924,67 @@ class TestGetJobDetail:
             assert exc_info.value.status_code == 404
 
 
+SAMPLE_DEV_BRANCHES = [
+    {"id": 123, "name": "main", "isDefault": True, "created": "2025-01-01T00:00:00Z", "description": ""},
+    {"id": 456, "name": "feature-x", "isDefault": False, "created": "2025-06-15T10:30:00Z", "description": "Feature"},
+]
+
+
+class TestListDevBranches:
+    """Tests for list_dev_branches() - Storage API branch listing."""
+
+    def test_list_dev_branches_success(self, httpx_mock) -> None:
+        """list_dev_branches() returns branch list from Storage API."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches",
+            json=SAMPLE_DEV_BRANCHES,
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_dev_branches()
+            assert len(result) == 2
+            assert result[0]["id"] == 123
+            assert result[0]["name"] == "main"
+            assert result[0]["isDefault"] is True
+            assert result[1]["id"] == 456
+            assert result[1]["name"] == "feature-x"
+
+    def test_list_dev_branches_empty(self, httpx_mock) -> None:
+        """list_dev_branches() returns empty list when no branches exist."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches",
+            json=[],
+            status_code=200,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.list_dev_branches()
+            assert result == []
+
+    def test_list_dev_branches_401_error(self, httpx_mock) -> None:
+        """list_dev_branches() raises KeboolaApiError on 401."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches",
+            json={"error": "Invalid access token"},
+            status_code=401,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            with pytest.raises(KeboolaApiError) as exc_info:
+                client.list_dev_branches()
+            assert exc_info.value.error_code == "INVALID_TOKEN"
+
+
 SAMPLE_BUCKETS = [
     {"id": "in.c-data", "name": "Data", "stage": "in"},
     {"id": "out.c-results", "name": "Results", "stage": "out"},

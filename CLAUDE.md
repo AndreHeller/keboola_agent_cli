@@ -46,7 +46,7 @@ uv run pytest tests/test_cli.py::TestProjectAdd::test_project_add_success_json -
 
 ```
 src/keboola_agent_cli/
-  __init__.py           # __version__ = "0.1.0"
+  __init__.py           # __version__ = "0.5.0"
   __main__.py           # python -m support
   cli.py                # Typer root app, global options, subcommand wiring
   constants.py          # Shared constants (retry params, timeouts, defaults)
@@ -64,7 +64,8 @@ src/keboola_agent_cli/
     job.py              # LAYER 1: CLI commands for job history (Queue API)
     lineage.py          # LAYER 1: CLI commands for cross-project data lineage
     org.py              # LAYER 1: CLI commands for organization bulk onboarding
-    tool.py             # LAYER 1: CLI commands for MCP tool list/call
+    tool.py             # LAYER 1: CLI commands for MCP tool list/call (supports --branch)
+    branch.py           # LAYER 1: CLI commands for development branch listing
     explorer.py         # LAYER 1: CLI commands for KBC Explorer dashboard generation
     context.py          # LAYER 1: Agent usage instructions
     doctor.py           # LAYER 1: Health check command
@@ -76,6 +77,7 @@ src/keboola_agent_cli/
     lineage_service.py  # LAYER 2: Cross-project lineage via bucket sharing
     org_service.py      # LAYER 2: Organization setup orchestration
     mcp_service.py      # LAYER 2: MCP tool integration (keboola-mcp-server wrapper)
+    branch_service.py   # LAYER 2: Development branch listing across projects
     explorer_service.py # LAYER 2: KBC Explorer catalog/orchestration generation
     doctor_service.py   # LAYER 2: Health check business logic
 
@@ -92,7 +94,8 @@ tests/
   test_services.py      # Business logic tests (project, config, parallel)
   test_base_service.py     # BaseService unit tests (resolve, workers, parallel)
   test_lineage_service.py  # Lineage service tests
-  test_mcp_service.py      # MCP service tests
+  test_mcp_service.py      # MCP service tests (incl. branch_id propagation)
+  test_branch_service.py   # Branch service tests (multi-project, errors)
   test_org_service.py      # Org service tests (slugify, setup, idempotency)
   test_explorer_service.py # Explorer service tests (tier assignment, job stats, generation)
   test_doctor_service.py   # Doctor service tests
@@ -127,6 +130,7 @@ Both inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/
 - **Auto-expand**: tools like `list_tables` that require `bucket_id` automatically
   resolve it by calling `list_buckets` first (configured in `AUTO_EXPAND_TOOLS` dict)
 - Upfront parameter validation against tool's `inputSchema` before multi-project dispatch
+- **Branch support**: `--branch ID` passes `KBC_BRANCH_ID` env var to MCP subprocess, forces single-project mode
 
 ## Coding Conventions
 
@@ -177,8 +181,10 @@ kbagent lineage show [--project NAME]   # also works as just: kbagent lineage
 
 kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
 
-kbagent tool list [--project NAME]
-kbagent tool call TOOL_NAME [--project NAME] [--input JSON]
+kbagent tool list [--project NAME] [--branch ID]
+kbagent tool call TOOL_NAME [--project NAME] [--input JSON] [--branch ID]
+
+kbagent branch list [--project NAME]
 
 kbagent explorer [--project NAME] [--output-dir DIR] [--job-limit N] [--tiers FILE] [--no-open]
 

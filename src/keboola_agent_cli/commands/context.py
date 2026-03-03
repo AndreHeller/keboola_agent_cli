@@ -188,16 +188,84 @@ Then explore:
         my-l1-transform: L1
         unclassified-project: L0  # TODO: assign correct tier
 
+### LLM Export (Project Context for AI)
+
+  kbagent llm export --project ALIAS [--with-samples] [--sample-limit N] [--max-samples N]
+    Export project to "Twin Format" -- an AI-optimized directory of JSON files
+    containing table schemas, transformation SQL code, internal lineage graph,
+    job statistics, and component configurations.
+    Output is written to ./${{ALIAS}}/ directory (created automatically).
+    Requires the kbc CLI binary (brew install keboola-cli).
+
+    After export, start by reading ./${{ALIAS}}/ai/AGENT_INSTRUCTIONS.md -- it explains
+    the directory structure, how to interpret each file, and recommended workflows.
+
+    The twin format includes:
+    - ai/AGENT_INSTRUCTIONS.md -- how to read and use the exported data
+    - buckets/*/metadata.json -- table schemas, columns, row counts
+    - transformations/*/metadata.json -- SQL/Python code, input/output tables
+    - indices/graph.jsonl -- internal lineage (table->transformation->table)
+    - jobs/index.json -- job execution stats
+    - components/*/ -- extractor/writer configurations
+
+    Use --with-samples to include actual data samples (CSV) from tables.
+
+    Examples:
+      kbagent llm export --project prod
+      kbagent llm export --project prod --with-samples --sample-limit 50
+
+### Version Information
+
+  kbagent version
+    Show kbagent version and check for updates of dependencies (kbc, keboola-mcp-server).
+    Example:
+      kbagent --json version
+
 ### Development Branches
 
   kbagent branch list [--project NAME]
     List development branches from connected projects.
     --project can be repeated to query multiple projects.
-    Each branch shows: ID, name, whether it is the default branch, and creation date.
+    Each branch shows: ID, name, whether it is the default branch, active marker, and creation date.
     Examples:
       kbagent --json branch list
       kbagent --json branch list --project prod
       kbagent --json branch list --project prod --project dev
+
+  kbagent branch create --project ALIAS --name "branch-name" [--description "..."]
+    Create a new development branch and auto-activate it.
+    Branch creation is an async operation on the Keboola API -- the CLI waits
+    for the job to complete (typically 1-3 seconds) before returning.
+    The created branch becomes the active branch for the project, so subsequent
+    tool calls will automatically use it (no need to pass --branch every time).
+    Example:
+      kbagent --json branch create --project prod --name "fix-transform-x"
+
+  kbagent branch use --project ALIAS --branch ID
+    Set an existing development branch as active.
+    Validates the branch exists via the API before activating it.
+    Example:
+      kbagent --json branch use --project prod --branch 456
+
+  kbagent branch reset --project ALIAS
+    Reset the active branch back to main/production.
+    Subsequent tool calls will operate on the main branch.
+    Example:
+      kbagent --json branch reset --project prod
+
+  kbagent branch delete --project ALIAS --branch ID
+    Delete a development branch via API (async operation, CLI waits for completion).
+    If the deleted branch was active, it is automatically reset to main.
+    Example:
+      kbagent --json branch delete --project prod --branch 456
+
+  kbagent branch merge --project ALIAS [--branch ID]
+    Get the KBC UI merge URL for a development branch.
+    Does NOT merge via API -- generates the URL for safe review and merge in the UI.
+    If --branch is not set, uses the active branch from config.
+    After displaying the URL, resets the active branch to main.
+    Example:
+      kbagent --json branch merge --project prod
 
 ### Utility Commands
 
@@ -281,7 +349,29 @@ Then explore:
      KBC_STORAGE_API_URL   - Default stack URL (fallback for --url in project add, org setup)
      KBC_MANAGE_API_TOKEN  - Manage API token (for org setup)
 
-11. Setting up projects -- two approaches:
+11. Branch workflow -- develop on a branch without passing --branch every time:
+     kbagent --json branch create --project prod --name "fix-transform-x"
+       # ^ creates the branch AND sets it as "active" for the project
+       #   all subsequent tool calls on this project auto-use this branch
+     kbagent --json tool call list_configs --project prod     # auto-uses active branch
+     kbagent --json tool call update_sql_transformation --project prod --input '{{...}}'  # auto-uses active branch
+     kbagent --json branch merge --project prod
+       # ^ does NOT merge! Returns a URL to Keboola UI where you review and merge manually.
+       #   After displaying the URL, resets the active branch back to main.
+
+12. Branch create and delete are async operations on the Keboola API.
+    The CLI handles this transparently -- it waits for the async job to complete
+    before returning (typically 1-3 seconds). You do NOT need to poll or retry.
+    If the job takes too long (>60s), the CLI returns an error.
+
+13. Project context for AI -- get a full offline snapshot of a project:
+     kbagent llm export --project prod
+     # Creates ./prod/ directory with Twin Format JSON files
+     # FIRST read ./prod/ai/AGENT_INSTRUCTIONS.md -- it explains the structure
+     # and how to interpret each file (schemas, transformations, lineage, etc.)
+     # This is much faster than querying each piece via MCP tool calls.
+
+14. Setting up projects -- two approaches:
 
     a) Single project (you have a Storage API token):
        kbagent --json project add --alias my-proj --url https://connection.keboola.com --token 901-xxxxx

@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import webbrowser
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,8 @@ import yaml
 
 from .. import __version__
 from ..config_store import ConfigStore
-from ..errors import ConfigError, KeboolaApiError
+from ..constants import MAX_JOB_LIMIT
+from ..errors import ConfigError
 from .base import BaseService, ClientFactory
 from .config_service import ConfigService
 from .job_service import JobService
@@ -27,8 +28,10 @@ from .lineage_service import LineageService
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JOB_LIMIT = 500
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "kbc-explorer"
+
+def _default_output_dir() -> Path:
+    """Return the default output directory for explorer files (relative to CWD)."""
+    return Path.cwd() / "kbc-explorer"
 
 
 def _assign_tier(alias: str, tier_map: dict[str, str] | None = None) -> tuple[str, bool]:
@@ -267,7 +270,7 @@ class ExplorerService(BaseService):
         self,
         aliases: list[str] | None = None,
         output_dir: Path | None = None,
-        job_limit: int = DEFAULT_JOB_LIMIT,
+        job_limit: int = MAX_JOB_LIMIT,
         open_browser: bool = True,
         tiers_config: Path | None = None,
     ) -> dict[str, Any]:
@@ -284,7 +287,7 @@ class ExplorerService(BaseService):
             Dict with generation summary and any errors.
         """
         if output_dir is None:
-            output_dir = DEFAULT_OUTPUT_DIR
+            output_dir = _default_output_dir()
 
         projects = self.resolve_projects(aliases)
         if not projects:
@@ -463,7 +466,7 @@ class ExplorerService(BaseService):
 
         catalog = {
             "metadata": {
-                "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "tool": f"kbagent CLI v{__version__}",
                 "stack_url": stack_url,
                 "description": description,

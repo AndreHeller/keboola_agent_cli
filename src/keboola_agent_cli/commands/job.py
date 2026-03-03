@@ -6,14 +6,12 @@ No business logic belongs here.
 
 import typer
 
-from ..constants import DEFAULT_JOB_LIMIT, MAX_JOB_LIMIT
+from ..constants import DEFAULT_JOB_LIMIT, MAX_JOB_LIMIT, VALID_STATUSES
 from ..errors import ConfigError, KeboolaApiError
 from ..output import format_job_detail, format_jobs_table
 from ._helpers import emit_project_warnings, get_formatter, get_service, map_error_to_exit_code
 
 job_app = typer.Typer(help="Browse job history")
-
-VALID_STATUSES = ["processing", "terminated", "cancelled", "success", "error"]
 
 
 @job_app.command("list")

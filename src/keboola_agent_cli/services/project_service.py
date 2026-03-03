@@ -153,6 +153,7 @@ class ProjectService(BaseService):
                     "stack_url": project.stack_url,
                     "token": mask_token(project.token),
                     "is_default": alias == config.default_project,
+                    "active_branch_id": project.active_branch_id,
                 }
             )
         return result
@@ -174,6 +175,7 @@ class ProjectService(BaseService):
             "alias": alias,
             "stack_url": project.stack_url,
             "token": mask_token(project.token),
+            "active_branch_id": project.active_branch_id,
         }
 
         client = self._client_factory(project.stack_url, project.token)

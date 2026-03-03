@@ -712,11 +712,15 @@ def format_branches_table(console: Console, data: dict[str, Any]) -> None:
             console.print("No branches retrieved (all projects failed).")
         return
 
+    active_branches = data.get("active_branches", {})
+
     table = Table(title="Development Branches")
     table.add_column("Project", style="bold magenta")
     table.add_column("Branch ID", justify="right")
     table.add_column("Name", style="bold cyan")
     table.add_column("Default", justify="center")
+    table.add_column("Active", justify="center")
+    table.add_column("Description", style="dim", max_width=40)
     table.add_column("Created", style="dim")
 
     prev_alias = None
@@ -724,6 +728,16 @@ def format_branches_table(console: Console, data: dict[str, Any]) -> None:
         alias = branch.get("project_alias", "unknown")
         is_default = branch.get("isDefault", False)
         default_display = "[green]yes[/green]" if is_default else "[dim]no[/dim]"
+
+        branch_id = branch.get("id")
+        active_id = active_branches.get(alias)
+        # Compare as int to handle potential type mismatch from API
+        is_active = (
+            branch_id is not None
+            and active_id is not None
+            and int(branch_id) == int(active_id)
+        )
+        active_display = "[bold green]>>>[/bold green]" if is_active else ""
 
         display_alias = alias if alias != prev_alias else ""
         prev_alias = alias
@@ -733,6 +747,8 @@ def format_branches_table(console: Console, data: dict[str, Any]) -> None:
             str(branch.get("id", "")),
             branch.get("name", ""),
             default_display,
+            active_display,
+            branch.get("description", ""),
             branch.get("created", ""),
         )
 

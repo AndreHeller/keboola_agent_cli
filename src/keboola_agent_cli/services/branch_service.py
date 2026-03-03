@@ -1,22 +1,26 @@
-"""Branch listing service - business logic for listing development branches.
+"""Branch service - business logic for branch lifecycle management.
 
 Orchestrates multi-project branch retrieval in parallel, annotates with
-project alias, and aggregates results.
+project alias, and aggregates results. Provides create, activate, reset,
+delete, and merge URL generation for development branches.
 """
 
 from typing import Any
 
-from ..errors import KeboolaApiError
+from ..errors import ConfigError, KeboolaApiError
 from ..models import ProjectConfig
 from .base import BaseService
 
 
 class BranchService(BaseService):
-    """Business logic for listing Keboola development branches.
+    """Business logic for managing Keboola development branches.
 
     Supports multi-project aggregation: queries multiple projects in parallel
     using ThreadPoolExecutor, collects results, and reports per-project errors
     without stopping others.
+
+    Provides branch lifecycle operations: create, activate (use), reset,
+    delete, and merge URL generation.
 
     Uses dependency injection for config_store and client_factory.
     """
@@ -78,6 +82,9 @@ class BranchService(BaseService):
         flattens them into a unified list. Per-project errors are collected
         but do not stop other projects from being queried.
 
+        Includes active_branches dict mapping alias -> active_branch_id for
+        display purposes.
+
         Args:
             aliases: Project aliases to query. None means all projects.
 
@@ -87,11 +94,17 @@ class BranchService(BaseService):
                   id, name, isDefault, created, description
                 - "errors": list of error dicts with project_alias,
                   error_code, message
+                - "active_branches": dict mapping alias -> active_branch_id
 
         Raises:
             ConfigError: If a specified alias is not found (before querying).
         """
         projects = self.resolve_projects(aliases)
+
+        # Collect active branch IDs for display
+        active_branches: dict[str, int | None] = {}
+        for alias, project in projects.items():
+            active_branches[alias] = project.active_branch_id
 
         def worker(alias: str, project: ProjectConfig) -> tuple[Any, ...]:
             return self._fetch_project_branches(alias, project)
@@ -109,4 +122,223 @@ class BranchService(BaseService):
         )
         errors.sort(key=lambda e: e.get("project_alias", ""))
 
-        return {"branches": all_branches, "errors": errors}
+        return {
+            "branches": all_branches,
+            "errors": errors,
+            "active_branches": active_branches,
+        }
+
+    def create_branch(
+        self,
+        alias: str,
+        name: str,
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Create a new development branch and auto-activate it.
+
+        Args:
+            alias: Project alias.
+            name: Branch name.
+            description: Optional branch description.
+
+        Returns:
+            Dict with branch details and activation info.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            # create_dev_branch waits for the async job and returns branch data
+            # from job.results (contains the real branch ID)
+            branch_data = client.create_dev_branch(name=name, description=description)
+        finally:
+            client.close()
+
+        branch_id = int(branch_data["id"])
+
+        # Auto-activate the created branch
+        self._config_store.set_project_branch(alias, branch_id)
+
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "branch_name": branch_data.get("name", name),
+            "description": branch_data.get("description", description),
+            "created": branch_data.get("created", ""),
+            "activated": True,
+            "message": (
+                f"Branch '{name}' (ID: {branch_id}) created and activated "
+                f"for project '{alias}'."
+            ),
+        }
+
+    def set_active_branch(self, alias: str, branch_id: int) -> dict[str, Any]:
+        """Validate and set an existing branch as active.
+
+        Calls the API to verify the branch exists before setting it.
+
+        Args:
+            alias: Project alias.
+            branch_id: Branch ID to activate.
+
+        Returns:
+            Dict with activation details.
+
+        Raises:
+            ConfigError: If the project alias is not found or branch does not exist.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            raw_branches = client.list_dev_branches()
+        finally:
+            client.close()
+
+        # Find the branch by ID
+        target_branch = None
+        for branch in raw_branches:
+            if branch.get("id") == branch_id:
+                target_branch = branch
+                break
+
+        if target_branch is None:
+            raise ConfigError(
+                f"Branch ID {branch_id} not found in project '{alias}'. "
+                f"Use 'kbagent branch list --project {alias}' to see available branches."
+            )
+
+        self._config_store.set_project_branch(alias, branch_id)
+
+        branch_name = target_branch.get("name", "")
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "branch_name": branch_name,
+            "message": (
+                f"Active branch set to '{branch_name}' (ID: {branch_id}) "
+                f"for project '{alias}'."
+            ),
+        }
+
+    def reset_branch(self, alias: str) -> dict[str, Any]:
+        """Clear the active branch, reverting to the main/production branch.
+
+        Args:
+            alias: Project alias.
+
+        Returns:
+            Dict confirming the reset.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+        """
+        projects = self.resolve_projects([alias])
+        previous_branch = projects[alias].active_branch_id
+
+        self._config_store.set_project_branch(alias, None)
+
+        return {
+            "project_alias": alias,
+            "previous_branch_id": previous_branch,
+            "message": (
+                f"Active branch reset to main for project '{alias}'."
+            ),
+        }
+
+    def delete_branch(self, alias: str, branch_id: int) -> dict[str, Any]:
+        """Delete a development branch via API. Auto-resets if it was active.
+
+        Args:
+            alias: Project alias.
+            branch_id: Branch ID to delete.
+
+        Returns:
+            Dict confirming the deletion.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            client.delete_dev_branch(branch_id)
+        finally:
+            client.close()
+
+        # Auto-reset if the deleted branch was active
+        was_active = project.active_branch_id == branch_id
+        if was_active:
+            self._config_store.set_project_branch(alias, None)
+
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "was_active": was_active,
+            "message": (
+                f"Branch ID {branch_id} deleted from project '{alias}'."
+                + (" Active branch reset to main." if was_active else "")
+            ),
+        }
+
+    def get_merge_url(self, alias: str, branch_id: int | None = None) -> dict[str, Any]:
+        """Generate KBC UI merge URL for a development branch.
+
+        Does not call any API. Constructs the URL from stored project config.
+        If no branch_id is provided, uses the active branch from config.
+        After generating the URL, resets the active branch to main.
+
+        Args:
+            alias: Project alias.
+            branch_id: Branch ID. If None, uses active_branch_id from config.
+
+        Returns:
+            Dict with merge URL and instructions.
+
+        Raises:
+            ConfigError: If project not found or no branch ID available.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        effective_branch_id = branch_id if branch_id is not None else project.active_branch_id
+        if effective_branch_id is None:
+            raise ConfigError(
+                f"No branch specified and no active branch set for project '{alias}'. "
+                f"Use --branch ID or set an active branch with 'kbagent branch use'."
+            )
+
+        if project.project_id is None:
+            raise ConfigError(
+                f"Project '{alias}' has no project_id stored. "
+                "Re-add the project with 'kbagent project edit' to populate it."
+            )
+
+        stack_url = project.stack_url.rstrip("/")
+        merge_url = (
+            f"{stack_url}/admin/projects/{project.project_id}"
+            f"/branch/{effective_branch_id}/development-overview"
+        )
+
+        # Reset active branch to main after generating merge URL
+        self._config_store.set_project_branch(alias, None)
+
+        return {
+            "project_alias": alias,
+            "branch_id": effective_branch_id,
+            "url": merge_url,
+            "message": (
+                f"Open this URL to review and merge branch {effective_branch_id} "
+                f"in project '{alias}'. Active branch has been reset to main."
+            ),
+        }

@@ -31,9 +31,12 @@ def _format_project_table(console: Console, projects: list[dict[str, Any]]) -> N
     table.add_column("Stack URL")
     table.add_column("Token", style="dim")
     table.add_column("Default", justify="center")
+    table.add_column("Branch", justify="center")
 
     for p in projects:
         default_marker = "*" if p.get("is_default") else ""
+        branch_id = p.get("active_branch_id")
+        branch_display = str(branch_id) if branch_id is not None else "[dim]main[/dim]"
         table.add_row(
             p["alias"],
             p.get("project_name", ""),
@@ -41,6 +44,7 @@ def _format_project_table(console: Console, projects: list[dict[str, Any]]) -> N
             p["stack_url"],
             p["token"],
             default_marker,
+            branch_display,
         )
 
     console.print(table)
@@ -58,6 +62,7 @@ def _format_status_table(console: Console, statuses: list[dict[str, Any]]) -> No
     table.add_column("Response Time", justify="right")
     table.add_column("Project Name")
     table.add_column("Stack URL")
+    table.add_column("Branch", justify="center")
 
     for s in statuses:
         if s["status"] == "ok":
@@ -65,12 +70,15 @@ def _format_status_table(console: Console, statuses: list[dict[str, Any]]) -> No
         else:
             status_str = f"[bold red]ERROR[/bold red]: {s.get('error', 'Unknown')}"
         response_time = f"{s.get('response_time_ms', 0)}ms"
+        branch_id = s.get("active_branch_id")
+        branch_display = str(branch_id) if branch_id is not None else "[dim]main[/dim]"
         table.add_row(
             s["alias"],
             status_str,
             response_time,
             s.get("project_name", ""),
             s["stack_url"],
+            branch_display,
         )
 
     console.print(table)

@@ -5,7 +5,6 @@ No business logic belongs here.
 """
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -18,12 +17,12 @@ explorer_app = typer.Typer(help="Generate and open the KBC Explorer dashboard")
 @explorer_app.callback(invoke_without_command=True)
 def explorer(
     ctx: typer.Context,
-    project: Optional[list[str]] = typer.Option(
+    project: list[str] | None = typer.Option(
         None,
         "--project",
         help="Project alias(es) to include (repeatable, default: all)",
     ),
-    output_dir: Optional[Path] = typer.Option(
+    output_dir: Path | None = typer.Option(
         None,
         "--output-dir",
         help="Directory to write catalog/orchestration files (default: kbc-explorer/)",
@@ -33,7 +32,7 @@ def explorer(
         "--job-limit",
         help="Max jobs per project for statistics (default: 500)",
     ),
-    tiers: Optional[Path] = typer.Option(
+    tiers: Path | None = typer.Option(
         None,
         "--tiers",
         help="Path to YAML tier config file for project tier assignments",

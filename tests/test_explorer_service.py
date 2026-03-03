@@ -6,16 +6,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from helpers import setup_single_project
 from keboola_agent_cli.services.explorer_service import (
     ExplorerService,
     _assign_tier,
     _build_mermaid,
     _compute_job_stats,
+    _default_output_dir,
     _type_icon,
 )
-
-from helpers import setup_single_project
-
 
 # ---------------------------------------------------------------------------
 # Pure function tests: _assign_tier
@@ -143,6 +142,21 @@ class TestTypeIcon:
 
     def test_application(self) -> None:
         assert _type_icon("keboola.app-something") == "AP"
+
+
+# ---------------------------------------------------------------------------
+# Pure function tests: _default_output_dir
+# ---------------------------------------------------------------------------
+
+class TestDefaultOutputDir:
+
+    def test_returns_cwd_based_path(self) -> None:
+        result = _default_output_dir()
+        assert result == Path.cwd() / "kbc-explorer"
+
+    def test_returns_path_instance(self) -> None:
+        result = _default_output_dir()
+        assert isinstance(result, Path)
 
 
 # ---------------------------------------------------------------------------

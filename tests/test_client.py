@@ -1390,3 +1390,112 @@ class TestQueueUrlWarning:
             _ = client._queue_base_url
             mock_logger.warning.assert_not_called()
             client.close()
+
+
+class TestCreateDevBranch:
+    """Tests for create_dev_branch() - async Storage API branch creation."""
+
+    def test_create_dev_branch_success(self, httpx_mock) -> None:
+        """create_dev_branch() polls job and returns branch data from results."""
+        # POST returns an async job
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches",
+            json={
+                "id": 999999,
+                "status": "success",
+                "operationName": "devBranchCreate",
+                "results": {"id": 789, "name": "my-feature", "description": "", "isDefault": False},
+            },
+            status_code=201,
+            method="POST",
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.create_dev_branch("my-feature")
+            assert result["id"] == 789
+            assert result["name"] == "my-feature"
+
+    def test_create_dev_branch_with_description(self, httpx_mock) -> None:
+        """create_dev_branch() sends description in the request body."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches",
+            json={
+                "id": 999998,
+                "status": "success",
+                "operationName": "devBranchCreate",
+                "results": {"id": 790, "name": "my-feature", "description": "A feature branch"},
+            },
+            status_code=201,
+            method="POST",
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.create_dev_branch("my-feature", description="A feature branch")
+            assert result["id"] == 790
+            assert result["description"] == "A feature branch"
+
+            # Verify the POST request body contained the description
+            request = httpx_mock.get_requests()[0]
+            import json
+            body = json.loads(request.content)
+            assert body["name"] == "my-feature"
+            assert body["description"] == "A feature branch"
+
+    def test_create_dev_branch_polls_waiting_job(self, httpx_mock) -> None:
+        """create_dev_branch() polls a waiting job until success."""
+        # POST returns a waiting job
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches",
+            json={"id": 111, "status": "waiting"},
+            status_code=201,
+            method="POST",
+        )
+        # First poll: still processing
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/jobs/111",
+            json={"id": 111, "status": "processing"},
+            method="GET",
+        )
+        # Second poll: success
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/jobs/111",
+            json={
+                "id": 111,
+                "status": "success",
+                "results": {"id": 555, "name": "polled-branch"},
+            },
+            method="GET",
+        )
+
+        from unittest.mock import patch
+        with patch("keboola_agent_cli.client.time.sleep"), KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.create_dev_branch("polled-branch")
+            assert result["id"] == 555
+
+
+class TestDeleteDevBranch:
+    """Tests for delete_dev_branch() - async Storage API branch deletion."""
+
+    def test_delete_dev_branch_success(self, httpx_mock) -> None:
+        """delete_dev_branch() polls job until success."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/dev-branches/789",
+            json={"id": 222, "status": "success", "operationName": "devBranchDelete"},
+            method="DELETE",
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            # Should not raise any exception
+            client.delete_dev_branch(789)

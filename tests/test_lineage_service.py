@@ -8,6 +8,7 @@ import pytest
 from helpers import setup_single_project, setup_two_projects
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
+from keboola_agent_cli.models import ProjectConfig
 from keboola_agent_cli.services.base import ENV_MAX_PARALLEL_WORKERS
 from keboola_agent_cli.services.lineage_service import LineageService
 
@@ -778,3 +779,42 @@ class TestLineageParallelExecution:
         monkeypatch.setenv(ENV_MAX_PARALLEL_WORKERS, "not-a-number")
         service = LineageService(config_store=store)
         assert service._resolve_max_workers() == 15
+
+
+class TestLineageProjectIdNone:
+    """Tests for projects with project_id=None being skipped in lineage."""
+
+    def test_project_with_none_project_id_skipped(self, tmp_config_dir: Path) -> None:
+        """A project with project_id=None is excluded from project_id_to_alias lookup."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "no-id",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-xxx",
+                project_name="No ID Project",
+                # project_id defaults to None
+            ),
+        )
+        store.add_project(
+            "with-id",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-yyy",
+                project_name="With ID Project",
+                project_id=999,
+            ),
+        )
+
+        mock_client = _make_lineage_client([])
+
+        service = LineageService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.get_lineage()
+
+        # Both projects are queried, but project_id_to_alias only has the one with an ID
+        assert result["summary"]["projects_queried"] == 2
+        assert result["summary"]["projects_with_errors"] == 0

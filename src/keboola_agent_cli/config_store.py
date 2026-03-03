@@ -2,10 +2,12 @@
 
 Manages reading and writing of config.json with project connections.
 File permissions are set to 0600 to protect stored tokens.
+Uses atomic writes to prevent TOCTOU race conditions.
 """
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import platformdirs
@@ -86,6 +88,8 @@ class ConfigStore:
         """Save configuration to disk with secure file permissions (0600).
 
         Creates the config directory if it does not exist.
+        Uses atomic write to ensure the file is never on disk with
+        permissions broader than 0600 (prevents TOCTOU race condition).
 
         Raises:
             ConfigError: If the file cannot be written.
@@ -94,8 +98,18 @@ class ConfigStore:
         try:
             self._config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             json_str = config.model_dump_json(indent=2)
-            self._config_path.write_text(json_str + "\n", encoding="utf-8")
-            self._config_path.chmod(0o600)
+            data = (json_str + "\n").encode("utf-8")
+
+            # Write to a temp file created with 0600 from the start,
+            # then atomically rename into place. This avoids any window
+            # where the config file exists with world-readable permissions.
+            tmp_path = self._config_path.with_suffix(".tmp")
+            fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            os.replace(str(tmp_path), str(self._config_path))
         except OSError as exc:
             raise ConfigError(f"Cannot write config file {self._config_path}: {exc}") from exc
 
@@ -142,6 +156,22 @@ class ConfigStore:
         """Get a project by alias, or None if not found."""
         config = self.load()
         return config.projects.get(alias)
+
+    def set_project_branch(self, alias: str, branch_id: int | None) -> None:
+        """Set or clear the active development branch for a project.
+
+        Args:
+            alias: The project alias.
+            branch_id: Branch ID to activate, or None to reset to main.
+
+        Raises:
+            ConfigError: If the alias does not exist.
+        """
+        config = self.load()
+        if alias not in config.projects:
+            raise ConfigError(f"Project '{alias}' not found.")
+        config.projects[alias].active_branch_id = branch_id
+        self.save(config)
 
     def edit_project(self, alias: str, **kwargs: str | int | None) -> None:
         """Update fields on an existing project.

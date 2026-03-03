@@ -8,13 +8,20 @@ Inherits shared retry/error logic from BaseHttpClient.
 """
 
 import logging
+import time
 from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
 
 from . import __version__
-from .constants import DEFAULT_JOB_LIMIT, DEFAULT_TIMEOUT
+from .constants import (
+    DEFAULT_JOB_LIMIT,
+    DEFAULT_TIMEOUT,
+    STORAGE_JOB_MAX_WAIT,
+    STORAGE_JOB_POLL_INTERVAL,
+)
+from .errors import KeboolaApiError
 from .http_base import BaseHttpClient
 from .models import TokenVerifyResponse
 
@@ -143,6 +150,83 @@ class KeboolaClient(BaseHttpClient):
             f"/v2/storage/components/{safe_component_id}/configs/{safe_config_id}",
         )
         return response.json()
+
+    def _wait_for_storage_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Poll a Storage API job until it reaches a terminal state.
+
+        Branch create/delete are async operations that return a job object.
+        This method polls until the job completes or fails.
+
+        Args:
+            job: Initial job response from POST/DELETE.
+
+        Returns:
+            Completed job dict (with results on success).
+
+        Raises:
+            KeboolaApiError: If the job fails or times out.
+        """
+        job_id = job.get("id")
+        if job.get("status") in ("success", "error"):
+            return job
+
+        deadline = time.monotonic() + STORAGE_JOB_MAX_WAIT
+        while time.monotonic() < deadline:
+            time.sleep(STORAGE_JOB_POLL_INTERVAL)
+            response = self._request("GET", f"/v2/storage/jobs/{job_id}")
+            job = response.json()
+            status = job.get("status")
+            if status == "success":
+                return job
+            if status == "error":
+                error_msg = job.get("error", {}).get("message", "Storage job failed")
+                raise KeboolaApiError(
+                    message=error_msg,
+                    status_code=500,
+                    error_code="STORAGE_JOB_FAILED",
+                    retryable=False,
+                )
+        raise KeboolaApiError(
+            message=f"Storage job {job_id} did not complete within {STORAGE_JOB_MAX_WAIT}s",
+            status_code=504,
+            error_code="STORAGE_JOB_TIMEOUT",
+            retryable=True,
+        )
+
+    def create_dev_branch(self, name: str, description: str = "") -> dict[str, Any]:
+        """Create a new development branch (waits for async job to complete).
+
+        The Storage API returns an async job. This method polls until the job
+        completes and returns the branch data from the job results.
+
+        Args:
+            name: Branch name.
+            description: Optional branch description.
+
+        Returns:
+            Branch dict with id, name, description, created, etc.
+
+        Raises:
+            KeboolaApiError: If the API call or job fails.
+        """
+        body: dict[str, str] = {"name": name}
+        if description:
+            body["description"] = description
+        response = self._request("POST", "/v2/storage/dev-branches", json=body)
+        job = self._wait_for_storage_job(response.json())
+        return job.get("results", {})
+
+    def delete_dev_branch(self, branch_id: int) -> None:
+        """Delete a development branch (waits for async job to complete).
+
+        Args:
+            branch_id: The branch ID to delete.
+
+        Raises:
+            KeboolaApiError: If the API call or job fails.
+        """
+        response = self._request("DELETE", f"/v2/storage/dev-branches/{branch_id}")
+        self._wait_for_storage_job(response.json())
 
     def list_dev_branches(self) -> list[dict[str, Any]]:
         """List development branches for the project.

@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -98,6 +99,38 @@ class TestFilePermissions:
         mode = stat.S_IMODE(file_stat.st_mode)
 
         assert mode == 0o600
+
+    def test_file_never_created_with_broad_permissions(self, tmp_config_dir: Path) -> None:
+        """Config file is never on disk with permissions broader than 0600 (TOCTOU fix).
+
+        Verifies that os.open is called with 0o600 mode, ensuring the file
+        descriptor is created with restricted permissions from the start,
+        rather than creating with default umask and then chmod-ing.
+        """
+        store = ConfigStore(config_dir=tmp_config_dir)
+
+        original_os_open = os.open
+        open_modes_seen: list[int] = []
+
+        def tracking_os_open(path: str, flags: int, mode: int = 0o777) -> int:
+            if "config" in path:
+                open_modes_seen.append(mode)
+            return original_os_open(path, flags, mode)
+
+        with patch("keboola_agent_cli.config_store.os.open", side_effect=tracking_os_open):
+            store.save(AppConfig())
+
+        # The file must have been opened with 0o600 mode
+        assert len(open_modes_seen) == 1
+        assert open_modes_seen[0] == 0o600
+
+    def test_temp_file_cleaned_up_after_save(self, tmp_config_dir: Path) -> None:
+        """Temporary file used during atomic write is not left behind."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.save(AppConfig())
+
+        tmp_file = tmp_config_dir / "config.tmp"
+        assert not tmp_file.exists()
 
 
 class TestAddProject:
@@ -596,3 +629,54 @@ class TestConfigPath:
         assert config.projects["project-0"].project_name == "Project 0"
         assert config.projects["project-9"].project_id == 9
         assert config.default_project == "project-0"
+
+
+class TestSetProjectBranch:
+    """Tests for set_project_branch()."""
+
+    def test_set_project_branch_set(self, tmp_config_dir: Path) -> None:
+        """Setting a branch ID stores it on the project config."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "test",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-abcdef-12345678",
+            ),
+        )
+
+        store.set_project_branch("test", 456)
+
+        project = store.get_project("test")
+        assert project is not None
+        assert project.active_branch_id == 456
+
+    def test_set_project_branch_clear(self, tmp_config_dir: Path) -> None:
+        """Setting branch_id to None clears the active branch."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "test",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-abcdef-12345678",
+            ),
+        )
+
+        # First set a branch
+        store.set_project_branch("test", 789)
+        project = store.get_project("test")
+        assert project is not None
+        assert project.active_branch_id == 789
+
+        # Then clear it
+        store.set_project_branch("test", None)
+        project = store.get_project("test")
+        assert project is not None
+        assert project.active_branch_id is None
+
+    def test_set_project_branch_unknown_alias(self, tmp_config_dir: Path) -> None:
+        """Setting branch on a nonexistent alias raises ConfigError."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+
+        with pytest.raises(ConfigError, match="not found"):
+            store.set_project_branch("nonexistent", 456)

@@ -359,3 +359,30 @@ class TestMaxParallelWorkersValidation:
         """max_parallel_workers = 1 is accepted."""
         config = AppConfig(max_parallel_workers=1)
         assert config.max_parallel_workers == 1
+
+
+class TestProjectConfigBackwardCompat:
+    """Tests for backward compatibility of ProjectConfig with active_branch_id."""
+
+    def test_project_config_without_active_branch_id(self) -> None:
+        """ProjectConfig created from dict without active_branch_id defaults to None."""
+        data = {
+            "stack_url": "https://connection.keboola.com",
+            "token": "901-secret-token",
+            "project_name": "My Project",
+            "project_id": 1234,
+        }
+        config = ProjectConfig.model_validate(data)
+        assert config.active_branch_id is None
+
+    def test_project_config_with_active_branch_id(self) -> None:
+        """ProjectConfig created with active_branch_id preserves the value."""
+        data = {
+            "stack_url": "https://connection.keboola.com",
+            "token": "901-secret-token",
+            "project_name": "My Project",
+            "project_id": 1234,
+            "active_branch_id": 123,
+        }
+        config = ProjectConfig.model_validate(data)
+        assert config.active_branch_id == 123

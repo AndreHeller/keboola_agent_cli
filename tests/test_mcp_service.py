@@ -141,10 +141,10 @@ class TestDetectMcpServerCommand:
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_uvx_available(self, mock_which: MagicMock) -> None:
-        """When uvx is available, returns ['uvx', 'keboola_mcp_server']."""
+        """When uvx is available, returns ['uvx', 'keboola_mcp_server@latest']."""
         mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
         result = detect_mcp_server_command()
-        assert result == ["uvx", "keboola_mcp_server"]
+        assert result == ["uvx", "keboola_mcp_server@latest"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_keboola_mcp_server_available(self, mock_which: MagicMock) -> None:
@@ -697,48 +697,43 @@ class TestMcpTimeoutFromEnv:
 
     def test_mcp_timeout_from_env(self) -> None:
         """KBAGENT_MCP_TOOL_TIMEOUT and KBAGENT_MCP_INIT_TIMEOUT env vars override defaults."""
-        import importlib
         import os
 
-        import keboola_agent_cli.services.mcp_service as mcp_mod
+        from keboola_agent_cli.services.mcp_service import (
+            _get_init_timeout,
+            _get_tool_timeout,
+        )
 
-        try:
-            with patch.dict(
-                os.environ,
-                {
-                    "KBAGENT_MCP_TOOL_TIMEOUT": "120",
-                    "KBAGENT_MCP_INIT_TIMEOUT": "45",
-                },
-            ):
-                importlib.reload(mcp_mod)
-                assert mcp_mod.MCP_TOOL_TIMEOUT_SECONDS == 120
-                assert mcp_mod.MCP_INIT_TIMEOUT_SECONDS == 45
-        finally:
-            # Reload to restore original state
-            importlib.reload(mcp_mod)
+        with patch.dict(
+            os.environ,
+            {
+                "KBAGENT_MCP_TOOL_TIMEOUT": "120",
+                "KBAGENT_MCP_INIT_TIMEOUT": "45",
+            },
+        ):
+            assert _get_tool_timeout() == 120
+            assert _get_init_timeout() == 45
 
     def test_mcp_timeout_defaults(self) -> None:
         """Without env vars, MCP timeouts use default values from constants."""
-        import importlib
         import os
 
-        import keboola_agent_cli.services.mcp_service as mcp_mod
         from keboola_agent_cli.constants import (
             DEFAULT_MCP_INIT_TIMEOUT,
             DEFAULT_MCP_TOOL_TIMEOUT,
         )
+        from keboola_agent_cli.services.mcp_service import (
+            _get_init_timeout,
+            _get_tool_timeout,
+        )
 
-        try:
-            # Clear any env vars that might be set
-            env = os.environ.copy()
-            env.pop("KBAGENT_MCP_TOOL_TIMEOUT", None)
-            env.pop("KBAGENT_MCP_INIT_TIMEOUT", None)
-            with patch.dict(os.environ, env, clear=True):
-                importlib.reload(mcp_mod)
-                assert mcp_mod.MCP_TOOL_TIMEOUT_SECONDS == DEFAULT_MCP_TOOL_TIMEOUT
-                assert mcp_mod.MCP_INIT_TIMEOUT_SECONDS == DEFAULT_MCP_INIT_TIMEOUT
-        finally:
-            importlib.reload(mcp_mod)
+        # Clear any env vars that might be set
+        env = os.environ.copy()
+        env.pop("KBAGENT_MCP_TOOL_TIMEOUT", None)
+        env.pop("KBAGENT_MCP_INIT_TIMEOUT", None)
+        with patch.dict(os.environ, env, clear=True):
+            assert _get_tool_timeout() == DEFAULT_MCP_TOOL_TIMEOUT
+            assert _get_init_timeout() == DEFAULT_MCP_INIT_TIMEOUT
 
 
 # ---------------------------------------------------------------------------

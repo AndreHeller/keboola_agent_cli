@@ -176,3 +176,305 @@ class TestListBranchesWithError:
         assert len(result["errors"]) == 1
         assert result["errors"][0]["error_code"] == "UNEXPECTED_ERROR"
         assert "Something broke" in result["errors"][0]["message"]
+
+
+class TestCreateBranch:
+    """Tests for BranchService.create_branch()."""
+
+    def test_create_branch_success(self, tmp_config_dir: Path) -> None:
+        """create_branch returns branch data and auto-activates it in config."""
+        mock_client = MagicMock()
+        # create_dev_branch now waits for async job and returns branch data
+        # from job.results (with the real branch ID)
+        mock_client.create_dev_branch.return_value = {
+            "id": 777,
+            "name": "my-feature",
+            "description": "A feature branch",
+            "created": "2025-07-01T12:00:00Z",
+        }
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.create_branch(alias="prod", name="my-feature", description="A feature branch")
+
+        assert result["project_alias"] == "prod"
+        assert result["branch_id"] == 777
+        assert result["branch_name"] == "my-feature"
+        assert result["activated"] is True
+
+        # Verify auto-activation persisted in config
+        project = store.get_project("prod")
+        assert project is not None
+        assert project.active_branch_id == 777
+
+        mock_client.create_dev_branch.assert_called_once_with(
+            name="my-feature", description="A feature branch"
+        )
+
+    def test_create_branch_unknown_project(self, tmp_config_dir: Path) -> None:
+        """create_branch raises ConfigError for an unknown project alias."""
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(config_store=store)
+
+        with pytest.raises(ConfigError, match="Project 'nonexistent' not found"):
+            svc.create_branch(alias="nonexistent", name="some-branch")
+
+    def test_create_branch_api_error(self, tmp_config_dir: Path) -> None:
+        """create_branch propagates KeboolaApiError from the client."""
+        mock_client = MagicMock()
+        mock_client.create_dev_branch.side_effect = KeboolaApiError(
+            message="Branch name already exists",
+            error_code="CONFLICT",
+            status_code=409,
+            retryable=False,
+        )
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        with pytest.raises(KeboolaApiError, match="Branch name already exists"):
+            svc.create_branch(alias="prod", name="duplicate-branch")
+
+
+class TestSetActiveBranch:
+    """Tests for BranchService.set_active_branch()."""
+
+    def test_set_active_branch_success(self, tmp_config_dir: Path) -> None:
+        """set_active_branch validates branch exists and stores it in config."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = SAMPLE_BRANCHES
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.set_active_branch(alias="prod", branch_id=456)
+
+        assert result["project_alias"] == "prod"
+        assert result["branch_id"] == 456
+        assert result["branch_name"] == "feature-x"
+
+        # Verify config was updated
+        project = store.get_project("prod")
+        assert project is not None
+        assert project.active_branch_id == 456
+
+    def test_set_active_branch_not_found(self, tmp_config_dir: Path) -> None:
+        """set_active_branch raises ConfigError when branch ID does not exist."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = SAMPLE_BRANCHES
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        with pytest.raises(ConfigError, match="Branch ID 999 not found"):
+            svc.set_active_branch(alias="prod", branch_id=999)
+
+    def test_set_active_branch_api_error(self, tmp_config_dir: Path) -> None:
+        """set_active_branch propagates KeboolaApiError from the client."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.side_effect = KeboolaApiError(
+            message="Forbidden",
+            error_code="AUTH_ERROR",
+            status_code=403,
+            retryable=False,
+        )
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        with pytest.raises(KeboolaApiError, match="Forbidden"):
+            svc.set_active_branch(alias="prod", branch_id=456)
+
+
+class TestResetBranch:
+    """Tests for BranchService.reset_branch()."""
+
+    def test_reset_branch_success(self, tmp_config_dir: Path) -> None:
+        """reset_branch clears the active branch, reverting to main."""
+        store = setup_single_project(tmp_config_dir)
+
+        # Set an active branch first
+        store.set_project_branch("prod", 456)
+        project = store.get_project("prod")
+        assert project is not None
+        assert project.active_branch_id == 456
+
+        svc = BranchService(config_store=store)
+
+        result = svc.reset_branch(alias="prod")
+
+        assert result["project_alias"] == "prod"
+        assert result["previous_branch_id"] == 456
+
+        # Verify config was cleared
+        project = store.get_project("prod")
+        assert project is not None
+        assert project.active_branch_id is None
+
+    def test_reset_branch_unknown_project(self, tmp_config_dir: Path) -> None:
+        """reset_branch raises ConfigError for an unknown project alias."""
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(config_store=store)
+
+        with pytest.raises(ConfigError, match="Project 'ghost' not found"):
+            svc.reset_branch(alias="ghost")
+
+
+class TestDeleteBranch:
+    """Tests for BranchService.delete_branch()."""
+
+    def test_delete_branch_success(self, tmp_config_dir: Path) -> None:
+        """delete_branch calls API and returns confirmation."""
+        mock_client = MagicMock()
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.delete_branch(alias="prod", branch_id=456)
+
+        assert result["project_alias"] == "prod"
+        assert result["branch_id"] == 456
+        assert result["was_active"] is False
+        mock_client.delete_dev_branch.assert_called_once_with(456)
+
+    def test_delete_branch_auto_reset(self, tmp_config_dir: Path) -> None:
+        """delete_branch resets active_branch_id when deleting the active branch."""
+        mock_client = MagicMock()
+
+        store = setup_single_project(tmp_config_dir)
+        # Set the branch as active first
+        store.set_project_branch("prod", 456)
+
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.delete_branch(alias="prod", branch_id=456)
+
+        assert result["was_active"] is True
+        assert "reset to main" in result["message"]
+
+        # Verify active branch was cleared
+        project = store.get_project("prod")
+        assert project is not None
+        assert project.active_branch_id is None
+
+    def test_delete_branch_api_error(self, tmp_config_dir: Path) -> None:
+        """delete_branch propagates KeboolaApiError from the client."""
+        mock_client = MagicMock()
+        mock_client.delete_dev_branch.side_effect = KeboolaApiError(
+            message="Branch not found",
+            error_code="NOT_FOUND",
+            status_code=404,
+            retryable=False,
+        )
+
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        with pytest.raises(KeboolaApiError, match="Branch not found"):
+            svc.delete_branch(alias="prod", branch_id=999)
+
+
+class TestGetMergeUrl:
+    """Tests for BranchService.get_merge_url()."""
+
+    def test_get_merge_url_with_explicit_branch(self, tmp_config_dir: Path) -> None:
+        """get_merge_url generates correct URL when branch_id is provided."""
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(config_store=store)
+
+        result = svc.get_merge_url(alias="prod", branch_id=456)
+
+        expected_url = (
+            "https://connection.keboola.com/admin/projects/258"
+            "/branch/456/development-overview"
+        )
+        assert result["url"] == expected_url
+        assert result["project_alias"] == "prod"
+        assert result["branch_id"] == 456
+
+    def test_get_merge_url_uses_active_branch(self, tmp_config_dir: Path) -> None:
+        """get_merge_url falls back to active_branch_id when no branch_id is given."""
+        store = setup_single_project(tmp_config_dir)
+        store.set_project_branch("prod", 789)
+
+        svc = BranchService(config_store=store)
+
+        result = svc.get_merge_url(alias="prod")
+
+        expected_url = (
+            "https://connection.keboola.com/admin/projects/258"
+            "/branch/789/development-overview"
+        )
+        assert result["url"] == expected_url
+        assert result["branch_id"] == 789
+
+    def test_get_merge_url_no_branch_raises(self, tmp_config_dir: Path) -> None:
+        """get_merge_url raises ConfigError when no branch_id and no active branch."""
+        store = setup_single_project(tmp_config_dir)
+        svc = BranchService(config_store=store)
+
+        with pytest.raises(ConfigError, match="No branch specified and no active branch"):
+            svc.get_merge_url(alias="prod")
+
+    def test_get_merge_url_resets_active_branch(self, tmp_config_dir: Path) -> None:
+        """get_merge_url resets active_branch_id to None after generating the URL."""
+        store = setup_single_project(tmp_config_dir)
+        store.set_project_branch("prod", 456)
+
+        svc = BranchService(config_store=store)
+
+        result = svc.get_merge_url(alias="prod")
+        assert result["branch_id"] == 456
+
+        # After generating URL, active branch should be reset
+        project = store.get_project("prod")
+        assert project is not None
+        assert project.active_branch_id is None
+
+
+class TestListBranchesActiveBranches:
+    """Tests for active_branches key in list_branches() response."""
+
+    def test_list_branches_includes_active_branches(self, tmp_config_dir: Path) -> None:
+        """list_branches result contains an active_branches dict mapping alias to branch ID."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = SAMPLE_BRANCHES
+
+        store = setup_single_project(tmp_config_dir)
+        # Set an active branch
+        store.set_project_branch("prod", 456)
+
+        svc = BranchService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.list_branches(aliases=["prod"])
+
+        assert "active_branches" in result
+        assert result["active_branches"] == {"prod": 456}

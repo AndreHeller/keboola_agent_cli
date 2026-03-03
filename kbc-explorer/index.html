@@ -992,6 +992,11 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
+  const escapeHtml = (str) => {
+    const div = document.createElement('div');
+    div.textContent = String(str ?? '');
+    return div.innerHTML;
+  };
   const h = (tag, attrs, ...children) => {
     const el = document.createElement(tag);
     if (attrs) Object.entries(attrs).forEach(([k, v]) => {
@@ -2344,12 +2349,12 @@
         const sharesOut = (adjOut[ne.data.alias] || []).length;
         const sharesIn = (adjIn[ne.data.alias] || []).length;
 
-        tooltip.innerHTML = `<strong>${proj.name}</strong><br>
-          <div class="tip-row"><span>Tier</span><span>${ne.data.tier}</span></div>
-          <div class="tip-row"><span>Configs</span><span>${configs}</span></div>
-          <div class="tip-row"><span>Success rate</span><span>${rateStr}</span></div>
-          <div class="tip-row"><span>Shares out</span><span>${sharesOut}</span></div>
-          <div class="tip-row"><span>Shares in</span><span>${sharesIn}</span></div>`;
+        tooltip.innerHTML = `<strong>${escapeHtml(proj.name)}</strong><br>
+          <div class="tip-row"><span>Tier</span><span>${escapeHtml(ne.data.tier)}</span></div>
+          <div class="tip-row"><span>Configs</span><span>${escapeHtml(configs)}</span></div>
+          <div class="tip-row"><span>Success rate</span><span>${escapeHtml(rateStr)}</span></div>
+          <div class="tip-row"><span>Shares out</span><span>${escapeHtml(sharesOut)}</span></div>
+          <div class="tip-row"><span>Shares in</span><span>${escapeHtml(sharesIn)}</span></div>`;
         tooltip.style.display = 'block';
       }
     }
@@ -2645,9 +2650,9 @@
         if (selectedNode) return;
         const s = nodeMap[ee.data.source];
         const t = nodeMap[ee.data.target];
-        tooltip.innerHTML = `<strong>${s?.name || ee.data.source} \u2192 ${t?.name || ee.data.target}</strong><br>
+        tooltip.innerHTML = `<strong>${escapeHtml(s?.name || ee.data.source)} \u2192 ${escapeHtml(t?.name || ee.data.target)}</strong><br>
           <div style="margin-top:4px;font-size:11px;color:var(--text-dim)">
-          ${ee.data.buckets.map(b => `<code style="font-size:10px;display:block;margin:1px 0">${b}</code>`).join('')}
+          ${ee.data.buckets.map(b => `<code style="font-size:10px;display:block;margin:1px 0">${escapeHtml(b)}</code>`).join('')}
           </div>`;
         tooltip.style.display = 'block';
       });

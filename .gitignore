@@ -26,6 +26,7 @@ ENV/
 *.swo
 *~
 .claude/
+.audit/
 
 # Testing
 .pytest_cache/
@@ -43,6 +44,9 @@ kbc-explorer/catalog.json
 kbc-explorer/catalog.js
 kbc-explorer/orchestrations.json
 kbc-explorer/orchestrations.js
+
+# Docs (plans, reports, PDFs - local only)
+docs/
 
 # OS
 .DS_Store

@@ -101,7 +101,7 @@ class OrgService:
         # Load existing config to check for already-registered projects
         config = self._config_store.load()
         existing_project_ids = {
-            p.project_id for p in config.projects.values()
+            p.project_id for p in config.projects.values() if p.project_id is not None
         }
 
         # Track used aliases for uniqueness

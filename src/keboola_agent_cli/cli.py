@@ -12,9 +12,11 @@ from .commands.doctor import doctor_command
 from .commands.explorer import explorer_app
 from .commands.job import job_app
 from .commands.lineage import lineage_app
+from .commands.llm import llm_app
 from .commands.org import org_app
 from .commands.project import project_app
 from .commands.tool import tool_app
+from .commands.version import version_command
 from .config_store import ConfigStore
 from .output import OutputFormatter
 from .services.branch_service import BranchService
@@ -22,10 +24,12 @@ from .services.config_service import ConfigService
 from .services.doctor_service import DoctorService
 from .services.explorer_service import ExplorerService
 from .services.job_service import JobService
+from .services.kbc_service import KbcService
 from .services.lineage_service import LineageService
 from .services.mcp_service import McpService
 from .services.org_service import OrgService
 from .services.project_service import ProjectService
+from .services.version_service import VersionService
 
 app = typer.Typer(
     name="kbagent",
@@ -41,8 +45,10 @@ app.add_typer(org_app, name="org")
 app.add_typer(tool_app, name="tool")
 app.add_typer(branch_app, name="branch")
 app.add_typer(explorer_app, name="explorer")
+app.add_typer(llm_app, name="llm")
 app.command("context")(context_command)
 app.command("doctor")(doctor_command)
+app.command("version")(version_command)
 
 
 @app.callback()
@@ -92,6 +98,7 @@ def main(
     org_service = OrgService(config_store=config_store)
     mcp_service = McpService(config_store=config_store)
     branch_service = BranchService(config_store=config_store)
+    kbc_service = KbcService(config_store=config_store)
     doctor_service = DoctorService(config_store=config_store, mcp_service=mcp_service)
     explorer_service = ExplorerService(
         config_store=config_store,
@@ -99,6 +106,7 @@ def main(
         job_service=job_service,
         lineage_service=lineage_service,
     )
+    version_service = VersionService()
 
     ctx.ensure_object(dict)
     ctx.obj["formatter"] = formatter
@@ -113,5 +121,7 @@ def main(
     ctx.obj["org_service"] = org_service
     ctx.obj["mcp_service"] = mcp_service
     ctx.obj["branch_service"] = branch_service
+    ctx.obj["kbc_service"] = kbc_service
     ctx.obj["doctor_service"] = doctor_service
     ctx.obj["explorer_service"] = explorer_service
+    ctx.obj["version_service"] = version_service

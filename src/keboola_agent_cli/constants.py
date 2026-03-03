@@ -37,6 +37,10 @@ MAX_RETRY_AFTER_SECONDS: int = 60
 DEFAULT_MCP_TOOL_TIMEOUT: int = 60
 DEFAULT_MCP_INIT_TIMEOUT: int = 30
 
+# --- Storage Job Polling ---
+STORAGE_JOB_POLL_INTERVAL: float = 1.0  # seconds between polls
+STORAGE_JOB_MAX_WAIT: float = 60.0  # max seconds to wait for a storage job
+
 # --- Parallel Workers ---
 MAX_PARALLEL_WORKERS_LIMIT: int = 100
 
@@ -47,3 +51,15 @@ ENV_KBC_STORAGE_API_URL: str = "KBC_STORAGE_API_URL"
 ENV_KBC_MANAGE_API_TOKEN: str = "KBC_MANAGE_API_TOKEN"
 ENV_MCP_TOOL_TIMEOUT: str = "KBAGENT_MCP_TOOL_TIMEOUT"
 ENV_MCP_INIT_TIMEOUT: str = "KBAGENT_MCP_INIT_TIMEOUT"
+
+# --- Version Check ---
+VERSION_CHECK_TIMEOUT: float = 4.0  # seconds for fetching latest version from remote
+KBC_SUBPROCESS_TIMEOUT: float = 5.0  # seconds for running kbc/mcp subprocess commands
+KBC_GITHUB_RELEASES_URL: str = (
+    "https://api.github.com/repos/keboola/keboola-as-code/releases/latest"
+)
+MCP_PYPI_URL: str = "https://pypi.org/pypi/keboola-mcp-server/json"
+
+# --- Domain Validation Constants ---
+VALID_COMPONENT_TYPES: list[str] = ["extractor", "writer", "transformation", "application"]
+VALID_STATUSES: list[str] = ["processing", "terminated", "cancelled", "success", "error"]

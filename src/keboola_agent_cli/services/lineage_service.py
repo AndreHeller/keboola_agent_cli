@@ -5,11 +5,14 @@ a graph of data flow edges between projects. Fetches buckets from
 all projects in parallel using BaseService._run_parallel().
 """
 
+import logging
 from typing import Any
 
 from ..errors import KeboolaApiError
 from ..models import ProjectConfig
 from .base import BaseService
+
+logger = logging.getLogger(__name__)
 
 
 class LineageService(BaseService):
@@ -98,6 +101,9 @@ class LineageService(BaseService):
         # Build project_id -> alias lookup for cross-referencing
         project_id_to_alias: dict[int, str] = {}
         for alias, project in projects.items():
+            if project.project_id is None:
+                logger.warning("Project '%s' has no project_id; skipping lineage", alias)
+                continue
             project_id_to_alias[project.project_id] = alias
 
         all_shared_buckets: list[dict[str, Any]] = []

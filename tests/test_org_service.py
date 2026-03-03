@@ -387,6 +387,46 @@ class TestSetupOrganization:
         ) or "my-custom-prefix" in str(call_args)
 
 
+class TestExistingProjectIdNone:
+    """Tests for existing projects with project_id=None not polluting the set."""
+
+    def test_none_project_id_not_in_existing_set(self, tmp_path: Path) -> None:
+        """A pre-registered project with project_id=None does not block new projects."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        # Pre-register a project without project_id (defaults to None)
+        store.add_project(
+            "legacy",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-legacy-tokenValue12345678901",
+                project_name="Legacy",
+                # project_id is None
+            ),
+        )
+
+        projects = [{"id": 100, "name": "Alpha"}]
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=_make_manage_client(projects),
+            storage_client_factory=_make_storage_client(),
+        )
+
+        result = service.setup_organization(
+            stack_url="https://connection.keboola.com",
+            manage_token="manage-token-123456789012345678",
+            org_id=42,
+        )
+
+        # Project 100 should be added, not skipped
+        assert len(result["projects_added"]) == 1
+        assert result["projects_added"][0]["project_id"] == 100
+        assert len(result["projects_skipped"]) == 0
+
+
 class TestUniqueAlias:
     """Tests for OrgService._unique_alias() static method."""
 

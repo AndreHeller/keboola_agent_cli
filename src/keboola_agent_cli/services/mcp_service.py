@@ -28,14 +28,14 @@ from .base import BaseService
 
 logger = logging.getLogger(__name__)
 
-# Timeout for individual MCP operations (seconds)
-MCP_TOOL_TIMEOUT_SECONDS = int(
-    os.environ.get(ENV_MCP_TOOL_TIMEOUT, DEFAULT_MCP_TOOL_TIMEOUT)
-)
-# Timeout for MCP session initialization (seconds)
-MCP_INIT_TIMEOUT_SECONDS = int(
-    os.environ.get(ENV_MCP_INIT_TIMEOUT, DEFAULT_MCP_INIT_TIMEOUT)
-)
+def _get_tool_timeout() -> int:
+    """Get MCP tool timeout (seconds), reading env var at call time."""
+    return int(os.environ.get(ENV_MCP_TOOL_TIMEOUT, DEFAULT_MCP_TOOL_TIMEOUT))
+
+
+def _get_init_timeout() -> int:
+    """Get MCP init timeout (seconds), reading env var at call time."""
+    return int(os.environ.get(ENV_MCP_INIT_TIMEOUT, DEFAULT_MCP_INIT_TIMEOUT))
 
 # Prefixes that indicate write/mutating tools
 WRITE_PREFIXES = (
@@ -69,7 +69,7 @@ def detect_mcp_server_command() -> list[str] | None:
     """Detect the best way to run keboola-mcp-server.
 
     Checks in order:
-    1. uvx keboola_mcp_server (if uvx is available)
+    1. uvx keboola_mcp_server@latest (if uvx is available -- always latest version)
     2. keboola_mcp_server (if installed as standalone command)
     3. python -m keboola_mcp_server (last resort)
 
@@ -77,7 +77,7 @@ def detect_mcp_server_command() -> list[str] | None:
         List of command parts, or None if no method is available.
     """
     if shutil.which("uvx"):
-        return ["uvx", "keboola_mcp_server"]
+        return ["uvx", "keboola_mcp_server@latest"]
     if shutil.which("keboola_mcp_server"):
         return ["keboola_mcp_server"]
     if shutil.which("python"):
@@ -144,16 +144,16 @@ async def _connect_and_list_tools(
             exit_stack.enter_async_context(
                 stdio_client(params, errlog=subprocess.DEVNULL)
             ),
-            timeout=MCP_INIT_TIMEOUT_SECONDS,
+            timeout=_get_init_timeout(),
         )
 
         session = await exit_stack.enter_async_context(
             ClientSession(read_stream, write_stream)
         )
-        await asyncio.wait_for(session.initialize(), timeout=MCP_INIT_TIMEOUT_SECONDS)
+        await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
 
         response = await asyncio.wait_for(
-            session.list_tools(), timeout=MCP_TOOL_TIMEOUT_SECONDS
+            session.list_tools(), timeout=_get_tool_timeout()
         )
 
         tools = []
@@ -199,13 +199,13 @@ async def _open_session(
         exit_stack.enter_async_context(
             stdio_client(params, errlog=subprocess.DEVNULL)
         ),
-        timeout=MCP_INIT_TIMEOUT_SECONDS,
+        timeout=_get_init_timeout(),
     )
 
     session = await exit_stack.enter_async_context(
         ClientSession(read_stream, write_stream)
     )
-    await asyncio.wait_for(session.initialize(), timeout=MCP_INIT_TIMEOUT_SECONDS)
+    await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
     return session
 
 
@@ -233,7 +233,7 @@ async def _connect_and_call_tool(
 
         result = await asyncio.wait_for(
             session.call_tool(tool_name, tool_input),
-            timeout=MCP_TOOL_TIMEOUT_SECONDS,
+            timeout=_get_tool_timeout(),
         )
 
         return {
@@ -278,7 +278,7 @@ async def _connect_and_auto_expand(
         # Step 1: Call resolve tool (e.g. list_buckets)
         resolve_result = await asyncio.wait_for(
             session.call_tool(resolve_tool, {}),
-            timeout=MCP_TOOL_TIMEOUT_SECONDS,
+            timeout=_get_tool_timeout(),
         )
 
         if resolve_result.isError:
@@ -302,7 +302,7 @@ async def _connect_and_auto_expand(
             call_input = {**tool_input, param_name: item_id}
             result = await asyncio.wait_for(
                 session.call_tool(tool_name, call_input),
-                timeout=MCP_TOOL_TIMEOUT_SECONDS,
+                timeout=_get_tool_timeout(),
             )
 
             content = _parse_content(result)

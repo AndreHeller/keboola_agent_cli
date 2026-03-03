@@ -6,13 +6,12 @@ No business logic belongs here.
 
 import typer
 
+from ..constants import VALID_COMPONENT_TYPES
 from ..errors import ConfigError, KeboolaApiError
 from ..output import format_config_detail, format_configs_table
 from ._helpers import emit_project_warnings, get_formatter, get_service, map_error_to_exit_code
 
 config_app = typer.Typer(help="Browse and inspect configurations")
-
-VALID_COMPONENT_TYPES = ["extractor", "writer", "transformation", "application"]
 
 
 @config_app.command("list")

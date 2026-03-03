@@ -11,6 +11,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 - **Onboard an entire organization** -- register all projects from a Keboola org with a single `org setup` command
 - **Trace data flow** -- see how data moves between projects via bucket sharing (lineage)
 - **Use MCP tools** -- call keboola-mcp-server tools across all projects in parallel
+- **Manage dev branches** -- create, switch, delete branches with persistent active branch state
 
 ## What it can do
 
@@ -22,6 +23,10 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `lineage show` | Analyze cross-project data flow via bucket sharing (parallel across all projects) |
 | `org setup` | Bulk-onboard all projects from a Keboola organization (uses Manage API) |
 | `tool` | List and call MCP tools from keboola-mcp-server (read tools run across all projects in parallel) |
+| `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
+| `explorer` | Generate KBC Explorer dashboard with catalog, orchestrations, and lineage visualization |
+| `llm export` | AI-optimized project export via `kbc` Go binary (auto-resolves credentials) |
+| `version` | Show kbagent version and check for kbc / MCP server updates |
 | `context` | Print comprehensive usage instructions for AI agents |
 | `doctor` | Health check -- verifies config, permissions, connectivity, MCP server availability |
 
@@ -87,6 +92,24 @@ All multi-project read operations (`config list`, `job list`, `project status`, 
 | 1 (highest) | Environment variable | `KBAGENT_MAX_PARALLEL_WORKERS=20 kbagent lineage show` |
 | 2 | Config file | `"max_parallel_workers": 20` in config.json |
 | 3 (default) | Built-in default | `10` |
+
+## Development branches
+
+Work on Keboola dev branches without passing `--branch` to every command:
+
+```bash
+# Create a branch -- auto-activates it for the project
+kbagent branch create --project prod --name "fix-transform-x"
+
+# All subsequent tool calls use the active branch automatically
+kbagent tool call list_configs --project prod
+kbagent tool call update_sql_transformation --project prod --input '{...}'
+
+# When done, get the merge URL (opens KBC UI for safe review)
+kbagent branch merge --project prod
+```
+
+The active branch is stored per-project in `config.json` and displayed in `project list` and `branch list` output. Use `branch reset` to switch back to main, or `branch delete` to remove a branch (auto-resets if it was active).
 
 ## JSON output format
 

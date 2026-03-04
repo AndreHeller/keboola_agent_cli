@@ -37,6 +37,10 @@ MAX_RETRY_AFTER_SECONDS: int = 60
 DEFAULT_MCP_TOOL_TIMEOUT: int = 60
 DEFAULT_MCP_INIT_TIMEOUT: int = 30
 
+# --- MCP Concurrency ---
+# 0 = unlimited (all projects run in parallel); set KBAGENT_MCP_MAX_SESSIONS to throttle
+DEFAULT_MCP_MAX_SESSIONS: int = 0
+
 # --- Storage Job Polling ---
 STORAGE_JOB_POLL_INTERVAL: float = 1.0  # seconds between polls
 STORAGE_JOB_MAX_WAIT: float = 60.0  # max seconds to wait for a storage job
@@ -51,6 +55,7 @@ ENV_KBC_STORAGE_API_URL: str = "KBC_STORAGE_API_URL"
 ENV_KBC_MANAGE_API_TOKEN: str = "KBC_MANAGE_API_TOKEN"
 ENV_MCP_TOOL_TIMEOUT: str = "KBAGENT_MCP_TOOL_TIMEOUT"
 ENV_MCP_INIT_TIMEOUT: str = "KBAGENT_MCP_INIT_TIMEOUT"
+ENV_MCP_MAX_SESSIONS: str = "KBAGENT_MCP_MAX_SESSIONS"
 
 # --- Version Check ---
 VERSION_CHECK_TIMEOUT: float = 4.0  # seconds for fetching latest version from remote

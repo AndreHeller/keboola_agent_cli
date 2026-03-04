@@ -85,13 +85,23 @@ The `org setup` command requires a Manage API token to list organization project
 
 ### Parallel execution
 
-All multi-project read operations (`config list`, `job list`, `project status`, `lineage show`, `tool call` for read tools) run in parallel using a thread pool. The concurrency is configurable:
+All multi-project read operations (`config list`, `job list`, `project status`, `lineage show`, `tool call` for read tools) run in parallel. The concurrency is configurable:
+
+**HTTP operations** (config, job, lineage, project status):
 
 | Priority | Method | Example |
 |----------|--------|---------|
 | 1 (highest) | Environment variable | `KBAGENT_MAX_PARALLEL_WORKERS=20 kbagent lineage show` |
 | 2 | Config file | `"max_parallel_workers": 20` in config.json |
 | 3 (default) | Built-in default | `10` |
+
+**MCP tool calls** (`tool call`, `tool list`):
+
+By default, all MCP sessions run fully in parallel (one subprocess per project). If you hit OS resource limits on machines with many projects (50+), throttle with:
+
+```bash
+KBAGENT_MCP_MAX_SESSIONS=10 kbagent tool call get_buckets
+```
 
 ## Development branches
 

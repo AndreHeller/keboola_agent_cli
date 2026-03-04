@@ -1,5 +1,7 @@
 """Tests for McpService - MCP integration service for multi-project tool operations."""
 
+import asyncio
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,7 +14,9 @@ from keboola_agent_cli.services.mcp_service import (
     McpService,
     _build_server_params,
     _extract_ids,
+    _get_max_sessions,
     _is_write_tool,
+    _semaphored,
     detect_mcp_server_command,
 )
 
@@ -141,10 +145,10 @@ class TestDetectMcpServerCommand:
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_uvx_available(self, mock_which: MagicMock) -> None:
-        """When uvx is available, returns ['uvx', 'keboola_mcp_server@latest']."""
+        """When uvx is available, returns ['uvx', '--prerelease=allow', 'keboola_mcp_server@latest']."""
         mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
         result = detect_mcp_server_command()
-        assert result == ["uvx", "keboola_mcp_server@latest"]
+        assert result == ["uvx", "--prerelease=allow", "keboola_mcp_server@latest"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_keboola_mcp_server_available(self, mock_which: MagicMock) -> None:
@@ -631,7 +635,8 @@ class TestCheckServerAvailable:
         assert result["check"] == "mcp_server"
         assert result["name"] == "MCP server"
         assert result["status"] == "pass"
-        assert "uvx keboola_mcp_server" in result["message"]
+        assert "uvx" in result["message"]
+        assert "keboola_mcp_server" in result["message"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_server_available_via_direct_binary(
@@ -958,3 +963,217 @@ class TestCallToolWithBranch:
         # Verify branch_id was passed through by checking the coroutine args
         call_args = mock_run.call_args
         assert call_args is not None
+
+
+# ---------------------------------------------------------------------------
+# TestValidateToolInputReturnsTuple
+# ---------------------------------------------------------------------------
+
+
+class TestValidateToolInputReturnsTuple:
+    """Tests that validate_tool_input returns (missing_params, known_tool_names)."""
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_returns_tuple_with_known_tools(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """validate_tool_input returns a tuple of (missing, known_tools)."""
+        tools = [
+            {
+                "name": "list_configs",
+                "description": "List configs",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"component_id": {"type": "string"}},
+                    "required": ["component_id"],
+                },
+            },
+            {
+                "name": "create_config",
+                "description": "Create config",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+        ]
+        mock_run.return_value = tools
+
+        store = _setup_store(
+            tmp_path, projects={"prod": {"token": "tok-prod"}}
+        )
+        svc = McpService(config_store=store)
+
+        missing, known = svc.validate_tool_input("list_configs", {})
+        assert missing == ["component_id"]
+        assert known == {"list_configs", "create_config"}
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_no_missing_when_all_provided(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """When all required params are provided, missing list is empty."""
+        tools = [
+            {
+                "name": "list_configs",
+                "description": "List configs",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"component_id": {"type": "string"}},
+                    "required": ["component_id"],
+                },
+            },
+        ]
+        mock_run.return_value = tools
+
+        store = _setup_store(
+            tmp_path, projects={"prod": {"token": "tok-prod"}}
+        )
+        svc = McpService(config_store=store)
+
+        missing, known = svc.validate_tool_input(
+            "list_configs", {"component_id": "keboola.ex-db-mysql"}
+        )
+        assert missing == []
+        assert "list_configs" in known
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_unknown_tool_returns_empty_missing(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Unknown tool name returns empty missing and known tools set."""
+        mock_run.return_value = _sample_tools()
+
+        store = _setup_store(
+            tmp_path, projects={"prod": {"token": "tok-prod"}}
+        )
+        svc = McpService(config_store=store)
+
+        missing, known = svc.validate_tool_input("nonexistent_tool", {})
+        assert missing == []
+        assert len(known) == 3
+
+
+# ---------------------------------------------------------------------------
+# TestCallToolWithKnownTools
+# ---------------------------------------------------------------------------
+
+
+class TestCallToolWithKnownTools:
+    """Tests that call_tool skips list_tools when _known_tools is provided."""
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_known_tools_skips_list_tools(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """When _known_tools is provided, call_tool does not call list_tools."""
+        mock_run.return_value = {
+            "content": [{"created": True}],
+            "isError": False,
+        }
+
+        store = _setup_store(
+            tmp_path,
+            projects={"prod": {"token": "tok-prod"}},
+            default_project="prod",
+        )
+        svc = McpService(config_store=store)
+
+        with patch.object(svc, "list_tools") as mock_list:
+            result = svc.call_tool(
+                "create_config",
+                {"name": "test"},
+                _known_tools={"create_config", "list_configs"},
+            )
+            mock_list.assert_not_called()
+
+        assert len(result["results"]) == 1
+
+    @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
+    def test_unknown_tool_with_known_tools_raises(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """When _known_tools is provided and tool not in it, raises ConfigError."""
+        store = _setup_store(
+            tmp_path,
+            projects={"prod": {"token": "tok-prod"}},
+            default_project="prod",
+        )
+        svc = McpService(config_store=store)
+
+        with pytest.raises(ConfigError, match="Unknown MCP tool 'bad_tool'"):
+            svc.call_tool(
+                "bad_tool",
+                {},
+                _known_tools={"create_config", "list_configs"},
+            )
+
+
+# ---------------------------------------------------------------------------
+# TestMcpMaxSessionsFromEnv
+# ---------------------------------------------------------------------------
+
+
+class TestMcpMaxSessionsFromEnv:
+    """Tests for MCP max sessions configuration via environment variables."""
+
+    def test_max_sessions_from_env(self) -> None:
+        """KBAGENT_MCP_MAX_SESSIONS env var overrides default."""
+        with patch.dict(
+            os.environ,
+            {"KBAGENT_MCP_MAX_SESSIONS": "25"},
+        ):
+            assert _get_max_sessions() == 25
+
+    def test_max_sessions_default_unlimited(self) -> None:
+        """Without env var, returns 0 (unlimited parallelism)."""
+        env = os.environ.copy()
+        env.pop("KBAGENT_MCP_MAX_SESSIONS", None)
+        with patch.dict(os.environ, env, clear=True):
+            assert _get_max_sessions() == 0
+
+
+# ---------------------------------------------------------------------------
+# TestSemaphoredHelper
+# ---------------------------------------------------------------------------
+
+
+class TestSemaphoredHelper:
+    """Tests for the _semaphored async helper."""
+
+    @pytest.mark.asyncio
+    async def test_semaphored_returns_result(self) -> None:
+        """_semaphored returns the coroutine's result."""
+        sem = asyncio.Semaphore(5)
+
+        async def dummy() -> str:
+            return "ok"
+
+        result = await _semaphored(sem, dummy())
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_semaphored_limits_concurrency(self) -> None:
+        """_semaphored enforces the semaphore limit on concurrent tasks."""
+        max_concurrent = 0
+        current = 0
+        lock = asyncio.Lock()
+        limit = 3
+        sem = asyncio.Semaphore(limit)
+
+        async def tracked_task(task_id: int) -> int:
+            nonlocal max_concurrent, current
+            async with lock:
+                current += 1
+                if current > max_concurrent:
+                    max_concurrent = current
+            await asyncio.sleep(0.05)
+            async with lock:
+                current -= 1
+            return task_id
+
+        tasks = [
+            asyncio.create_task(_semaphored(sem, tracked_task(i)))
+            for i in range(10)
+        ]
+        results = await asyncio.gather(*tasks)
+
+        assert sorted(results) == list(range(10))
+        assert max_concurrent <= limit

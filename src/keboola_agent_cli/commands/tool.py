@@ -209,7 +209,7 @@ def tool_call(
 
     # Validate required parameters before calling tool across all projects
     try:
-        missing = service.validate_tool_input(
+        missing, known_tools = service.validate_tool_input(
             tool_name=tool_name,
             tool_input=parsed_input,
             aliases=[project] if project else None,
@@ -237,6 +237,7 @@ def tool_call(
             tool_input=parsed_input,
             alias=project,
             branch_id=branch_str,
+            _known_tools=known_tools,
         )
     except ConfigError as exc:
         formatter.error(message=exc.message, error_code="CONFIG_ERROR")

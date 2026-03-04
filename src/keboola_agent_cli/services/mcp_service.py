@@ -18,8 +18,10 @@ from mcp.client.stdio import stdio_client
 
 from ..constants import (
     DEFAULT_MCP_INIT_TIMEOUT,
+    DEFAULT_MCP_MAX_SESSIONS,
     DEFAULT_MCP_TOOL_TIMEOUT,
     ENV_MCP_INIT_TIMEOUT,
+    ENV_MCP_MAX_SESSIONS,
     ENV_MCP_TOOL_TIMEOUT,
 )
 from ..errors import ConfigError
@@ -36,6 +38,18 @@ def _get_tool_timeout() -> int:
 def _get_init_timeout() -> int:
     """Get MCP init timeout (seconds), reading env var at call time."""
     return int(os.environ.get(ENV_MCP_INIT_TIMEOUT, DEFAULT_MCP_INIT_TIMEOUT))
+
+
+def _get_max_sessions() -> int:
+    """Get max concurrent MCP sessions, reading env var at call time."""
+    return int(os.environ.get(ENV_MCP_MAX_SESSIONS, DEFAULT_MCP_MAX_SESSIONS))
+
+
+async def _semaphored(sem: asyncio.Semaphore, coro: Any) -> Any:
+    """Run a coroutine under a semaphore to limit concurrency."""
+    async with sem:
+        return await coro
+
 
 # Prefixes that indicate write/mutating tools
 WRITE_PREFIXES = (
@@ -77,7 +91,7 @@ def detect_mcp_server_command() -> list[str] | None:
         List of command parts, or None if no method is available.
     """
     if shutil.which("uvx"):
-        return ["uvx", "keboola_mcp_server@latest"]
+        return ["uvx", "--prerelease=allow", "keboola_mcp_server@latest"]
     if shutil.which("keboola_mcp_server"):
         return ["keboola_mcp_server"]
     if shutil.which("python"):
@@ -457,12 +471,15 @@ class McpService(BaseService):
         tool_input: dict[str, Any],
         aliases: list[str] | None = None,
         branch_id: str | None = None,
-    ) -> list[str]:
+    ) -> tuple[list[str], set[str]]:
         """Validate tool input against the tool's schema.
 
         Checks that all required parameters are provided.
         Parameters that can be auto-expanded (see AUTO_EXPAND_TOOLS) are
         excluded from the missing list.
+
+        Also returns the set of known tool names so callers can pass it
+        to call_tool() and avoid a redundant list_tools() MCP session.
 
         Args:
             tool_name: Name of the tool.
@@ -471,11 +488,20 @@ class McpService(BaseService):
             branch_id: Optional development branch ID.
 
         Returns:
-            List of missing required parameter names. Empty if all OK.
+            Tuple of (missing_params, known_tool_names).
         """
-        schema = self.get_tool_schema(tool_name, aliases=aliases, branch_id=branch_id)
+        result = self.list_tools(aliases=aliases, branch_id=branch_id)
+        known_tools = {t["name"] for t in result.get("tools", [])}
+
+        # Find the schema for this tool
+        schema: dict[str, Any] | None = None
+        for tool in result.get("tools", []):
+            if tool["name"] == tool_name:
+                schema = tool.get("inputSchema", {})
+                break
+
         if schema is None:
-            return []  # Tool not found; call_tool will raise ConfigError
+            return [], known_tools  # Tool not found; call_tool will raise ConfigError
 
         required = schema.get("required", [])
         missing = [param for param in required if param not in tool_input]
@@ -486,7 +512,7 @@ class McpService(BaseService):
             auto_param = expand_config["param"]
             missing = [p for p in missing if p != auto_param]
 
-        return missing
+        return missing, known_tools
 
     def call_tool(
         self,
@@ -494,6 +520,7 @@ class McpService(BaseService):
         tool_input: dict[str, Any] | None = None,
         alias: str | None = None,
         branch_id: str | None = None,
+        _known_tools: set[str] | None = None,
     ) -> dict[str, Any]:
         """Call an MCP tool.
 
@@ -511,6 +538,9 @@ class McpService(BaseService):
             alias: Project alias for write tools. Ignored for read tools
                    unless specified to limit scope.
             branch_id: Optional development branch ID. Forces single-project mode.
+            _known_tools: Optional set of known tool names from a prior
+                validate_tool_input() call. When provided, skips the
+                internal list_tools() call (saves one MCP subprocess).
 
         Returns:
             Dict with "results" list and "errors" list.
@@ -522,11 +552,14 @@ class McpService(BaseService):
             tool_input = {}
 
         # Validate tool name exists in the MCP tool list
-        tool_list_result = self.list_tools(
-            aliases=[alias] if alias else None,
-            branch_id=branch_id,
-        )
-        known_tools = {t["name"] for t in tool_list_result.get("tools", [])}
+        if _known_tools is not None:
+            known_tools = _known_tools
+        else:
+            tool_list_result = self.list_tools(
+                aliases=[alias] if alias else None,
+                branch_id=branch_id,
+            )
+            known_tools = {t["name"] for t in tool_list_result.get("tools", [])}
         if known_tools and tool_name not in known_tools:
             raise ConfigError(
                 f"Unknown MCP tool '{tool_name}'. "
@@ -647,14 +680,18 @@ class McpService(BaseService):
 
         For each project, opens one MCP session, resolves the missing param
         by calling the resolve tool, then calls the target tool per item.
+        When KBAGENT_MCP_MAX_SESSIONS is set (> 0), concurrency is throttled.
         """
+        max_sessions = _get_max_sessions()
+        sem = asyncio.Semaphore(max_sessions) if max_sessions > 0 else None
         tasks = {}
         for a, project in projects.items():
-            tasks[a] = asyncio.create_task(
-                _connect_and_auto_expand(
-                    project, tool_name, tool_input, expand_config, branch_id=branch_id
-                )
+            coro = _connect_and_auto_expand(
+                project, tool_name, tool_input, expand_config, branch_id=branch_id
             )
+            if sem is not None:
+                coro = _semaphored(sem, coro)
+            tasks[a] = asyncio.create_task(coro)
         return await self._gather_results(tasks)
 
     async def _gather_read_results(
@@ -664,12 +701,18 @@ class McpService(BaseService):
         tool_input: dict[str, Any],
         branch_id: str | None = None,
     ) -> dict[str, Any]:
-        """Run a read tool across multiple projects in parallel using asyncio.gather."""
+        """Run a read tool across multiple projects in parallel using asyncio.gather.
+
+        When KBAGENT_MCP_MAX_SESSIONS is set (> 0), concurrency is throttled.
+        """
+        max_sessions = _get_max_sessions()
+        sem = asyncio.Semaphore(max_sessions) if max_sessions > 0 else None
         tasks = {}
         for a, project in projects.items():
-            tasks[a] = asyncio.create_task(
-                _connect_and_call_tool(project, tool_name, tool_input, branch_id=branch_id)
-            )
+            coro = _connect_and_call_tool(project, tool_name, tool_input, branch_id=branch_id)
+            if sem is not None:
+                coro = _semaphored(sem, coro)
+            tasks[a] = asyncio.create_task(coro)
         return await self._gather_results(tasks)
 
     def check_server_available(self) -> dict[str, Any]:

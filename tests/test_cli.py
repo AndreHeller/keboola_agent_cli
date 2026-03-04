@@ -3220,7 +3220,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = []
+            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
             mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT_MULTI
             MockMcpService.return_value = mock_mcp
 
@@ -3242,6 +3242,7 @@ class TestToolCall:
             tool_input={},
             alias=None,
             branch_id=None,
+            _known_tools={"list_configs", "get_config", "create_config"},
         )
 
     def test_tool_call_write_json(self, tmp_path: Path) -> None:
@@ -3269,7 +3270,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = []
+            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
             mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT
             MockMcpService.return_value = mock_mcp
 
@@ -3299,6 +3300,7 @@ class TestToolCall:
             tool_input={"name": "New Config", "component_id": "keboola.ex-db-snowflake"},
             alias="prod",
             branch_id=None,
+            _known_tools={"list_configs", "get_config", "create_config"},
         )
 
     def test_tool_call_invalid_input(self, tmp_path: Path) -> None:
@@ -3408,7 +3410,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = []
+            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
             mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT
             MockMcpService.return_value = mock_mcp
 
@@ -4696,7 +4698,7 @@ class TestBranchRequiresProject:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = []
+            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
             mock_mcp.call_tool.return_value = {
                 "results": [
                     {
@@ -4723,6 +4725,7 @@ class TestBranchRequiresProject:
             tool_input={},
             alias="prod",
             branch_id="456",
+            _known_tools={"list_configs", "get_config", "create_config"},
         )
 
 
@@ -5249,7 +5252,7 @@ class TestToolAutoResolveBranch:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = []
+            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
             mock_mcp.call_tool.return_value = {
                 "results": [
                     {
@@ -5277,4 +5280,5 @@ class TestToolAutoResolveBranch:
             tool_input={},
             alias="prod",
             branch_id="456",
+            _known_tools={"list_configs", "get_config", "create_config"},
         )

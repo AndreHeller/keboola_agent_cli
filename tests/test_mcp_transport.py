@@ -184,11 +184,11 @@ class TestHttpTransportFunctions:
     """Tests for HTTP transport helper functions in mcp_service."""
 
     def test_get_transport_mode_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Default transport mode is 'http'."""
+        """Default transport mode is 'stdio'."""
         monkeypatch.delenv("KBAGENT_MCP_TRANSPORT", raising=False)
         from keboola_agent_cli.services.mcp_service import _get_transport_mode
 
-        assert _get_transport_mode() == "http"
+        assert _get_transport_mode() == "stdio"
 
     def test_get_transport_mode_stdio(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """KBAGENT_MCP_TRANSPORT=stdio returns 'stdio'."""

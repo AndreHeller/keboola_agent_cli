@@ -44,7 +44,7 @@ DEFAULT_MCP_MAX_SESSIONS: int = 0
 # --- MCP HTTP Transport ---
 # Transport mode: "http" (persistent server) or "stdio" (subprocess per call)
 ENV_MCP_TRANSPORT: str = "KBAGENT_MCP_TRANSPORT"
-DEFAULT_MCP_TRANSPORT: str = "http"
+DEFAULT_MCP_TRANSPORT: str = "stdio"
 # Timeout for the persistent MCP server to start and be healthy
 MCP_SERVER_STARTUP_TIMEOUT: float = 15.0
 # Timeout for health check requests to persistent MCP server

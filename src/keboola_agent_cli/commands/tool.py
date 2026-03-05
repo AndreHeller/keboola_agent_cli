@@ -207,41 +207,26 @@ def tool_call(
             )
             raise typer.Exit(code=2) from None
 
-    # Validate required parameters before calling tool across all projects
+    # Validate + call in a single MCP session (eliminates double subprocess spawn)
     try:
-        missing, known_tools = service.validate_tool_input(
-            tool_name=tool_name,
-            tool_input=parsed_input,
-            aliases=[project] if project else None,
-            branch_id=branch_str,
-        )
-    except ConfigError as exc:
-        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
-        raise typer.Exit(code=5) from None
-
-    if missing:
-        params_str = ", ".join(missing)
-        example_json = json.dumps({p: "..." for p in missing})
-        formatter.error(
-            message=(
-                f"Missing required parameter(s) for '{tool_name}': {params_str}. "
-                f"Use: kbagent tool call {tool_name} --input '{example_json}'"
-            ),
-            error_code="MISSING_PARAMETER",
-        )
-        raise typer.Exit(code=2) from None
-
-    try:
-        result = service.call_tool(
+        result = service.validate_and_call_tool(
             tool_name=tool_name,
             tool_input=parsed_input,
             alias=project,
             branch_id=branch_str,
-            _known_tools=known_tools,
         )
     except ConfigError as exc:
-        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
-        raise typer.Exit(code=5) from None
+        # ConfigError covers: unknown tool, missing params, config issues
+        error_code = "CONFIG_ERROR"
+        exit_code = 5
+        if "Missing required parameter" in exc.message:
+            error_code = "MISSING_PARAMETER"
+            exit_code = 2
+        elif "Unknown MCP tool" in exc.message:
+            error_code = "CONFIG_ERROR"
+            exit_code = 5
+        formatter.error(message=exc.message, error_code=error_code)
+        raise typer.Exit(code=exit_code) from None
 
     if formatter.json_mode:
         formatter.output(result)

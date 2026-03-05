@@ -3220,8 +3220,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
-            mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT_MULTI
+            mock_mcp.validate_and_call_tool.return_value = SAMPLE_TOOL_RESULT_MULTI
             MockMcpService.return_value = mock_mcp
 
             result = runner.invoke(
@@ -3237,12 +3236,11 @@ class TestToolCall:
         assert results[0]["project_alias"] == "prod"
         assert results[1]["project_alias"] == "dev"
         assert results[0]["isError"] is False
-        mock_mcp.call_tool.assert_called_once_with(
+        mock_mcp.validate_and_call_tool.assert_called_once_with(
             tool_name="list_configs",
             tool_input={},
             alias=None,
             branch_id=None,
-            _known_tools={"list_configs", "get_config", "create_config"},
         )
 
     def test_tool_call_write_json(self, tmp_path: Path) -> None:
@@ -3270,8 +3268,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
-            mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT
+            mock_mcp.validate_and_call_tool.return_value = SAMPLE_TOOL_RESULT
             MockMcpService.return_value = mock_mcp
 
             result = runner.invoke(
@@ -3295,12 +3292,11 @@ class TestToolCall:
         assert len(results) == 1
         assert results[0]["project_alias"] == "prod"
         assert results[0]["isError"] is False
-        mock_mcp.call_tool.assert_called_once_with(
+        mock_mcp.validate_and_call_tool.assert_called_once_with(
             tool_name="create_config",
             tool_input={"name": "New Config", "component_id": "keboola.ex-db-snowflake"},
             alias="prod",
             branch_id=None,
-            _known_tools={"list_configs", "get_config", "create_config"},
         )
 
     def test_tool_call_invalid_input(self, tmp_path: Path) -> None:
@@ -3347,7 +3343,7 @@ class TestToolCall:
         assert output["status"] == "error"
         assert output["error"]["code"] == "INVALID_ARGUMENT"
         assert "Invalid JSON" in output["error"]["message"]
-        mock_mcp.call_tool.assert_not_called()
+        mock_mcp.validate_and_call_tool.assert_not_called()
 
     def test_tool_call_config_error(self, tmp_path: Path) -> None:
         """tool call when no projects configured returns exit code 5."""
@@ -3369,7 +3365,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.side_effect = ConfigError(
+            mock_mcp.validate_and_call_tool.side_effect = ConfigError(
                 "No projects configured. Use 'kbagent project add' first."
             )
             MockMcpService.return_value = mock_mcp
@@ -3410,8 +3406,7 @@ class TestToolCall:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
-            mock_mcp.call_tool.return_value = SAMPLE_TOOL_RESULT
+            mock_mcp.validate_and_call_tool.return_value = SAMPLE_TOOL_RESULT
             MockMcpService.return_value = mock_mcp
 
             result = runner.invoke(
@@ -4698,8 +4693,7 @@ class TestBranchRequiresProject:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
-            mock_mcp.call_tool.return_value = {
+            mock_mcp.validate_and_call_tool.return_value = {
                 "results": [
                     {
                         "content": [{"configs": ["cfg1"]}],
@@ -4720,12 +4714,11 @@ class TestBranchRequiresProject:
         output = json.loads(result.output)
         assert output["status"] == "ok"
         # Verify branch_id was passed to the service
-        mock_mcp.call_tool.assert_called_once_with(
+        mock_mcp.validate_and_call_tool.assert_called_once_with(
             tool_name="list_configs",
             tool_input={},
             alias="prod",
             branch_id="456",
-            _known_tools={"list_configs", "get_config", "create_config"},
         )
 
 
@@ -5252,8 +5245,7 @@ class TestToolAutoResolveBranch:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_mcp = MagicMock()
-            mock_mcp.validate_tool_input.return_value = ([], {"list_configs", "get_config", "create_config"})
-            mock_mcp.call_tool.return_value = {
+            mock_mcp.validate_and_call_tool.return_value = {
                 "results": [
                     {
                         "content": [{"configs": ["cfg1"]}],
@@ -5275,10 +5267,9 @@ class TestToolAutoResolveBranch:
         output = json.loads(result.output)
         assert output["status"] == "ok"
         # Verify the service was called with auto-resolved branch
-        mock_mcp.call_tool.assert_called_once_with(
+        mock_mcp.validate_and_call_tool.assert_called_once_with(
             tool_name="list_configs",
             tool_input={},
             alias="prod",
             branch_id="456",
-            _known_tools={"list_configs", "get_config", "create_config"},
         )

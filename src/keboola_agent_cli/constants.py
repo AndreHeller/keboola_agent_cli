@@ -41,6 +41,15 @@ DEFAULT_MCP_INIT_TIMEOUT: int = 30
 # 0 = unlimited (all projects run in parallel); set KBAGENT_MCP_MAX_SESSIONS to throttle
 DEFAULT_MCP_MAX_SESSIONS: int = 0
 
+# --- MCP HTTP Transport ---
+# Transport mode: "http" (persistent server) or "stdio" (subprocess per call)
+ENV_MCP_TRANSPORT: str = "KBAGENT_MCP_TRANSPORT"
+DEFAULT_MCP_TRANSPORT: str = "http"
+# Timeout for the persistent MCP server to start and be healthy
+MCP_SERVER_STARTUP_TIMEOUT: float = 15.0
+# Timeout for health check requests to persistent MCP server
+MCP_SERVER_HEALTH_TIMEOUT: float = 2.0
+
 # --- Storage Job Polling ---
 STORAGE_JOB_POLL_INTERVAL: float = 1.0  # seconds between polls
 STORAGE_JOB_MAX_WAIT: float = 60.0  # max seconds to wait for a storage job

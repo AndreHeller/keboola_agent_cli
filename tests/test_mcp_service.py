@@ -144,35 +144,49 @@ class TestDetectMcpServerCommand:
     """Tests for detect_mcp_server_command() which finds the MCP server binary."""
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
-    def test_uvx_available(self, mock_which: MagicMock) -> None:
-        """When uvx is available, returns ['uvx', '--prerelease=allow', 'keboola_mcp_server@latest']."""
-        mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
-        result = detect_mcp_server_command()
-        assert result == ["uvx", "--prerelease=allow", "keboola_mcp_server@latest"]
-
-    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
-    def test_keboola_mcp_server_available(self, mock_which: MagicMock) -> None:
-        """When uvx is not available but keboola_mcp_server is, returns it directly."""
-        def which_side_effect(cmd: str) -> str | None:
-            if cmd == "keboola_mcp_server":
-                return "/usr/local/bin/keboola_mcp_server"
-            return None
-
-        mock_which.side_effect = which_side_effect
+    def test_local_install_preferred(self, mock_which: MagicMock) -> None:
+        """When keboola_mcp_server is locally installed, returns it (fastest)."""
+        mock_which.side_effect = lambda cmd: "/usr/local/bin/keboola_mcp_server" if cmd == "keboola_mcp_server" else None
         result = detect_mcp_server_command()
         assert result == ["keboola_mcp_server"]
 
+    @patch("keboola_agent_cli.services.mcp_service.subprocess.run")
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
-    def test_python_fallback(self, mock_which: MagicMock) -> None:
-        """When only python is available, returns python -m fallback."""
+    def test_python_module_second(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+        """When python is available and module exists, returns python -m."""
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "python":
                 return "/usr/bin/python"
             return None
 
         mock_which.side_effect = which_side_effect
+        mock_run.return_value = MagicMock(returncode=0)
         result = detect_mcp_server_command()
         assert result == ["python", "-m", "keboola_mcp_server"]
+        mock_run.assert_called_once()
+
+    @patch("keboola_agent_cli.services.mcp_service.subprocess.run")
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_python_module_not_installed_falls_to_uvx(
+        self, mock_which: MagicMock, mock_run: MagicMock,
+    ) -> None:
+        """When python exists but module not installed, falls back to uvx."""
+        def which_side_effect(cmd: str) -> str | None:
+            if cmd in ("python", "uvx"):
+                return f"/usr/bin/{cmd}"
+            return None
+
+        mock_which.side_effect = which_side_effect
+        mock_run.return_value = MagicMock(returncode=1)
+        result = detect_mcp_server_command()
+        assert result == ["uvx", "--prerelease=allow", "keboola_mcp_server"]
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_uvx_fallback(self, mock_which: MagicMock) -> None:
+        """When only uvx is available, returns uvx WITHOUT @latest."""
+        mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
+        result = detect_mcp_server_command()
+        assert result == ["uvx", "--prerelease=allow", "keboola_mcp_server"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_nothing_available(self, mock_which: MagicMock) -> None:
@@ -180,6 +194,18 @@ class TestDetectMcpServerCommand:
         mock_which.return_value = None
         result = detect_mcp_server_command()
         assert result is None
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_local_install_preferred_over_uvx(self, mock_which: MagicMock) -> None:
+        """Local install is preferred even when uvx is also available."""
+        def which_side_effect(cmd: str) -> str | None:
+            if cmd in ("keboola_mcp_server", "uvx"):
+                return f"/usr/local/bin/{cmd}"
+            return None
+
+        mock_which.side_effect = which_side_effect
+        result = detect_mcp_server_command()
+        assert result == ["keboola_mcp_server"]
 
 
 # ---------------------------------------------------------------------------
@@ -525,10 +551,14 @@ class TestMcpServiceCallTool:
             svc.call_tool("create_config", {"name": "new-config"})
 
     @patch("keboola_agent_cli.services.mcp_service._connect_and_call_tool", new_callable=AsyncMock)
+    @patch("keboola_agent_cli.services.mcp_service._connect_and_list_tools", new_callable=AsyncMock)
     def test_call_tool_none_input_defaults_to_empty_dict(
-        self, mock_call_tool: AsyncMock, tmp_path: Path
+        self, mock_list_tools: AsyncMock, mock_call_tool: AsyncMock, tmp_path: Path
     ) -> None:
         """When tool_input is None, it defaults to an empty dict."""
+        mock_list_tools.return_value = [
+            {"name": "list_configs", "description": "List configs", "inputSchema": {}},
+        ]
         mock_call_tool.return_value = {
             "content": [{"result": "ok"}],
             "isError": False,
@@ -556,15 +586,16 @@ class TestMcpServiceErrorAccumulation:
     """Tests for error accumulation - projects that fail don't stop others."""
 
     @patch("keboola_agent_cli.services.mcp_service._connect_and_call_tool", new_callable=AsyncMock)
+    @patch("keboola_agent_cli.services.mcp_service._connect_and_list_tools", new_callable=AsyncMock)
     def test_read_tool_partial_failure(
-        self, mock_call_tool: AsyncMock, tmp_path: Path
+        self, mock_list_tools: AsyncMock, mock_call_tool: AsyncMock, tmp_path: Path
     ) -> None:
         """When some projects fail for a read tool, successful results and errors are both returned."""
-        call_count = 0
+        mock_list_tools.return_value = [
+            {"name": "list_configs", "description": "List configs", "inputSchema": {}},
+        ]
 
         async def side_effect(project, tool_name, tool_input, branch_id=None):
-            nonlocal call_count
-            call_count += 1
             if project.token == "tok-failing":
                 raise RuntimeError("Connection timeout")
             return {
@@ -657,17 +688,19 @@ class TestCheckServerAvailable:
         assert result["status"] == "pass"
         assert "keboola_mcp_server" in result["message"]
 
+    @patch("keboola_agent_cli.services.mcp_service.subprocess.run")
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_server_available_via_python(
-        self, mock_which: MagicMock, tmp_path: Path
+        self, mock_which: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
-        """When only python is available, status is 'pass' with python -m command."""
+        """When only python is available and module exists, status is 'pass'."""
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "python":
                 return "/usr/bin/python"
             return None
 
         mock_which.side_effect = which_side_effect
+        mock_run.return_value = MagicMock(returncode=0)
 
         store = _setup_store(tmp_path, projects={})
         svc = McpService(config_store=store)

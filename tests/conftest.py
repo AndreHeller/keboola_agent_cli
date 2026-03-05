@@ -8,6 +8,12 @@ from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.output import OutputFormatter
 
 
+@pytest.fixture(autouse=True)
+def _force_stdio_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force stdio transport in all tests to prevent spawning persistent server."""
+    monkeypatch.setenv("KBAGENT_MCP_TRANSPORT", "stdio")
+
+
 @pytest.fixture
 def tmp_config_dir(tmp_path: Path) -> Path:
     """Provide a temporary directory for configuration files."""

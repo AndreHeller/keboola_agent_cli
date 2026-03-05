@@ -1,7 +1,12 @@
-"""MCP integration service - wraps keboola-mcp-server as subprocess.
+"""MCP integration service - wraps keboola-mcp-server.
 
 Provides multi-project tool listing and execution via MCP protocol.
 Read tools run across ALL projects in parallel; write tools target a single project.
+
+Supports two transport modes:
+- HTTP (default): Persistent server with per-request credentials via headers.
+  One server serves all projects. Fastest for repeated calls.
+- stdio: Subprocess per call. Fallback when HTTP transport is unavailable.
 """
 
 import asyncio
@@ -15,14 +20,17 @@ from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 from ..constants import (
     DEFAULT_MCP_INIT_TIMEOUT,
     DEFAULT_MCP_MAX_SESSIONS,
     DEFAULT_MCP_TOOL_TIMEOUT,
+    DEFAULT_MCP_TRANSPORT,
     ENV_MCP_INIT_TIMEOUT,
     ENV_MCP_MAX_SESSIONS,
     ENV_MCP_TOOL_TIMEOUT,
+    ENV_MCP_TRANSPORT,
 )
 from ..errors import ConfigError
 from ..models import ProjectConfig
@@ -82,20 +90,33 @@ def _is_write_tool(tool_name: str) -> bool:
 def detect_mcp_server_command() -> list[str] | None:
     """Detect the best way to run keboola-mcp-server.
 
-    Checks in order:
-    1. uvx keboola_mcp_server@latest (if uvx is available -- always latest version)
-    2. keboola_mcp_server (if installed as standalone command)
-    3. python -m keboola_mcp_server (last resort)
+    Checks in order of speed (fastest first):
+    1. keboola_mcp_server (local install, ~3s startup)
+    2. python -m keboola_mcp_server (installed in current env)
+    3. uvx keboola_mcp_server (cached version, ~4.5s startup)
+
+    Note: We intentionally do NOT use @latest with uvx because it forces
+    a PyPI check on every invocation (~25s penalty). The cached version
+    is used instead. Users can update manually with: uvx upgrade keboola_mcp_server
 
     Returns:
         List of command parts, or None if no method is available.
     """
-    if shutil.which("uvx"):
-        return ["uvx", "--prerelease=allow", "keboola_mcp_server@latest"]
+    # 1. Local install (fastest: ~3s)
     if shutil.which("keboola_mcp_server"):
         return ["keboola_mcp_server"]
+    # 2. python -m (if installed in current env)
     if shutil.which("python"):
-        return ["python", "-m", "keboola_mcp_server"]
+        result = subprocess.run(
+            ["python", "-c", "import keboola_mcp_server"],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return ["python", "-m", "keboola_mcp_server"]
+    # 3. uvx WITHOUT @latest (uses cached version: ~4.5s vs 25s)
+    if shutil.which("uvx"):
+        return ["uvx", "--prerelease=allow", "keboola_mcp_server"]
     return None
 
 
@@ -258,6 +279,339 @@ async def _connect_and_call_tool(
         await exit_stack.aclose()
 
 
+async def _connect_validate_and_call(
+    project: ProjectConfig,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    branch_id: str | None = None,
+) -> dict[str, Any]:
+    """Open ONE MCP session: validate tool name + schema, then call the tool.
+
+    Eliminates the need for a separate validate_tool_input() + call_tool()
+    sequence, saving one full subprocess spawn.
+
+    Args:
+        project: Project config.
+        tool_name: Name of the MCP tool to call.
+        tool_input: Input arguments for the tool.
+        branch_id: Optional development branch ID.
+
+    Returns:
+        Dict with "content", "isError", and "tool_schema" keys.
+
+    Raises:
+        ConfigError: If tool_name is not found in the available tool list.
+        ConfigError: If required parameters are missing (not auto-expandable).
+    """
+    exit_stack = AsyncExitStack()
+
+    try:
+        session = await _open_session(project, exit_stack, branch_id=branch_id)
+
+        # Step 1: list_tools to validate tool name and get schema
+        response = await asyncio.wait_for(
+            session.list_tools(), timeout=_get_tool_timeout()
+        )
+
+        known_tools = {t.name for t in response.tools}
+        if tool_name not in known_tools:
+            raise ConfigError(
+                f"Unknown MCP tool '{tool_name}'. "
+                f"Use 'kbagent tool list' to see available tools."
+            )
+
+        # Step 2: validate required params
+        schema: dict[str, Any] = {}
+        for tool in response.tools:
+            if tool.name == tool_name:
+                schema = tool.inputSchema if tool.inputSchema else {}
+                break
+
+        required = schema.get("required", [])
+        missing = [param for param in required if param not in tool_input]
+
+        # Exclude auto-expandable params from missing list
+        expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
+        if expand_config:
+            auto_param = expand_config["param"]
+            missing = [p for p in missing if p != auto_param]
+
+        if missing:
+            import json as _json
+
+            params_str = ", ".join(missing)
+            example_json = _json.dumps({p: "..." for p in missing})
+            raise ConfigError(
+                f"Missing required parameter(s) for '{tool_name}': {params_str}. "
+                f"Use: kbagent tool call {tool_name} --input '{example_json}'"
+            )
+
+        # Step 3: call the tool in the same session
+        result = await asyncio.wait_for(
+            session.call_tool(tool_name, tool_input),
+            timeout=_get_tool_timeout(),
+        )
+
+        return {
+            "content": _parse_content(result),
+            "isError": bool(result.isError),
+        }
+    finally:
+        await exit_stack.aclose()
+
+
+def _get_transport_mode() -> str:
+    """Get configured MCP transport mode ('http' or 'stdio')."""
+    return os.environ.get(ENV_MCP_TRANSPORT, DEFAULT_MCP_TRANSPORT)
+
+
+def _build_http_headers(
+    project: ProjectConfig,
+    branch_id: str | None = None,
+) -> dict[str, str]:
+    """Build HTTP headers for per-request project credentials."""
+    headers = {
+        "X-Storage-Token": project.token,
+        "X-Storage-API-URL": project.stack_url,
+    }
+    if branch_id:
+        headers["X-Branch-ID"] = branch_id
+    return headers
+
+
+async def _http_list_tools(
+    base_url: str,
+    project: ProjectConfig,
+    branch_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """List tools via HTTP transport (persistent server).
+
+    Args:
+        base_url: Base URL of the persistent MCP server.
+        project: Project config for authentication headers.
+        branch_id: Optional development branch ID.
+
+    Returns:
+        List of tool dicts with name, description, inputSchema.
+    """
+    headers = _build_http_headers(project, branch_id)
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url=url, headers=headers) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
+        session = ClientSession(read_stream, write_stream)
+        async with session:
+            await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
+
+            response = await asyncio.wait_for(
+                session.list_tools(), timeout=_get_tool_timeout()
+            )
+
+            tools = []
+            for tool in response.tools:
+                tools.append(
+                    {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "inputSchema": tool.inputSchema if tool.inputSchema else {},
+                    }
+                )
+            return tools
+
+
+async def _http_call_tool(
+    base_url: str,
+    project: ProjectConfig,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    branch_id: str | None = None,
+) -> dict[str, Any]:
+    """Call a tool via HTTP transport (persistent server).
+
+    Args:
+        base_url: Base URL of the persistent MCP server.
+        project: Project config for authentication headers.
+        tool_name: Name of the tool to call.
+        tool_input: Input arguments for the tool.
+        branch_id: Optional development branch ID.
+
+    Returns:
+        Dict with tool result content and error status.
+    """
+    headers = _build_http_headers(project, branch_id)
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url=url, headers=headers) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
+        session = ClientSession(read_stream, write_stream)
+        async with session:
+            await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
+
+            result = await asyncio.wait_for(
+                session.call_tool(tool_name, tool_input),
+                timeout=_get_tool_timeout(),
+            )
+
+            return {
+                "content": _parse_content(result),
+                "isError": bool(result.isError),
+            }
+
+
+async def _http_validate_and_call(
+    base_url: str,
+    project: ProjectConfig,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    branch_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate and call a tool in one HTTP session (persistent server).
+
+    Args:
+        base_url: Base URL of the persistent MCP server.
+        project: Project config for authentication headers.
+        tool_name: Name of the MCP tool to call.
+        tool_input: Input arguments for the tool.
+        branch_id: Optional development branch ID.
+
+    Returns:
+        Dict with "content" and "isError" keys.
+
+    Raises:
+        ConfigError: If tool_name not found or required params missing.
+    """
+    headers = _build_http_headers(project, branch_id)
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url=url, headers=headers) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
+        session = ClientSession(read_stream, write_stream)
+        async with session:
+            await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
+
+            # Step 1: list_tools for validation
+            response = await asyncio.wait_for(
+                session.list_tools(), timeout=_get_tool_timeout()
+            )
+
+            known_tools = {t.name for t in response.tools}
+            if tool_name not in known_tools:
+                raise ConfigError(
+                    f"Unknown MCP tool '{tool_name}'. "
+                    f"Use 'kbagent tool list' to see available tools."
+                )
+
+            # Step 2: validate required params
+            schema: dict[str, Any] = {}
+            for tool in response.tools:
+                if tool.name == tool_name:
+                    schema = tool.inputSchema if tool.inputSchema else {}
+                    break
+
+            required = schema.get("required", [])
+            missing = [param for param in required if param not in tool_input]
+
+            expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
+            if expand_config:
+                auto_param = expand_config["param"]
+                missing = [p for p in missing if p != auto_param]
+
+            if missing:
+                import json as _json
+
+                params_str = ", ".join(missing)
+                example_json = _json.dumps({p: "..." for p in missing})
+                raise ConfigError(
+                    f"Missing required parameter(s) for '{tool_name}': {params_str}. "
+                    f"Use: kbagent tool call {tool_name} --input '{example_json}'"
+                )
+
+            # Step 3: call the tool
+            result = await asyncio.wait_for(
+                session.call_tool(tool_name, tool_input),
+                timeout=_get_tool_timeout(),
+            )
+
+            return {
+                "content": _parse_content(result),
+                "isError": bool(result.isError),
+            }
+
+
+async def _http_auto_expand(
+    base_url: str,
+    project: ProjectConfig,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    expand_config: dict[str, str],
+    branch_id: str | None = None,
+) -> dict[str, Any]:
+    """Auto-expand a tool call via HTTP transport (persistent server).
+
+    Same logic as _connect_and_auto_expand but over HTTP.
+    """
+    resolve_tool = expand_config["resolve_tool"]
+    resolve_key = expand_config["resolve_key"]
+    param_name = expand_config["param"]
+
+    headers = _build_http_headers(project, branch_id)
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url=url, headers=headers) as (
+        read_stream,
+        write_stream,
+        _,
+    ):
+        session = ClientSession(read_stream, write_stream)
+        async with session:
+            await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
+
+            # Step 1: Call resolve tool
+            resolve_result = await asyncio.wait_for(
+                session.call_tool(resolve_tool, {}),
+                timeout=_get_tool_timeout(),
+            )
+
+            if resolve_result.isError:
+                return {
+                    "content": _parse_content(resolve_result),
+                    "isError": True,
+                }
+
+            resolve_items = _parse_content(resolve_result)
+            item_ids = _extract_ids(resolve_items, resolve_key)
+
+            if not item_ids:
+                return {"content": [], "isError": False}
+
+            # Step 2: Call target tool for each resolved ID
+            all_content: list[Any] = []
+            has_error = False
+
+            for item_id in item_ids:
+                call_input = {**tool_input, param_name: item_id}
+                result = await asyncio.wait_for(
+                    session.call_tool(tool_name, call_input),
+                    timeout=_get_tool_timeout(),
+                )
+
+                content = _parse_content(result)
+                if result.isError:
+                    has_error = True
+                all_content.extend(content)
+
+            return {"content": all_content, "isError": has_error}
+
+
 async def _connect_and_auto_expand(
     project: ProjectConfig,
     tool_name: str,
@@ -356,12 +710,35 @@ def _extract_ids(content_items: list[Any], key: str) -> list[str]:
 class McpService(BaseService):
     """Business logic for MCP tool operations across projects.
 
-    Wraps keboola-mcp-server as subprocess via MCP SDK.
+    Supports two transport modes:
+    - HTTP (default): Uses a persistent server via McpServerManager.
+      One server serves all projects with per-request credential headers.
+    - stdio: Spawns a subprocess per MCP session. Fallback mode.
+
     Read tools execute across all projects in parallel.
     Write tools target a single project.
 
     Uses the same DI pattern as JobService/ConfigService.
     """
+
+    def _get_server_url(self) -> str | None:
+        """Get the persistent server URL if HTTP transport is configured.
+
+        Returns:
+            Base URL string if HTTP transport is active and server is running,
+            None if stdio mode or server cannot be started.
+        """
+        if _get_transport_mode() != "http":
+            return None
+
+        try:
+            from .mcp_transport import get_server_manager
+
+            manager = get_server_manager()
+            return manager.ensure_running()
+        except Exception as exc:
+            logger.warning("Failed to start persistent MCP server, falling back to stdio: %s", exc)
+            return None
 
     def resolve_project(self, alias: str | None = None) -> tuple[str, ProjectConfig]:
         """Resolve a single project alias (or the default project).
@@ -415,13 +792,20 @@ class McpService(BaseService):
         if not projects:
             raise ConfigError("No projects configured. Use 'kbagent project add' first.")
 
-        # Try each project until one succeeds
+        # Try HTTP transport first, fall back to stdio
+        server_url = self._get_server_url()
+
         errors: list[dict[str, str]] = []
         for alias, project in projects.items():
             try:
-                tools = asyncio.run(
-                    _connect_and_list_tools(project, branch_id=branch_id)
-                )
+                if server_url:
+                    tools = asyncio.run(
+                        _http_list_tools(server_url, project, branch_id=branch_id)
+                    )
+                else:
+                    tools = asyncio.run(
+                        _connect_and_list_tools(project, branch_id=branch_id)
+                    )
                 # Annotate tools with multi_project flag
                 annotated_tools = []
                 for tool in tools:
@@ -574,6 +958,146 @@ class McpService(BaseService):
         else:
             return self._call_read_tool(tool_name, tool_input, alias, branch_id=branch_id)
 
+    def validate_and_call_tool(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any] | None = None,
+        alias: str | None = None,
+        branch_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate and call an MCP tool in a single session (no double spawn).
+
+        Opens ONE MCP session: validates tool name + required params from
+        list_tools(), then calls the tool. This eliminates the separate
+        validate_tool_input() + call_tool() round-trip.
+
+        Prefers HTTP transport (persistent server) with fallback to stdio.
+
+        For write tools and branch-scoped calls: single project.
+        For read tools: still runs across all projects in parallel, but each
+        project's session validates + calls in one go.
+
+        Args:
+            tool_name: Name of the MCP tool to call.
+            tool_input: Input arguments for the tool.
+            alias: Project alias for write tools / single-project mode.
+            branch_id: Optional development branch ID. Forces single-project mode.
+
+        Returns:
+            Dict with "results" list and "errors" list.
+
+        Raises:
+            ConfigError: If tool_name not found or required params missing.
+        """
+        if tool_input is None:
+            tool_input = {}
+
+        server_url = self._get_server_url()
+        is_write = _is_write_tool(tool_name)
+
+        # Single-project mode: write tools, branch-scoped, or explicit alias
+        if branch_id is not None or is_write:
+            resolved_alias, project = self.resolve_project(alias)
+            try:
+                # Check if auto-expand needed
+                expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
+                if expand_config and expand_config["param"] not in tool_input:
+                    if server_url:
+                        result = asyncio.run(
+                            _http_auto_expand(
+                                server_url, project, tool_name, tool_input,
+                                expand_config, branch_id=branch_id,
+                            )
+                        )
+                    else:
+                        result = asyncio.run(
+                            _connect_and_auto_expand(
+                                project, tool_name, tool_input, expand_config,
+                                branch_id=branch_id,
+                            )
+                        )
+                else:
+                    if server_url:
+                        result = asyncio.run(
+                            _http_validate_and_call(
+                                server_url, project, tool_name, tool_input,
+                                branch_id=branch_id,
+                            )
+                        )
+                    else:
+                        result = asyncio.run(
+                            _connect_validate_and_call(
+                                project, tool_name, tool_input, branch_id=branch_id,
+                            )
+                        )
+                result["project_alias"] = resolved_alias
+                return {"results": [result], "errors": []}
+            except ConfigError:
+                raise
+            except Exception as exc:
+                return {
+                    "results": [],
+                    "errors": [
+                        {
+                            "project_alias": resolved_alias,
+                            "error_code": "MCP_ERROR",
+                            "message": str(exc),
+                        }
+                    ],
+                }
+
+        # Multi-project read: parallel validate+call across all projects
+        projects = self.resolve_projects([alias]) if alias else self.resolve_projects()
+        if not projects:
+            raise ConfigError("No projects configured. Use 'kbagent project add' first.")
+
+        # Check if auto-expand is needed
+        expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
+        if expand_config and expand_config["param"] not in tool_input:
+            return asyncio.run(
+                self._gather_auto_expand_results(
+                    projects, tool_name, tool_input, expand_config,
+                    branch_id=branch_id, server_url=server_url,
+                )
+            )
+
+        return asyncio.run(
+            self._gather_validate_and_call_results(
+                projects, tool_name, tool_input,
+                branch_id=branch_id, server_url=server_url,
+            )
+        )
+
+    async def _gather_validate_and_call_results(
+        self,
+        projects: dict[str, ProjectConfig],
+        tool_name: str,
+        tool_input: dict[str, Any],
+        branch_id: str | None = None,
+        server_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Run validate+call across multiple projects in parallel.
+
+        Each project opens one session that validates and calls the tool.
+        Uses HTTP transport when server_url is available.
+        """
+        max_sessions = _get_max_sessions()
+        sem = asyncio.Semaphore(max_sessions) if max_sessions > 0 else None
+        tasks = {}
+        for a, project in projects.items():
+            if server_url:
+                coro = _http_validate_and_call(
+                    server_url, project, tool_name, tool_input, branch_id=branch_id,
+                )
+            else:
+                coro = _connect_validate_and_call(
+                    project, tool_name, tool_input, branch_id=branch_id,
+                )
+            if sem is not None:
+                coro = _semaphored(sem, coro)
+            tasks[a] = asyncio.create_task(coro)
+        return await self._gather_results(tasks)
+
     def _call_write_tool(
         self,
         tool_name: str,
@@ -583,11 +1107,21 @@ class McpService(BaseService):
     ) -> dict[str, Any]:
         """Execute a write tool on a single project."""
         resolved_alias, project = self.resolve_project(alias)
+        server_url = self._get_server_url()
 
         try:
-            result = asyncio.run(
-                _connect_and_call_tool(project, tool_name, tool_input, branch_id=branch_id)
-            )
+            if server_url:
+                result = asyncio.run(
+                    _http_call_tool(
+                        server_url, project, tool_name, tool_input, branch_id=branch_id,
+                    )
+                )
+            else:
+                result = asyncio.run(
+                    _connect_and_call_tool(
+                        project, tool_name, tool_input, branch_id=branch_id,
+                    )
+                )
             result["project_alias"] = resolved_alias
             return {"results": [result], "errors": []}
         except Exception as exc:
@@ -619,17 +1153,23 @@ class McpService(BaseService):
         if not projects:
             raise ConfigError("No projects configured. Use 'kbagent project add' first.")
 
+        server_url = self._get_server_url()
+
         # Check if auto-expand is needed
         expand_config = AUTO_EXPAND_TOOLS.get(tool_name)
         if expand_config and expand_config["param"] not in tool_input:
             return asyncio.run(
                 self._gather_auto_expand_results(
-                    projects, tool_name, tool_input, expand_config, branch_id=branch_id
+                    projects, tool_name, tool_input, expand_config,
+                    branch_id=branch_id, server_url=server_url,
                 )
             )
 
         return asyncio.run(
-            self._gather_read_results(projects, tool_name, tool_input, branch_id=branch_id)
+            self._gather_read_results(
+                projects, tool_name, tool_input,
+                branch_id=branch_id, server_url=server_url,
+            )
         )
 
     @staticmethod
@@ -675,20 +1215,27 @@ class McpService(BaseService):
         tool_input: dict[str, Any],
         expand_config: dict[str, str],
         branch_id: str | None = None,
+        server_url: str | None = None,
     ) -> dict[str, Any]:
         """Run an auto-expanded tool across multiple projects in parallel.
 
         For each project, opens one MCP session, resolves the missing param
         by calling the resolve tool, then calls the target tool per item.
-        When KBAGENT_MCP_MAX_SESSIONS is set (> 0), concurrency is throttled.
+        Uses HTTP transport when server_url is available.
         """
         max_sessions = _get_max_sessions()
         sem = asyncio.Semaphore(max_sessions) if max_sessions > 0 else None
         tasks = {}
         for a, project in projects.items():
-            coro = _connect_and_auto_expand(
-                project, tool_name, tool_input, expand_config, branch_id=branch_id
-            )
+            if server_url:
+                coro = _http_auto_expand(
+                    server_url, project, tool_name, tool_input, expand_config,
+                    branch_id=branch_id,
+                )
+            else:
+                coro = _connect_and_auto_expand(
+                    project, tool_name, tool_input, expand_config, branch_id=branch_id,
+                )
             if sem is not None:
                 coro = _semaphored(sem, coro)
             tasks[a] = asyncio.create_task(coro)
@@ -700,16 +1247,24 @@ class McpService(BaseService):
         tool_name: str,
         tool_input: dict[str, Any],
         branch_id: str | None = None,
+        server_url: str | None = None,
     ) -> dict[str, Any]:
         """Run a read tool across multiple projects in parallel using asyncio.gather.
 
-        When KBAGENT_MCP_MAX_SESSIONS is set (> 0), concurrency is throttled.
+        Uses HTTP transport when server_url is available.
         """
         max_sessions = _get_max_sessions()
         sem = asyncio.Semaphore(max_sessions) if max_sessions > 0 else None
         tasks = {}
         for a, project in projects.items():
-            coro = _connect_and_call_tool(project, tool_name, tool_input, branch_id=branch_id)
+            if server_url:
+                coro = _http_call_tool(
+                    server_url, project, tool_name, tool_input, branch_id=branch_id,
+                )
+            else:
+                coro = _connect_and_call_tool(
+                    project, tool_name, tool_input, branch_id=branch_id,
+                )
             if sem is not None:
                 coro = _semaphored(sem, coro)
             tasks[a] = asyncio.create_task(coro)
@@ -719,7 +1274,7 @@ class McpService(BaseService):
         """Check if MCP server is available (for doctor command).
 
         Returns:
-            Dict with check status and message.
+            Dict with check status, message, and transport info.
         """
         command = detect_mcp_server_command()
         if command is None:
@@ -735,9 +1290,25 @@ class McpService(BaseService):
                 ),
             }
 
+        transport_mode = _get_transport_mode()
+        transport_info = f"transport={transport_mode}"
+
+        # If HTTP mode, check persistent server status
+        if transport_mode == "http":
+            try:
+                from .mcp_transport import get_server_manager
+
+                manager = get_server_manager()
+                if manager.is_running:
+                    transport_info += f", persistent server running on port {manager.port}"
+                else:
+                    transport_info += ", persistent server not yet started (lazy start)"
+            except Exception:
+                transport_info += ", persistent server unavailable (will fallback to stdio)"
+
         return {
             "check": "mcp_server",
             "name": "MCP server",
             "status": "pass",
-            "message": f"MCP server available via: {' '.join(command)}",
+            "message": f"MCP server available via: {' '.join(command)} ({transport_info})",
         }

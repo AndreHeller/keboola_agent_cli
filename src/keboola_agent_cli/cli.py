@@ -10,6 +10,7 @@ from .commands.config import config_app
 from .commands.context import context_command
 from .commands.doctor import doctor_command
 from .commands.explorer import explorer_app
+from .commands.init import init_command
 from .commands.job import job_app
 from .commands.lineage import lineage_app
 from .commands.llm import llm_app
@@ -17,7 +18,7 @@ from .commands.org import org_app
 from .commands.project import project_app
 from .commands.tool import tool_app
 from .commands.version import version_command
-from .config_store import ConfigStore
+from .config_store import ConfigStore, resolve_config_dir
 from .output import OutputFormatter
 from .services.branch_service import BranchService
 from .services.config_service import ConfigService
@@ -48,6 +49,7 @@ app.add_typer(explorer_app, name="explorer")
 app.add_typer(llm_app, name="llm")
 app.command("context")(context_command)
 app.command("doctor")(doctor_command)
+app.command("init")(init_command)
 app.command("version")(version_command)
 
 
@@ -71,6 +73,11 @@ def main(
         "--no-color",
         help="Disable colored output",
     ),
+    config_dir: str | None = typer.Option(
+        None,
+        "--config-dir",
+        help="Override config directory path.",
+    ),
 ) -> None:
     """Global options applied to all commands."""
     log_level = logging.DEBUG if verbose else logging.WARNING
@@ -89,7 +96,8 @@ def main(
         verbose=verbose,
     )
 
-    config_store = ConfigStore()
+    resolved_dir, source = resolve_config_dir(cli_config_dir=config_dir)
+    config_store = ConfigStore(config_dir=resolved_dir, source=source)
 
     project_service = ProjectService(config_store=config_store)
     config_service = ConfigService(config_store=config_store)

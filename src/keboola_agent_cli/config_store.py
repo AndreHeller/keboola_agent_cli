@@ -12,12 +12,50 @@ from pathlib import Path
 
 import platformdirs
 
+from .constants import ENV_CONFIG_DIR, LOCAL_CONFIG_DIR_NAME
 from .errors import ConfigError
 from .models import AppConfig, ProjectConfig
 
 logger = logging.getLogger(__name__)
 
 CURRENT_CONFIG_VERSION = 1
+
+
+def resolve_config_dir(cli_config_dir: str | None = None) -> tuple[Path, str]:
+    """Resolve the config directory using the priority chain.
+
+    Priority:
+    1. --config-dir CLI flag (explicit override)
+    2. KBAGENT_CONFIG_DIR environment variable
+    3. Walk up from CWD looking for .kbagent/config.json (like git)
+    4. Global default (~/.config/keboola-agent-cli/)
+
+    Returns:
+        Tuple of (resolved_path, source_label).
+        source_label is one of: "cli-flag", "env-var", "local", "global".
+    """
+    if cli_config_dir:
+        return Path(cli_config_dir), "cli-flag"
+
+    env_val = os.environ.get(ENV_CONFIG_DIR)
+    if env_val:
+        return Path(env_val), "env-var"
+
+    try:
+        current = Path.cwd().resolve()
+    except OSError:
+        return Path(platformdirs.user_config_dir("keboola-agent-cli")), "global"
+
+    home = Path.home().resolve()
+    while True:
+        candidate = current / LOCAL_CONFIG_DIR_NAME / "config.json"
+        if candidate.is_file():
+            return current / LOCAL_CONFIG_DIR_NAME, "local"
+        if current == home or current == current.parent:
+            break
+        current = current.parent
+
+    return Path(platformdirs.user_config_dir("keboola-agent-cli")), "global"
 
 
 class ConfigStore:
@@ -29,17 +67,23 @@ class ConfigStore:
 
     CONFIG_FILENAME = "config.json"
 
-    def __init__(self, config_dir: Path | None = None) -> None:
+    def __init__(self, config_dir: Path | None = None, source: str = "global") -> None:
         if config_dir is None:
             self._config_dir = Path(platformdirs.user_config_dir("keboola-agent-cli"))
         else:
             self._config_dir = config_dir
         self._config_path = self._config_dir / self.CONFIG_FILENAME
+        self._source = source
 
     @property
     def config_path(self) -> Path:
         """Return the path to the config file."""
         return self._config_path
+
+    @property
+    def source(self) -> str:
+        """Return the config source label (cli-flag, env-var, local, global)."""
+        return self._source
 
     def load(self) -> AppConfig:
         """Load configuration from disk.

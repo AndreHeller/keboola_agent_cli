@@ -163,7 +163,7 @@ Both inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/
 ## All CLI Commands
 
 ```
-# Global options: --json, --verbose, --no-color
+# Global options: --json, --verbose, --no-color, --config-dir
 
 kbagent project add --alias NAME --url URL --token TOKEN
 kbagent project list
@@ -192,7 +192,12 @@ kbagent branch delete --project ALIAS --branch ID
 kbagent branch merge --project ALIAS [--branch ID]
 
 kbagent explorer [--project NAME] [--output-dir DIR] [--job-limit N] [--tiers FILE] [--no-open]
+kbagent explorer init-tiers [--output FILE]
+
+kbagent llm export --project ALIAS [--with-samples] [--sample-limit N] [--max-samples N]
 
 kbagent context
-kbagent doctor
+kbagent init [--from-global]
+kbagent doctor [--fix]
+kbagent version
 ```

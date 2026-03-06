@@ -5273,3 +5273,89 @@ class TestToolAutoResolveBranch:
             alias="prod",
             branch_id="456",
         )
+
+
+class TestInit:
+    """Tests for `kbagent init` command."""
+
+    def test_init_creates_local_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """init creates .kbagent/config.json in CWD."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        result = runner.invoke(app, ["--json", "init"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["created"] is True
+
+        config_path = tmp_path / ".kbagent" / "config.json"
+        assert config_path.is_file()
+
+    def test_init_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """init does not overwrite existing .kbagent/config.json."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        # First init
+        runner.invoke(app, ["--json", "init"])
+        # Second init
+        result = runner.invoke(app, ["--json", "init"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["created"] is False
+
+    def test_init_creates_gitignore(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """init creates/updates .gitignore with .kbagent/ entry."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        runner.invoke(app, ["--json", "init"])
+
+        gitignore = tmp_path / ".gitignore"
+        assert gitignore.is_file()
+        assert ".kbagent/" in gitignore.read_text(encoding="utf-8")
+
+    def test_init_from_global_copies_projects(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """init --from-global copies projects from global config."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        # Create a global config with a project
+        global_dir = tmp_path / "global-config"
+        global_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.resolve_config_dir") as mock_resolve,
+        ):
+            mock_resolve.return_value = (global_dir, "global")
+
+            # Add a project to global config
+            from keboola_agent_cli.config_store import ConfigStore
+            from keboola_agent_cli.models import ProjectConfig
+
+            global_store = ConfigStore(config_dir=global_dir, source="global")
+            global_store.add_project(
+                "prod",
+                ProjectConfig(
+                    stack_url="https://connection.keboola.com",
+                    token="901-xxx-testtoken1234",
+                    project_name="Production",
+                    project_id=1234,
+                ),
+            )
+
+            result = runner.invoke(app, ["--json", "init", "--from-global"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["projects_copied"] == 1
+
+        # Verify local config has the project
+        local_store = ConfigStore(config_dir=tmp_path / ".kbagent")
+        local_config = local_store.load()
+        assert "prod" in local_config.projects

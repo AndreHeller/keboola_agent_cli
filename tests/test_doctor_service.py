@@ -104,6 +104,41 @@ class TestDoctorServiceCheckConfigFile:
         assert "0o644" in result["message"]
 
 
+class TestDoctorServiceCheckConfigSource:
+    """Tests for DoctorService._check_config_source() - config source reporting."""
+
+    def test_reports_global_source(self, tmp_config_dir: Path) -> None:
+        """Reports global config source."""
+        store = ConfigStore(config_dir=tmp_config_dir, source="global")
+        service = DoctorService(config_store=store, mcp_service=_make_mcp_service_mock())
+
+        result = service._check_config_source()
+
+        assert result["check"] == "config_source"
+        assert result["status"] == "pass"
+        assert "global" in result["message"]
+
+    def test_reports_local_source(self, tmp_config_dir: Path) -> None:
+        """Reports local config source."""
+        store = ConfigStore(config_dir=tmp_config_dir, source="local")
+        service = DoctorService(config_store=store, mcp_service=_make_mcp_service_mock())
+
+        result = service._check_config_source()
+
+        assert result["check"] == "config_source"
+        assert result["status"] == "pass"
+        assert "local" in result["message"]
+
+    def test_config_source_in_run_checks(self, tmp_config_dir: Path) -> None:
+        """run_checks includes config_source as first check."""
+        store = ConfigStore(config_dir=tmp_config_dir, source="local")
+        service = DoctorService(config_store=store, mcp_service=_make_mcp_service_mock())
+
+        result = service.run_checks()
+
+        assert result["checks"][0]["check"] == "config_source"
+
+
 class TestDoctorServiceCheckConfigValid:
     """Tests for DoctorService._check_config_valid() - config file validation."""
 
@@ -331,7 +366,7 @@ class TestDoctorServiceRunChecks:
 
         assert "checks" in result
         assert "summary" in result
-        assert len(result["checks"]) >= 4  # file, valid, connectivity, version, mcp
+        assert len(result["checks"]) >= 5  # source, file, valid, connectivity, version, mcp
         assert "total" in result["summary"]
         assert "passed" in result["summary"]
         assert "failed" in result["summary"]

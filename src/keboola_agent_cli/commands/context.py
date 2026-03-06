@@ -269,6 +269,15 @@ Then explore:
 
 ### Utility Commands
 
+  kbagent init [--from-global]
+    Initialize a local .kbagent/ workspace in the current directory.
+    Creates .kbagent/config.json for per-directory project isolation.
+    Use --from-global to copy existing projects from global config.
+    Automatically adds .kbagent/ to .gitignore.
+    Example:
+      kbagent init
+      kbagent init --from-global
+
   kbagent context
     Show this help text with usage instructions for AI agents.
 
@@ -284,6 +293,7 @@ Then explore:
   --json / -j     Output in JSON format (always use this for programmatic parsing)
   --verbose / -v  Enable verbose output
   --no-color      Disable colored output (auto-disabled in non-TTY environments)
+  --config-dir    Override config directory path (bypasses all auto-detection)
 
 ### MCP Tools (Multi-Project)
 
@@ -351,6 +361,7 @@ Then explore:
      KBC_TOKEN             - Storage API token (fallback for --token in project add/edit)
      KBC_STORAGE_API_URL   - Default stack URL (fallback for --url in project add, org setup)
      KBC_MANAGE_API_TOKEN  - Manage API token (for org setup)
+     KBAGENT_CONFIG_DIR    - Override config directory path (same as --config-dir flag)
 
 11. Branch workflow -- develop on a branch without passing --branch every time:
      kbagent --json branch create --project prod --name "fix-transform-x"
@@ -374,7 +385,15 @@ Then explore:
      # and how to interpret each file (schemas, transformations, lineage, etc.)
      # This is much faster than querying each piece via MCP tool calls.
 
-14. Setting up projects -- two approaches:
+14. Workspace isolation -- use per-directory config for client separation:
+     kbagent init                                            # Create local .kbagent/ workspace
+     kbagent --json project add --alias prod --url ...       # Adds to LOCAL config
+     kbagent --json doctor                                   # Shows "Using local config at ..."
+
+    Config resolution order: --config-dir flag > KBAGENT_CONFIG_DIR env var
+    > .kbagent/ in CWD or parent dirs > ~/.config/keboola-agent-cli/ (global)
+
+15. Setting up projects -- two approaches:
 
     a) Single project (you have a Storage API token):
        kbagent --json project add --alias my-proj --url https://connection.keboola.com --token 901-xxxxx

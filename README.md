@@ -178,6 +178,7 @@ make clean          # remove caches and build artifacts
 ## Contributors
 
 - [Jordan Burger](https://github.com/jordanrburger)
+- [František Řehoř](https://github.com/frantisekrehor)
 
 ## License
 

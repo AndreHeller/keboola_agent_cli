@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -408,12 +408,13 @@ wheels = [
 
 [[package]]
 name = "keboola-agent-cli"
-version = "0.6.6"
+version = "0.6.7"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "mcp" },
+    { name = "packaging" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -436,6 +437,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.20" },
     { name = "mcp", specifier = ">=1.0.0,<2.0.0" },
+    { name = "packaging", specifier = ">=23" },
     { name = "platformdirs", specifier = ">=4" },
     { name = "pydantic", specifier = ">=2.5" },
     { name = "pyyaml", specifier = ">=6" },

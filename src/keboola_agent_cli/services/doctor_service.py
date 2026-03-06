@@ -21,7 +21,7 @@ from ..config_store import ConfigStore
 from ..errors import KeboolaApiError
 from ..models import AppConfig
 from .base import ClientFactory, default_client_factory
-from .mcp_service import McpService
+from .mcp_service import McpService, ensure_mcp_installed
 
 
 class DoctorService:
@@ -251,3 +251,15 @@ class DoctorService:
             "status": "pass",
             "message": f"kbagent v{__version__}",
         }
+
+    @staticmethod
+    def warmup() -> dict[str, Any]:
+        """Ensure MCP server is installed as a fast local binary.
+
+        If only uvx fallback is available, installs via `uv tool install`
+        to create a permanent binary with faster startup (~1s vs ~4.5s).
+
+        Returns:
+            Dict with installation result info.
+        """
+        return ensure_mcp_installed()

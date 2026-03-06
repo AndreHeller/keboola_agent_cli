@@ -656,7 +656,7 @@ class TestCheckServerAvailable:
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_server_available_via_uvx(self, mock_which: MagicMock, tmp_path: Path) -> None:
-        """When uvx is available, status is 'pass' with command info."""
+        """When only uvx is available (no direct binary), status is 'warn' with install hint."""
         mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
 
         store = _setup_store(tmp_path, projects={})
@@ -665,9 +665,9 @@ class TestCheckServerAvailable:
 
         assert result["check"] == "mcp_server"
         assert result["name"] == "MCP server"
-        assert result["status"] == "pass"
+        assert result["status"] == "warn"
         assert "uvx" in result["message"]
-        assert "keboola_mcp_server" in result["message"]
+        assert "uv tool install" in result["message"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_server_available_via_direct_binary(
@@ -723,6 +723,96 @@ class TestCheckServerAvailable:
         assert result["status"] == "warn"
         assert "not found" in result["message"]
         assert "pip install keboola-mcp-server" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# TestEnsureMcpInstalled
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureMcpInstalled:
+    """Tests for ensure_mcp_installed() - auto-install of MCP server binary."""
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_binary_already_available(self, mock_which: MagicMock) -> None:
+        """When binary is already in PATH, no installation needed."""
+        mock_which.side_effect = lambda cmd: "/usr/local/bin/keboola_mcp_server" if cmd == "keboola_mcp_server" else None
+
+        from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+        result = ensure_mcp_installed()
+
+        assert result["method"] == "binary"
+        assert result["installed"] is False
+
+    @patch("keboola_agent_cli.services.mcp_service.subprocess.run")
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_python_module_available(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+        """When python module is available, no installation needed."""
+        def which_side_effect(cmd: str) -> str | None:
+            if cmd == "python":
+                return "/usr/bin/python"
+            return None
+
+        mock_which.side_effect = which_side_effect
+        mock_run.return_value = MagicMock(returncode=0)
+
+        from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+        result = ensure_mcp_installed()
+
+        assert result["method"] == "python_module"
+        assert result["installed"] is False
+
+    @patch("keboola_agent_cli.services.mcp_service.subprocess.run")
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_uv_tool_install_success(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+        """When only uv is available, runs uv tool install successfully."""
+        def which_side_effect(cmd: str) -> str | None:
+            if cmd == "uv":
+                return "/usr/local/bin/uv"
+            if cmd == "python":
+                return "/usr/bin/python"
+            return None
+
+        mock_which.side_effect = which_side_effect
+        # First call: python -c import check (fails), second: uv tool install (succeeds)
+        mock_run.side_effect = [
+            MagicMock(returncode=1),  # python module not found
+            MagicMock(returncode=0, stderr=""),  # uv tool install success
+        ]
+
+        from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+        result = ensure_mcp_installed()
+
+        assert result["method"] == "uv_tool_install"
+        assert result["installed"] is True
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_uvx_fallback(self, mock_which: MagicMock) -> None:
+        """When only uvx is available (no uv), returns fallback message."""
+        def which_side_effect(cmd: str) -> str | None:
+            if cmd == "uvx":
+                return "/usr/local/bin/uvx"
+            return None
+
+        mock_which.side_effect = which_side_effect
+
+        from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+        result = ensure_mcp_installed()
+
+        assert result["method"] == "uvx_fallback"
+        assert result["installed"] is False
+        assert "uv tool install" in result["message"]
+
+    @patch("keboola_agent_cli.services.mcp_service.shutil.which")
+    def test_nothing_available(self, mock_which: MagicMock) -> None:
+        """When nothing is available, returns not_found."""
+        mock_which.return_value = None
+
+        from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+        result = ensure_mcp_installed()
+
+        assert result["method"] == "not_found"
+        assert result["installed"] is False
 
 
 # ---------------------------------------------------------------------------

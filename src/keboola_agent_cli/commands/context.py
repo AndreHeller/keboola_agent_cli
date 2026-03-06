@@ -272,10 +272,12 @@ Then explore:
   kbagent context
     Show this help text with usage instructions for AI agents.
 
-  kbagent doctor
-    Run health checks: config file, permissions, connectivity, CLI version.
-    Example:
+  kbagent doctor [--fix]
+    Run health checks: config file, permissions, connectivity, CLI version, MCP server.
+    --fix: Auto-fix issues (installs MCP server binary for faster tool call startup).
+    Examples:
       kbagent --json doctor
+      kbagent doctor --fix
 
 ## Global Flags
 
@@ -329,8 +331,9 @@ Then explore:
      kbagent --json job list --project prod --limit 10        # Recent jobs
      kbagent --json job list --project prod --status error    # Failed jobs
 
-7. Common workflow - check health:
+7. Common workflow - check health and optimize:
      kbagent --json doctor                                    # Full health check
+     kbagent doctor --fix                                     # Auto-install MCP server binary (faster tool calls)
      kbagent --json project status                            # Test all connections
 
 8. Common workflow - explore data lineage:

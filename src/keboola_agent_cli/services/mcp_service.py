@@ -91,9 +91,9 @@ def detect_mcp_server_command() -> list[str] | None:
     """Detect the best way to run keboola-mcp-server.
 
     Checks in order of speed (fastest first):
-    1. keboola_mcp_server (local install, ~3s startup)
+    1. keboola_mcp_server (local install or uv tool, ~1s startup)
     2. python -m keboola_mcp_server (installed in current env)
-    3. uvx keboola_mcp_server (cached version, ~4.5s startup)
+    3. uvx keboola_mcp_server (cached version, ~1s cached / ~4.5s uncached)
 
     Note: We intentionally do NOT use @latest with uvx because it forces
     a PyPI check on every invocation (~25s penalty). The cached version
@@ -102,7 +102,7 @@ def detect_mcp_server_command() -> list[str] | None:
     Returns:
         List of command parts, or None if no method is available.
     """
-    # 1. Local install (fastest: ~3s)
+    # 1. Local install or uv tool install (fastest: ~1s)
     if shutil.which("keboola_mcp_server"):
         return ["keboola_mcp_server"]
     # 2. python -m (if installed in current env)
@@ -114,10 +114,83 @@ def detect_mcp_server_command() -> list[str] | None:
         )
         if result.returncode == 0:
             return ["python", "-m", "keboola_mcp_server"]
-    # 3. uvx WITHOUT @latest (uses cached version: ~4.5s vs 25s)
+    # 3. uvx WITHOUT @latest (uses cached version: ~1s cached / ~4.5s uncached)
     if shutil.which("uvx"):
         return ["uvx", "--prerelease=allow", "keboola_mcp_server"]
     return None
+
+
+def ensure_mcp_installed() -> dict[str, Any]:
+    """Ensure keboola-mcp-server is installed as a fast local binary.
+
+    If the binary is not directly available but uv is present, runs
+    `uv tool install` to create a permanent binary in ~/.local/bin/.
+    This eliminates the uvx per-call overhead (~0.2-4.5s).
+
+    Returns:
+        Dict with status info: method, installed (bool), message.
+    """
+    # Already available as direct binary
+    if shutil.which("keboola_mcp_server"):
+        return {
+            "method": "binary",
+            "installed": False,
+            "message": "keboola_mcp_server already available in PATH",
+        }
+
+    # Already available as python module
+    if shutil.which("python"):
+        result = subprocess.run(
+            ["python", "-c", "import keboola_mcp_server"],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return {
+                "method": "python_module",
+                "installed": False,
+                "message": "keboola_mcp_server available as Python module",
+            }
+
+    # Try uv tool install (creates permanent binary, ~1s startup vs ~4.5s uvx)
+    if shutil.which("uv"):
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "install", "--prerelease=allow", "keboola-mcp-server"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                return {
+                    "method": "uv_tool_install",
+                    "installed": True,
+                    "message": "Installed keboola-mcp-server via uv tool install",
+                }
+            # If already installed, uv tool install returns error
+            if "already installed" in result.stderr.lower():
+                return {
+                    "method": "uv_tool_existing",
+                    "installed": False,
+                    "message": "keboola-mcp-server already installed via uv tool",
+                }
+            logger.warning("uv tool install failed: %s", result.stderr.strip())
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("uv tool install error: %s", exc)
+
+    # Fall back to uvx availability check
+    if shutil.which("uvx"):
+        return {
+            "method": "uvx_fallback",
+            "installed": False,
+            "message": "Using uvx (slower). Run 'uv tool install --prerelease=allow keboola-mcp-server' for faster startup",
+        }
+
+    return {
+        "method": "not_found",
+        "installed": False,
+        "message": "keboola-mcp-server not found. Install with: pip install keboola-mcp-server",
+    }
 
 
 def _build_server_params(
@@ -1293,6 +1366,11 @@ class McpService(BaseService):
         transport_mode = _get_transport_mode()
         transport_info = f"transport={transport_mode}"
 
+        # Detect if using slow uvx fallback
+        is_uvx_fallback = command[0] == "uvx"
+        if is_uvx_fallback:
+            transport_info += ", using uvx (slower startup)"
+
         # If HTTP mode, check persistent server status
         if transport_mode == "http":
             try:
@@ -1306,9 +1384,18 @@ class McpService(BaseService):
             except Exception:
                 transport_info += ", persistent server unavailable (will fallback to stdio)"
 
+        status = "pass"
+        message = f"MCP server available via: {' '.join(command)} ({transport_info})"
+        if is_uvx_fallback:
+            status = "warn"
+            message += (
+                ". For faster startup, run: "
+                "uv tool install --prerelease=allow keboola-mcp-server"
+            )
+
         return {
             "check": "mcp_server",
             "name": "MCP server",
-            "status": "pass",
-            "message": f"MCP server available via: {' '.join(command)} ({transport_info})",
+            "status": status,
+            "message": message,
         }

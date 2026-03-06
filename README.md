@@ -28,6 +28,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `llm export` | AI-optimized project export via `kbc` Go binary (auto-resolves credentials) |
 | `version` | Show kbagent version and check for kbc / MCP server updates |
 | `context` | Print comprehensive usage instructions for AI agents |
+| `init` | Initialize a local `.kbagent/` workspace for per-directory project isolation |
 | `doctor` | Health check -- verifies config, permissions, connectivity, MCP server availability |
 
 Every command supports `--json` for structured output and Rich formatting for human-readable output.
@@ -60,6 +61,32 @@ All configuration lives in a single file:
 ```
 
 This file contains **Storage API tokens** for each connected project. File permissions are set to `0600` (owner read/write only) to protect these tokens. Tokens are always masked in CLI output (e.g. `901-...pt0k`).
+
+### Workspace isolation (per-client directories)
+
+By default kbagent uses a single global config. For teams working with multiple clients, you can create **per-directory workspaces** so each client folder has its own isolated set of Keboola projects.
+
+```bash
+# Create a workspace for ACME client
+mkdir -p ~/clients/acme && cd ~/clients/acme
+kbagent init                    # creates .kbagent/config.json
+kbagent project add --alias acme-prod --url https://connection.keboola.com --token ...
+
+# Create a workspace for BigCorp client
+mkdir -p ~/clients/bigcorp && cd ~/clients/bigcorp
+kbagent init                    # separate .kbagent/config.json
+kbagent project add --alias bigcorp-main --url https://connection.eu-central-1.keboola.com --token ...
+```
+
+Now when you `cd ~/clients/acme` and run `kbagent project list`, you only see ACME's projects. Each client directory can have its own `CLAUDE.md` with project-specific instructions.
+
+**Config resolution order** (first match wins):
+1. `--config-dir` CLI flag
+2. `KBAGENT_CONFIG_DIR` environment variable
+3. `.kbagent/config.json` in current or parent directory (walks up, like git)
+4. `~/.config/keboola-agent-cli/config.json` (global default)
+
+Run `kbagent doctor` to see which config is active. Use `kbagent init --from-global` to copy existing projects to a local workspace.
 
 The config file structure:
 

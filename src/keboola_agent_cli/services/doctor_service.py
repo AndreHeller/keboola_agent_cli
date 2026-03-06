@@ -49,6 +49,10 @@ class DoctorService:
         """
         all_checks: list[dict[str, Any]] = []
 
+        # Check 0: Config source (local vs global)
+        source_check = self._check_config_source()
+        all_checks.append(source_check)
+
         # Check 1: Config file exists with correct permissions
         file_check = self._check_config_file()
         all_checks.append(file_check)
@@ -86,6 +90,15 @@ class DoctorService:
                 "skipped": skipped,
                 "healthy": failed == 0,
             },
+        }
+
+    def _check_config_source(self) -> dict[str, Any]:
+        """Check 0: Report which config source is active."""
+        return {
+            "check": "config_source",
+            "name": "Config source",
+            "status": "pass",
+            "message": f"Using {self._config_store.source} config at {self._config_store.config_path}",
         }
 
     def _check_config_file(self) -> dict[str, Any]:

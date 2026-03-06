@@ -57,6 +57,10 @@ STORAGE_JOB_MAX_WAIT: float = 60.0  # max seconds to wait for a storage job
 # --- Parallel Workers ---
 MAX_PARALLEL_WORKERS_LIMIT: int = 100
 
+# --- Config Resolution ---
+ENV_CONFIG_DIR: str = "KBAGENT_CONFIG_DIR"
+LOCAL_CONFIG_DIR_NAME: str = ".kbagent"
+
 # --- Environment Variable Names ---
 ENV_MAX_PARALLEL_WORKERS: str = "KBAGENT_MAX_PARALLEL_WORKERS"
 ENV_KBC_TOKEN: str = "KBC_TOKEN"

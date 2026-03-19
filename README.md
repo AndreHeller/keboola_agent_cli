@@ -12,6 +12,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 - **Trace data flow** -- see how data moves between projects via bucket sharing (lineage)
 - **Use MCP tools** -- call keboola-mcp-server tools across all projects in parallel
 - **Manage dev branches** -- create, switch, delete branches with persistent active branch state
+- **Debug SQL interactively** -- create workspaces, load tables, run SQL queries without full job runs
 
 ## What it can do
 
@@ -24,6 +25,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `org setup` | Bulk-onboard all projects from a Keboola organization (uses Manage API) |
 | `tool` | List and call MCP tools from keboola-mcp-server (read tools run across all projects in parallel) |
 | `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
+| `workspace` | Create workspaces, load tables, run SQL queries -- iterative SQL debugging without full jobs |
 | `explorer` | Generate KBC Explorer dashboard with catalog, orchestrations, and lineage visualization |
 | `llm export` | AI-optimized project export via `kbc` Go binary (auto-resolves credentials) |
 | `version` | Show kbagent version and check for kbc / MCP server updates |
@@ -38,17 +40,29 @@ Run `kbagent --help` or `kbagent <command> --help` for details on any command.
 ## Installation
 
 ```bash
-# Run directly without installing (recommended for trying it out)
-uv run kbagent --help
+# Install from GitHub (recommended)
+uv tool install git+https://github.com/padak/keboola_agent_cli
 
-# Install globally
-uv tool install .
+# Update to latest version
+uv tool install --reinstall git+https://github.com/padak/keboola_agent_cli
 
-# Or install in development mode
+# Install a specific version
+uv tool install git+https://github.com/padak/keboola_agent_cli@v0.7.2
+
+# Run without installing (one-off use)
+uvx --from git+https://github.com/padak/keboola_agent_cli kbagent --help
+```
+
+For development:
+
+```bash
+# Clone and install in editable mode
+git clone https://github.com/padak/keboola_agent_cli.git
+cd keboola_agent_cli
 uv pip install -e ".[dev]"
 ```
 
-After global install, `kbagent` is available directly. Otherwise use `uv run kbagent`.
+After `uv tool install`, `kbagent` is available globally in your shell.
 
 ## Configuration and credentials
 
@@ -147,6 +161,40 @@ kbagent branch merge --project prod
 ```
 
 The active branch is stored per-project in `config.json` and displayed in `project list` and `branch list` output. Use `branch reset` to switch back to main, or `branch delete` to remove a branch (auto-resets if it was active).
+
+## Workspaces (SQL debugging)
+
+Debug a failing SQL transformation without running full jobs:
+
+```bash
+# Option A: Create workspace from an existing transformation (auto-loads input tables)
+kbagent --json workspace from-transformation --project prod \
+  --component-id keboola.snowflake-transformation --config-id 22777254
+
+# Option B: Create a standalone workspace and load tables manually
+kbagent workspace create --project prod --name "debug-ws"
+kbagent workspace load --project prod --workspace-id WS_ID \
+  --tables in.c-main.users --tables in.c-main.orders
+
+# Run SQL queries iteratively (no need to run full jobs!)
+kbagent --json workspace query --project prod --workspace-id WS_ID \
+  --sql "SELECT * FROM users LIMIT 10"
+
+# Or run SQL from a file
+kbagent --json workspace query --project prod --workspace-id WS_ID --file fix.sql
+
+# Clean up when done (workspaces also expire automatically)
+kbagent workspace delete --project prod --workspace-id WS_ID
+```
+
+Two create modes:
+- **Default (headless):** fast ~1s via Storage API, not visible in Keboola UI
+- **`--ui` flag:** ~15s via Queue job, visible in Keboola UI Workspaces tab
+
+```bash
+# Visible in Keboola UI
+kbagent workspace create --project prod --name "debug-ws" --ui
+```
 
 ## JSON output format
 

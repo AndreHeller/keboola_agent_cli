@@ -18,6 +18,7 @@ from .commands.org import org_app
 from .commands.project import project_app
 from .commands.tool import tool_app
 from .commands.version import version_command
+from .commands.workspace import workspace_app
 from .config_store import ConfigStore, resolve_config_dir
 from .output import OutputFormatter
 from .services.branch_service import BranchService
@@ -31,6 +32,7 @@ from .services.mcp_service import McpService
 from .services.org_service import OrgService
 from .services.project_service import ProjectService
 from .services.version_service import VersionService
+from .services.workspace_service import WorkspaceService
 
 app = typer.Typer(
     name="kbagent",
@@ -47,6 +49,7 @@ app.add_typer(tool_app, name="tool")
 app.add_typer(branch_app, name="branch")
 app.add_typer(explorer_app, name="explorer")
 app.add_typer(llm_app, name="llm")
+app.add_typer(workspace_app, name="workspace")
 app.command("context")(context_command)
 app.command("doctor")(doctor_command)
 app.command("init")(init_command)
@@ -106,6 +109,7 @@ def main(
     org_service = OrgService(config_store=config_store)
     mcp_service = McpService(config_store=config_store)
     branch_service = BranchService(config_store=config_store)
+    workspace_service = WorkspaceService(config_store=config_store)
     kbc_service = KbcService(config_store=config_store)
     doctor_service = DoctorService(config_store=config_store, mcp_service=mcp_service)
     explorer_service = ExplorerService(
@@ -129,6 +133,7 @@ def main(
     ctx.obj["org_service"] = org_service
     ctx.obj["mcp_service"] = mcp_service
     ctx.obj["branch_service"] = branch_service
+    ctx.obj["workspace_service"] = workspace_service
     ctx.obj["kbc_service"] = kbc_service
     ctx.obj["doctor_service"] = doctor_service
     ctx.obj["explorer_service"] = explorer_service

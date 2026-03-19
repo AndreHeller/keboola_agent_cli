@@ -863,9 +863,24 @@ class TestFormatDoctorPanel:
         console = Console(file=StringIO(), no_color=True, force_terminal=False)
         data = {
             "checks": [
-                {"check": "config_file", "status": "pass", "name": "Config File", "message": "Found at ~/.config/kbagent/config.json"},
-                {"check": "config_valid", "status": "pass", "name": "Config Valid", "message": "1 project configured"},
-                {"check": "version", "status": "pass", "name": "Version", "message": "kbagent v0.1.0"},
+                {
+                    "check": "config_file",
+                    "status": "pass",
+                    "name": "Config File",
+                    "message": "Found at ~/.config/kbagent/config.json",
+                },
+                {
+                    "check": "config_valid",
+                    "status": "pass",
+                    "name": "Config Valid",
+                    "message": "1 project configured",
+                },
+                {
+                    "check": "version",
+                    "status": "pass",
+                    "name": "Version",
+                    "message": "kbagent v0.1.0",
+                },
             ],
             "summary": {
                 "total": 3,
@@ -889,8 +904,18 @@ class TestFormatDoctorPanel:
         console = Console(file=StringIO(), no_color=True, force_terminal=False)
         data = {
             "checks": [
-                {"check": "config_file", "status": "fail", "name": "Config File", "message": "Not found"},
-                {"check": "connectivity", "status": "warn", "name": "Connectivity", "message": "Timeout"},
+                {
+                    "check": "config_file",
+                    "status": "fail",
+                    "name": "Config File",
+                    "message": "Not found",
+                },
+                {
+                    "check": "connectivity",
+                    "status": "warn",
+                    "name": "Connectivity",
+                    "message": "Timeout",
+                },
             ],
             "summary": {
                 "total": 2,

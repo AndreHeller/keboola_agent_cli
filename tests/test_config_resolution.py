@@ -19,7 +19,9 @@ class TestResolveConfigDir:
         assert path == custom_dir
         assert source == "cli-flag"
 
-    def test_env_var_takes_precedence_over_local(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_var_takes_precedence_over_local(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Env var overrides local .kbagent/ discovery."""
         # Create a local .kbagent/config.json in CWD
         local_dir = tmp_path / LOCAL_CONFIG_DIR_NAME
@@ -35,7 +37,9 @@ class TestResolveConfigDir:
         assert path == env_dir
         assert source == "env-var"
 
-    def test_walkup_finds_kbagent_in_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_walkup_finds_kbagent_in_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Walk-up finds .kbagent/config.json in CWD."""
         monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
         local_dir = tmp_path / LOCAL_CONFIG_DIR_NAME
@@ -47,7 +51,9 @@ class TestResolveConfigDir:
         assert path == local_dir
         assert source == "local"
 
-    def test_walkup_finds_kbagent_in_parent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_walkup_finds_kbagent_in_parent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Walk-up finds .kbagent/config.json in parent directory."""
         monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
         local_dir = tmp_path / LOCAL_CONFIG_DIR_NAME
@@ -84,7 +90,9 @@ class TestResolveConfigDir:
         _path, source = resolve_config_dir()
         assert source == "global"  # Should NOT find the one above home
 
-    def test_walkup_requires_config_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_walkup_requires_config_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Walk-up requires config.json file, not just the directory."""
         monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
         # Create .kbagent/ dir without config.json
@@ -108,7 +116,9 @@ class TestResolveConfigDir:
     def test_oserror_from_cwd_falls_back_to_global(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """OSError from Path.cwd() falls back to global."""
         monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
-        monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: (_ for _ in ()).throw(OSError("no cwd"))))
+        monkeypatch.setattr(
+            Path, "cwd", classmethod(lambda cls: (_ for _ in ()).throw(OSError("no cwd")))
+        )
 
         _path, source = resolve_config_dir()
         assert source == "global"

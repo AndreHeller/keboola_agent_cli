@@ -70,9 +70,7 @@ def branch_create(
         result = service.create_branch(alias=project, name=name, description=description)
         formatter.output(
             result,
-            lambda c, d: c.print(
-                f"[bold green]Success:[/bold green] {d['message']}"
-            ),
+            lambda c, d: c.print(f"[bold green]Success:[/bold green] {d['message']}"),
         )
     except KeboolaApiError as exc:
         exit_code = map_error_to_exit_code(exc)
@@ -113,9 +111,7 @@ def branch_use(
         result = service.set_active_branch(alias=project, branch_id=branch)
         formatter.output(
             result,
-            lambda c, d: c.print(
-                f"[bold green]Success:[/bold green] {d['message']}"
-            ),
+            lambda c, d: c.print(f"[bold green]Success:[/bold green] {d['message']}"),
         )
     except KeboolaApiError as exc:
         exit_code = map_error_to_exit_code(exc)
@@ -151,9 +147,7 @@ def branch_reset(
         result = service.reset_branch(alias=project)
         formatter.output(
             result,
-            lambda c, d: c.print(
-                f"[bold green]Success:[/bold green] {d['message']}"
-            ),
+            lambda c, d: c.print(f"[bold green]Success:[/bold green] {d['message']}"),
         )
     except ConfigError as exc:
         formatter.error(message=exc.message, error_code="CONFIG_ERROR")
@@ -186,9 +180,7 @@ def branch_delete(
         result = service.delete_branch(alias=project, branch_id=branch)
         formatter.output(
             result,
-            lambda c, d: c.print(
-                f"[bold green]Success:[/bold green] {d['message']}"
-            ),
+            lambda c, d: c.print(f"[bold green]Success:[/bold green] {d['message']}"),
         )
     except KeboolaApiError as exc:
         exit_code = map_error_to_exit_code(exc)

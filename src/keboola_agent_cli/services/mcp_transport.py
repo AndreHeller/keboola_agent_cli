@@ -102,9 +102,12 @@ class McpServerManager:
         port = _find_free_port()
         cmd = [
             *command_parts,
-            "--transport", "streamable-http",
-            "--host", "127.0.0.1",
-            "--port", str(port),
+            "--transport",
+            "streamable-http",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
         ]
 
         logger.info("Starting persistent MCP server: %s", " ".join(cmd))

@@ -267,6 +267,56 @@ Then explore:
     Example:
       kbagent --json branch merge --project prod
 
+### Workspaces (SQL Debugging)
+
+  kbagent workspace create --project ALIAS [--backend snowflake] [--read-only/--no-read-only]
+    Create a temporary workspace for SQL debugging.
+    Returns connection credentials including password (shown only once!).
+    Default backend is snowflake. Use --no-read-only for write access.
+    Example:
+      kbagent --json workspace create --project prod
+
+  kbagent workspace list [--project NAME]
+    List workspaces from connected projects.
+    --project can be repeated to query multiple projects.
+    Example:
+      kbagent --json workspace list --project prod
+
+  kbagent workspace detail --project ALIAS --workspace-id ID
+    Show workspace connection details (password NOT included).
+    Example:
+      kbagent --json workspace detail --project prod --workspace-id 12345
+
+  kbagent workspace delete --project ALIAS --workspace-id ID
+    Delete a workspace. Workspaces also expire automatically server-side.
+    Example:
+      kbagent --json workspace delete --project prod --workspace-id 12345
+
+  kbagent workspace password --project ALIAS --workspace-id ID
+    Reset workspace password and return the new one.
+    Example:
+      kbagent --json workspace password --project prod --workspace-id 12345
+
+  kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--tables TABLE_ID2 ...]
+    Load tables from storage into a workspace. Waits for async load to complete.
+    Table IDs use Keboola format: in.c-bucket.table-name
+    Example:
+      kbagent --json workspace load --project prod --workspace-id 12345 --tables in.c-main.users --tables in.c-main.orders
+
+  kbagent workspace query --project ALIAS --workspace-id ID --sql "SELECT ..." [--transactional]
+  kbagent workspace query --project ALIAS --workspace-id ID --file query.sql [--transactional]
+    Execute SQL in a workspace via Query Service. Provide SQL via --sql or --file.
+    Polls until complete and returns results as CSV.
+    Example:
+      kbagent --json workspace query --project prod --workspace-id 12345 --sql "SELECT * FROM users LIMIT 10"
+
+  kbagent workspace from-transformation --project ALIAS --component-id ID --config-id ID [--row-id ID] [--backend snowflake]
+    Create a workspace from an existing transformation config.
+    Reads the transformation, creates a config-tied workspace, and loads all input tables.
+    Returns credentials ready for SQL debugging.
+    Example:
+      kbagent --json workspace from-transformation --project prod --component-id keboola.snowflake-transformation --config-id 22777254
+
 ### Utility Commands
 
   kbagent init [--from-global]
@@ -393,7 +443,24 @@ Then explore:
     Config resolution order: --config-dir flag > KBAGENT_CONFIG_DIR env var
     > .kbagent/ in CWD or parent dirs > ~/.config/keboola-agent-cli/ (global)
 
-15. Setting up projects -- two approaches:
+15. Workspace workflow -- debug a failing SQL transformation iteratively:
+     # Step 1: Create workspace from the transformation (loads input tables automatically)
+     kbagent --json workspace from-transformation --project prod --component-id keboola.snowflake-transformation --config-id 22777254
+       # ^ returns workspace_id, credentials, and loaded tables
+
+     # Step 2: Run the SQL to reproduce the error
+     kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT ..."
+
+     # Step 3: Iterate on fixes (no need to run full jobs!)
+     kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT fixed_query ..."
+
+     # Step 4: Once the fix works, update the transformation config
+     kbagent --json tool call update_configuration --project prod --input '{{"component_id": "...", "configuration_id": "...", ...}}'
+
+     # Step 5: Clean up (optional -- workspaces expire automatically)
+     kbagent --json workspace delete --project prod --workspace-id WS_ID
+
+16. Setting up projects -- two approaches:
 
     a) Single project (you have a Storage API token):
        kbagent --json project add --alias my-proj --url https://connection.keboola.com --token 901-xxxxx

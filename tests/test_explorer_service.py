@@ -20,8 +20,8 @@ from keboola_agent_cli.services.explorer_service import (
 # Pure function tests: _assign_tier
 # ---------------------------------------------------------------------------
 
-class TestAssignTier:
 
+class TestAssignTier:
     def test_l0_convention(self) -> None:
         tier, unclassified = _assign_tier("acme-l0-extract")
         assert tier == "L0"
@@ -72,8 +72,8 @@ class TestAssignTier:
 # Pure function tests: _compute_job_stats
 # ---------------------------------------------------------------------------
 
-class TestComputeJobStats:
 
+class TestComputeJobStats:
     def test_empty(self) -> None:
         stats = _compute_job_stats([])
         assert stats["total_jobs"] == 0
@@ -85,12 +85,27 @@ class TestComputeJobStats:
 
     def test_mixed(self) -> None:
         jobs = [
-            {"status": "success", "durationSeconds": 10, "createdTime": "2025-01-01T00:00:00Z",
-             "component": "keboola.ex-db", "configId": "1"},
-            {"status": "success", "durationSeconds": 20, "createdTime": "2025-01-02T00:00:00Z",
-             "component": "keboola.ex-db", "configId": "1"},
-            {"status": "error", "durationSeconds": 5, "createdTime": "2025-01-03T00:00:00Z",
-             "component": "keboola.wr-db", "configId": "2"},
+            {
+                "status": "success",
+                "durationSeconds": 10,
+                "createdTime": "2025-01-01T00:00:00Z",
+                "component": "keboola.ex-db",
+                "configId": "1",
+            },
+            {
+                "status": "success",
+                "durationSeconds": 20,
+                "createdTime": "2025-01-02T00:00:00Z",
+                "component": "keboola.ex-db",
+                "configId": "1",
+            },
+            {
+                "status": "error",
+                "durationSeconds": 5,
+                "createdTime": "2025-01-03T00:00:00Z",
+                "component": "keboola.wr-db",
+                "configId": "2",
+            },
         ]
         stats = _compute_job_stats(jobs)
         assert stats["total_jobs"] == 3
@@ -103,12 +118,24 @@ class TestComputeJobStats:
 
     def test_failing_configs_sorted(self) -> None:
         jobs = [
-            {"status": "error", "component": "c1", "configId": "a",
-             "createdTime": "2025-01-01T00:00:00Z"},
-            {"status": "success", "component": "c1", "configId": "a",
-             "createdTime": "2025-01-02T00:00:00Z"},
-            {"status": "error", "component": "c2", "configId": "b",
-             "createdTime": "2025-01-01T00:00:00Z"},
+            {
+                "status": "error",
+                "component": "c1",
+                "configId": "a",
+                "createdTime": "2025-01-01T00:00:00Z",
+            },
+            {
+                "status": "success",
+                "component": "c1",
+                "configId": "a",
+                "createdTime": "2025-01-02T00:00:00Z",
+            },
+            {
+                "status": "error",
+                "component": "c2",
+                "configId": "b",
+                "createdTime": "2025-01-01T00:00:00Z",
+            },
         ]
         stats = _compute_job_stats(jobs)
         assert len(stats["failing_configs"]) == 2
@@ -123,8 +150,8 @@ class TestComputeJobStats:
 # Pure function tests: _type_icon
 # ---------------------------------------------------------------------------
 
-class TestTypeIcon:
 
+class TestTypeIcon:
     def test_extractor(self) -> None:
         assert _type_icon("keboola.ex-google-drive") == "EX"
 
@@ -148,8 +175,8 @@ class TestTypeIcon:
 # Pure function tests: _default_output_dir
 # ---------------------------------------------------------------------------
 
-class TestDefaultOutputDir:
 
+class TestDefaultOutputDir:
     def test_returns_cwd_based_path(self) -> None:
         result = _default_output_dir()
         assert result == Path.cwd() / "kbc-explorer"
@@ -163,8 +190,8 @@ class TestDefaultOutputDir:
 # Pure function tests: _build_mermaid
 # ---------------------------------------------------------------------------
 
-class TestBuildMermaid:
 
+class TestBuildMermaid:
     def test_basic_graph(self) -> None:
         phases = [
             {
@@ -194,6 +221,7 @@ class TestBuildMermaid:
 # _parse_orchestration tests (real API structure)
 # ---------------------------------------------------------------------------
 
+
 class TestParseOrchestration:
     """Tests for _parse_orchestration with realistic Keboola Flow API responses.
 
@@ -213,14 +241,23 @@ class TestParseOrchestration:
                 ],
                 "tasks": [
                     {
-                        "id": 1, "name": "pull-data", "phase": 100,
+                        "id": 1,
+                        "name": "pull-data",
+                        "phase": 100,
                         "task": {"componentId": "keboola.ex-google-drive", "configId": "abc"},
-                        "enabled": True, "continueOnFailure": False,
+                        "enabled": True,
+                        "continueOnFailure": False,
                     },
                     {
-                        "id": 2, "name": "snowflake-sql", "phase": 200,
-                        "task": {"componentId": "keboola.snowflake-transformation", "configId": "def"},
-                        "enabled": True, "continueOnFailure": True,
+                        "id": 2,
+                        "name": "snowflake-sql",
+                        "phase": 200,
+                        "task": {
+                            "componentId": "keboola.snowflake-transformation",
+                            "configId": "def",
+                        },
+                        "enabled": True,
+                        "continueOnFailure": True,
                     },
                 ],
             },
@@ -258,7 +295,10 @@ class TestParseOrchestration:
                 ],
                 "tasks": [],
             },
-            "name": "Flow", "description": "", "isDisabled": False, "version": 1,
+            "name": "Flow",
+            "description": "",
+            "isDisabled": False,
+            "version": 1,
         }
         result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
         assert result["phases"][0]["depends_on"] == []
@@ -276,7 +316,10 @@ class TestParseOrchestration:
                 ],
                 "tasks": [],
             },
-            "name": "Flow", "description": "", "isDisabled": False, "version": 1,
+            "name": "Flow",
+            "description": "",
+            "isDisabled": False,
+            "version": 1,
         }
         result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
         assert result["phases"][1]["depends_on"] == [1]
@@ -285,7 +328,10 @@ class TestParseOrchestration:
         cfg = {"config_name": "Empty", "config_description": ""}
         detail = {
             "configuration": {"phases": [], "tasks": []},
-            "name": "Empty", "description": "", "isDisabled": False, "version": 1,
+            "name": "Empty",
+            "description": "",
+            "isDisabled": False,
+            "version": 1,
         }
         result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
         assert result["total_phases"] == 0
@@ -300,11 +346,20 @@ class TestParseOrchestration:
             "configuration": {
                 "phases": [{"id": 1, "name": "A", "dependsOn": []}],
                 "tasks": [
-                    {"id": 1, "name": "odd-task", "phase": 1, "task": "some-string",
-                     "enabled": True, "continueOnFailure": False},
+                    {
+                        "id": 1,
+                        "name": "odd-task",
+                        "phase": 1,
+                        "task": "some-string",
+                        "enabled": True,
+                        "continueOnFailure": False,
+                    },
                 ],
             },
-            "name": "Flow", "description": "", "isDisabled": False, "version": 1,
+            "name": "Flow",
+            "description": "",
+            "isDisabled": False,
+            "version": 1,
         }
         result = ExplorerService._parse_orchestration("proj", "cfg1", cfg, detail)
         assert result["total_tasks"] == 1
@@ -314,6 +369,7 @@ class TestParseOrchestration:
 # ---------------------------------------------------------------------------
 # Service tests with mocked dependencies
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_services(alias: str = "prod"):
     """Create mocked ConfigService, JobService, LineageService."""
@@ -362,7 +418,6 @@ def _make_mock_services(alias: str = "prod"):
 
 
 class TestExplorerServiceGenerate:
-
     def test_generate_single_project(self, tmp_path: Path) -> None:
         store = setup_single_project(tmp_path / "config", alias="l0-prod")
         config_svc, job_svc, lineage_svc = _make_mock_services("l0-prod")
@@ -451,7 +506,9 @@ class TestExplorerServiceGenerate:
             lineage_service=lineage_svc,
         )
         result = service.generate(
-            output_dir=output_dir, open_browser=False, tiers_config=tiers_file,
+            output_dir=output_dir,
+            open_browser=False,
+            tiers_config=tiers_file,
         )
 
         catalog = json.loads((output_dir / "catalog.json").read_text())

@@ -59,9 +59,7 @@ def _make_manage_client(projects: list[dict], token_response: dict | None = None
     return lambda url, token: mock
 
 
-def _make_storage_client(
-    project_name: str = "Test Project", project_id: int = 100
-):
+def _make_storage_client(project_name: str = "Test Project", project_id: int = 100):
     """Create a mock storage client factory."""
     mock = MagicMock()
     mock.verify_token.return_value = TokenVerifyResponse(

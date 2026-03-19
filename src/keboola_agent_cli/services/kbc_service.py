@@ -69,10 +69,7 @@ class KbcService(BaseService):
                 "check": "kbc_binary",
                 "name": "kbc CLI",
                 "status": "warn",
-                "message": (
-                    "kbc binary not found on PATH. "
-                    "Install with: brew install keboola-cli"
-                ),
+                "message": ("kbc binary not found on PATH. Install with: brew install keboola-cli"),
             }
 
         version = self.get_kbc_version()

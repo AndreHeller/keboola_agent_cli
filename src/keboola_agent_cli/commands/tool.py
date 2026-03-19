@@ -153,7 +153,7 @@ def tool_call(
     tool_input: str | None = typer.Option(
         None,
         "--input",
-        help="Tool input as JSON string (e.g. '{\"query\": \"test\"}')",
+        help='Tool input as JSON string (e.g. \'{"query": "test"}\')',
     ),
     branch: int | None = typer.Option(
         None,
@@ -202,7 +202,7 @@ def tool_call(
 
         if not isinstance(parsed_input, dict):
             formatter.error(
-                message="--input must be a JSON object (e.g. '{\"key\": \"value\"}')",
+                message='--input must be a JSON object (e.g. \'{"key": "value"}\')',
                 error_code="INVALID_ARGUMENT",
             )
             raise typer.Exit(code=2) from None

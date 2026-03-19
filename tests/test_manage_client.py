@@ -218,6 +218,7 @@ class TestCreateProjectToken:
 
         request = httpx_mock.get_request()
         import json
+
         body = json.loads(request.content)
         assert body["description"] == "custom-desc"
         assert body["canManageBuckets"] is False

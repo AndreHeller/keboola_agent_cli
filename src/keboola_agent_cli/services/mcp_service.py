@@ -38,6 +38,7 @@ from .base import BaseService
 
 logger = logging.getLogger(__name__)
 
+
 def _get_tool_timeout() -> int:
     """Get MCP tool timeout (seconds), reading env var at call time."""
     return int(os.environ.get(ENV_MCP_TOOL_TIMEOUT, DEFAULT_MCP_TOOL_TIMEOUT))
@@ -249,20 +250,14 @@ async def _connect_and_list_tools(
     logger.info("Starting MCP server for project %s", project.project_name or "unknown")
     try:
         read_stream, write_stream = await asyncio.wait_for(
-            exit_stack.enter_async_context(
-                stdio_client(params, errlog=subprocess.DEVNULL)
-            ),
+            exit_stack.enter_async_context(stdio_client(params, errlog=subprocess.DEVNULL)),
             timeout=_get_init_timeout(),
         )
 
-        session = await exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
-        )
+        session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
         await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
 
-        response = await asyncio.wait_for(
-            session.list_tools(), timeout=_get_tool_timeout()
-        )
+        response = await asyncio.wait_for(session.list_tools(), timeout=_get_tool_timeout())
 
         tools = []
         for tool in response.tools:
@@ -304,15 +299,11 @@ async def _open_session(
     params = _build_server_params(project, branch_id=branch_id)
 
     read_stream, write_stream = await asyncio.wait_for(
-        exit_stack.enter_async_context(
-            stdio_client(params, errlog=subprocess.DEVNULL)
-        ),
+        exit_stack.enter_async_context(stdio_client(params, errlog=subprocess.DEVNULL)),
         timeout=_get_init_timeout(),
     )
 
-    session = await exit_stack.enter_async_context(
-        ClientSession(read_stream, write_stream)
-    )
+    session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
     await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
     return session
 
@@ -382,15 +373,12 @@ async def _connect_validate_and_call(
         session = await _open_session(project, exit_stack, branch_id=branch_id)
 
         # Step 1: list_tools to validate tool name and get schema
-        response = await asyncio.wait_for(
-            session.list_tools(), timeout=_get_tool_timeout()
-        )
+        response = await asyncio.wait_for(session.list_tools(), timeout=_get_tool_timeout())
 
         known_tools = {t.name for t in response.tools}
         if tool_name not in known_tools:
             raise ConfigError(
-                f"Unknown MCP tool '{tool_name}'. "
-                f"Use 'kbagent tool list' to see available tools."
+                f"Unknown MCP tool '{tool_name}'. Use 'kbagent tool list' to see available tools."
             )
 
         # Step 2: validate required params
@@ -479,9 +467,7 @@ async def _http_list_tools(
         async with session:
             await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
 
-            response = await asyncio.wait_for(
-                session.list_tools(), timeout=_get_tool_timeout()
-            )
+            response = await asyncio.wait_for(session.list_tools(), timeout=_get_tool_timeout())
 
             tools = []
             for tool in response.tools:
@@ -572,9 +558,7 @@ async def _http_validate_and_call(
             await asyncio.wait_for(session.initialize(), timeout=_get_init_timeout())
 
             # Step 1: list_tools for validation
-            response = await asyncio.wait_for(
-                session.list_tools(), timeout=_get_tool_timeout()
-            )
+            response = await asyncio.wait_for(session.list_tools(), timeout=_get_tool_timeout())
 
             known_tools = {t.name for t in response.tools}
             if tool_name not in known_tools:
@@ -872,13 +856,9 @@ class McpService(BaseService):
         for alias, project in projects.items():
             try:
                 if server_url:
-                    tools = asyncio.run(
-                        _http_list_tools(server_url, project, branch_id=branch_id)
-                    )
+                    tools = asyncio.run(_http_list_tools(server_url, project, branch_id=branch_id))
                 else:
-                    tools = asyncio.run(
-                        _connect_and_list_tools(project, branch_id=branch_id)
-                    )
+                    tools = asyncio.run(_connect_and_list_tools(project, branch_id=branch_id))
                 # Annotate tools with multi_project flag
                 annotated_tools = []
                 for tool in tools:
@@ -1019,8 +999,7 @@ class McpService(BaseService):
             known_tools = {t["name"] for t in tool_list_result.get("tools", [])}
         if known_tools and tool_name not in known_tools:
             raise ConfigError(
-                f"Unknown MCP tool '{tool_name}'. "
-                f"Use 'kbagent tool list' to see available tools."
+                f"Unknown MCP tool '{tool_name}'. Use 'kbagent tool list' to see available tools."
             )
 
         is_write = _is_write_tool(tool_name)
@@ -1078,14 +1057,21 @@ class McpService(BaseService):
                     if server_url:
                         result = asyncio.run(
                             _http_auto_expand(
-                                server_url, project, tool_name, tool_input,
-                                expand_config, branch_id=branch_id,
+                                server_url,
+                                project,
+                                tool_name,
+                                tool_input,
+                                expand_config,
+                                branch_id=branch_id,
                             )
                         )
                     else:
                         result = asyncio.run(
                             _connect_and_auto_expand(
-                                project, tool_name, tool_input, expand_config,
+                                project,
+                                tool_name,
+                                tool_input,
+                                expand_config,
                                 branch_id=branch_id,
                             )
                         )
@@ -1093,14 +1079,20 @@ class McpService(BaseService):
                     if server_url:
                         result = asyncio.run(
                             _http_validate_and_call(
-                                server_url, project, tool_name, tool_input,
+                                server_url,
+                                project,
+                                tool_name,
+                                tool_input,
                                 branch_id=branch_id,
                             )
                         )
                     else:
                         result = asyncio.run(
                             _connect_validate_and_call(
-                                project, tool_name, tool_input, branch_id=branch_id,
+                                project,
+                                tool_name,
+                                tool_input,
+                                branch_id=branch_id,
                             )
                         )
                 result["project_alias"] = resolved_alias
@@ -1129,15 +1121,22 @@ class McpService(BaseService):
         if expand_config and expand_config["param"] not in tool_input:
             return asyncio.run(
                 self._gather_auto_expand_results(
-                    projects, tool_name, tool_input, expand_config,
-                    branch_id=branch_id, server_url=server_url,
+                    projects,
+                    tool_name,
+                    tool_input,
+                    expand_config,
+                    branch_id=branch_id,
+                    server_url=server_url,
                 )
             )
 
         return asyncio.run(
             self._gather_validate_and_call_results(
-                projects, tool_name, tool_input,
-                branch_id=branch_id, server_url=server_url,
+                projects,
+                tool_name,
+                tool_input,
+                branch_id=branch_id,
+                server_url=server_url,
             )
         )
 
@@ -1160,11 +1159,18 @@ class McpService(BaseService):
         for a, project in projects.items():
             if server_url:
                 coro = _http_validate_and_call(
-                    server_url, project, tool_name, tool_input, branch_id=branch_id,
+                    server_url,
+                    project,
+                    tool_name,
+                    tool_input,
+                    branch_id=branch_id,
                 )
             else:
                 coro = _connect_validate_and_call(
-                    project, tool_name, tool_input, branch_id=branch_id,
+                    project,
+                    tool_name,
+                    tool_input,
+                    branch_id=branch_id,
                 )
             if sem is not None:
                 coro = _semaphored(sem, coro)
@@ -1186,13 +1192,20 @@ class McpService(BaseService):
             if server_url:
                 result = asyncio.run(
                     _http_call_tool(
-                        server_url, project, tool_name, tool_input, branch_id=branch_id,
+                        server_url,
+                        project,
+                        tool_name,
+                        tool_input,
+                        branch_id=branch_id,
                     )
                 )
             else:
                 result = asyncio.run(
                     _connect_and_call_tool(
-                        project, tool_name, tool_input, branch_id=branch_id,
+                        project,
+                        tool_name,
+                        tool_input,
+                        branch_id=branch_id,
                     )
                 )
             result["project_alias"] = resolved_alias
@@ -1233,15 +1246,22 @@ class McpService(BaseService):
         if expand_config and expand_config["param"] not in tool_input:
             return asyncio.run(
                 self._gather_auto_expand_results(
-                    projects, tool_name, tool_input, expand_config,
-                    branch_id=branch_id, server_url=server_url,
+                    projects,
+                    tool_name,
+                    tool_input,
+                    expand_config,
+                    branch_id=branch_id,
+                    server_url=server_url,
                 )
             )
 
         return asyncio.run(
             self._gather_read_results(
-                projects, tool_name, tool_input,
-                branch_id=branch_id, server_url=server_url,
+                projects,
+                tool_name,
+                tool_input,
+                branch_id=branch_id,
+                server_url=server_url,
             )
         )
 
@@ -1302,12 +1322,20 @@ class McpService(BaseService):
         for a, project in projects.items():
             if server_url:
                 coro = _http_auto_expand(
-                    server_url, project, tool_name, tool_input, expand_config,
+                    server_url,
+                    project,
+                    tool_name,
+                    tool_input,
+                    expand_config,
                     branch_id=branch_id,
                 )
             else:
                 coro = _connect_and_auto_expand(
-                    project, tool_name, tool_input, expand_config, branch_id=branch_id,
+                    project,
+                    tool_name,
+                    tool_input,
+                    expand_config,
+                    branch_id=branch_id,
                 )
             if sem is not None:
                 coro = _semaphored(sem, coro)
@@ -1332,11 +1360,18 @@ class McpService(BaseService):
         for a, project in projects.items():
             if server_url:
                 coro = _http_call_tool(
-                    server_url, project, tool_name, tool_input, branch_id=branch_id,
+                    server_url,
+                    project,
+                    tool_name,
+                    tool_input,
+                    branch_id=branch_id,
                 )
             else:
                 coro = _connect_and_call_tool(
-                    project, tool_name, tool_input, branch_id=branch_id,
+                    project,
+                    tool_name,
+                    tool_input,
+                    branch_id=branch_id,
                 )
             if sem is not None:
                 coro = _semaphored(sem, coro)
@@ -1389,8 +1424,7 @@ class McpService(BaseService):
         if is_uvx_fallback:
             status = "warn"
             message += (
-                ". For faster startup, run: "
-                "uv tool install --prerelease=allow keboola-mcp-server"
+                ". For faster startup, run: uv tool install --prerelease=allow keboola-mcp-server"
             )
 
         return {

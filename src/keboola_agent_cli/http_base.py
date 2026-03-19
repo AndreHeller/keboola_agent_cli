@@ -116,7 +116,12 @@ class BaseHttpClient:
                         delay = BACKOFF_BASE * (2**attempt)
                     logger.debug(
                         "Retry attempt %d/%d for %s %s (status %d), delay %.1fs",
-                        attempt + 1, MAX_RETRIES, method, path, response.status_code, delay,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        method,
+                        path,
+                        response.status_code,
+                        delay,
                     )
                     time.sleep(delay)
                     last_response = response
@@ -129,7 +134,11 @@ class BaseHttpClient:
                     delay = BACKOFF_BASE * (2**attempt)
                     logger.debug(
                         "Retry attempt %d/%d for %s %s (timeout), delay %.1fs",
-                        attempt + 1, MAX_RETRIES, method, path, delay,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        method,
+                        path,
+                        delay,
                     )
                     time.sleep(delay)
                     continue
@@ -145,7 +154,11 @@ class BaseHttpClient:
                     delay = BACKOFF_BASE * (2**attempt)
                     logger.debug(
                         "Retry attempt %d/%d for %s %s (connection error), delay %.1fs",
-                        attempt + 1, MAX_RETRIES, method, path, delay,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        method,
+                        path,
+                        delay,
                     )
                     time.sleep(delay)
                     continue

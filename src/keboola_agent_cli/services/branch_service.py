@@ -117,9 +117,7 @@ class BranchService(BaseService):
             all_branches.extend(branches)
 
         # Sort for deterministic output
-        all_branches.sort(
-            key=lambda b: (b["project_alias"], b.get("id", 0))
-        )
+        all_branches.sort(key=lambda b: (b["project_alias"], b.get("id", 0)))
         errors.sort(key=lambda e: e.get("project_alias", ""))
 
         return {
@@ -172,8 +170,7 @@ class BranchService(BaseService):
             "created": branch_data.get("created", ""),
             "activated": True,
             "message": (
-                f"Branch '{name}' (ID: {branch_id}) created and activated "
-                f"for project '{alias}'."
+                f"Branch '{name}' (ID: {branch_id}) created and activated for project '{alias}'."
             ),
         }
 
@@ -223,8 +220,7 @@ class BranchService(BaseService):
             "branch_id": branch_id,
             "branch_name": branch_name,
             "message": (
-                f"Active branch set to '{branch_name}' (ID: {branch_id}) "
-                f"for project '{alias}'."
+                f"Active branch set to '{branch_name}' (ID: {branch_id}) for project '{alias}'."
             ),
         }
 
@@ -248,9 +244,7 @@ class BranchService(BaseService):
         return {
             "project_alias": alias,
             "previous_branch_id": previous_branch,
-            "message": (
-                f"Active branch reset to main for project '{alias}'."
-            ),
+            "message": (f"Active branch reset to main for project '{alias}'."),
         }
 
     def delete_branch(self, alias: str, branch_id: int) -> dict[str, Any]:

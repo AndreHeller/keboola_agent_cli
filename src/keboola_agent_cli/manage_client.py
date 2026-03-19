@@ -84,7 +84,5 @@ class ManageClient(BaseHttpClient):
             "canManageBuckets": can_manage_buckets,
             "canReadAllFileUploads": can_read_all_file_uploads,
         }
-        response = self._do_request(
-            "POST", f"/manage/projects/{project_id}/tokens", json=payload
-        )
+        response = self._do_request("POST", f"/manage/projects/{project_id}/tokens", json=payload)
         return response.json()

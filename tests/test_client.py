@@ -925,8 +925,20 @@ class TestGetJobDetail:
 
 
 SAMPLE_DEV_BRANCHES = [
-    {"id": 123, "name": "main", "isDefault": True, "created": "2025-01-01T00:00:00Z", "description": ""},
-    {"id": 456, "name": "feature-x", "isDefault": False, "created": "2025-06-15T10:30:00Z", "description": "Feature"},
+    {
+        "id": 123,
+        "name": "main",
+        "isDefault": True,
+        "created": "2025-01-01T00:00:00Z",
+        "description": "",
+    },
+    {
+        "id": 456,
+        "name": "feature-x",
+        "isDefault": False,
+        "created": "2025-06-15T10:30:00Z",
+        "description": "Feature",
+    },
 ]
 
 
@@ -996,9 +1008,7 @@ SAMPLE_BUCKETS_WITH_SHARING = [
         "name": "Shared",
         "stage": "in",
         "sharing": "organization-project",
-        "linkedBy": [
-            {"id": "in.c-linked", "project": {"id": 7012, "name": "Target"}}
-        ],
+        "linkedBy": [{"id": "in.c-linked", "project": {"id": 7012, "name": "Target"}}],
     },
 ]
 
@@ -1365,9 +1375,7 @@ class TestQueueUrlWarning:
     def test_non_standard_url_warns(self) -> None:
         """Non-standard URL without 'connection.' in hostname logs warning."""
 
-        with patch(
-            "keboola_agent_cli.client.logger"
-        ) as mock_logger:
+        with patch("keboola_agent_cli.client.logger") as mock_logger:
             client = KeboolaClient(
                 stack_url="https://custom.keboola.com",
                 token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
@@ -1380,9 +1388,7 @@ class TestQueueUrlWarning:
 
     def test_standard_url_no_warning(self) -> None:
         """Standard URL with 'connection.' in hostname does not log warning."""
-        with patch(
-            "keboola_agent_cli.client.logger"
-        ) as mock_logger:
+        with patch("keboola_agent_cli.client.logger") as mock_logger:
             client = KeboolaClient(
                 stack_url="https://connection.keboola.com",
                 token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
@@ -1443,6 +1449,7 @@ class TestCreateDevBranch:
             # Verify the POST request body contained the description
             request = httpx_mock.get_requests()[0]
             import json
+
             body = json.loads(request.content)
             assert body["name"] == "my-feature"
             assert body["description"] == "A feature branch"
@@ -1474,10 +1481,14 @@ class TestCreateDevBranch:
         )
 
         from unittest.mock import patch
-        with patch("keboola_agent_cli.client.time.sleep"), KeboolaClient(
-            stack_url="https://connection.keboola.com",
-            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
-        ) as client:
+
+        with (
+            patch("keboola_agent_cli.client.time.sleep"),
+            KeboolaClient(
+                stack_url="https://connection.keboola.com",
+                token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+            ) as client,
+        ):
             result = client.create_dev_branch("polled-branch")
             assert result["id"] == 555
 

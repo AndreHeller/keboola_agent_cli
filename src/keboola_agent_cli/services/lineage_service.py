@@ -210,13 +210,9 @@ class LineageService(BaseService):
                             "source_project_id": project.project_id,
                             "source_project_name": project.project_name,
                             "source_bucket_id": bucket.get("id", ""),
-                            "source_bucket_name": bucket.get(
-                                "name", bucket.get("displayName", "")
-                            ),
+                            "source_bucket_name": bucket.get("name", bucket.get("displayName", "")),
                             "sharing_type": sharing,
-                            "target_project_alias": project_id_to_alias.get(
-                                target_project_id, ""
-                            ),
+                            "target_project_alias": project_id_to_alias.get(target_project_id, ""),
                             "target_project_id": target_project_id,
                             "target_project_name": target_project.get("name", ""),
                             "target_bucket_id": target_bucket_id,
@@ -253,9 +249,7 @@ class LineageService(BaseService):
                 edge = edges_by_key.get(edge_key, {})
                 # Only set fields that are empty or missing
                 if not edge.get("source_project_alias"):
-                    edge["source_project_alias"] = project_id_to_alias.get(
-                        source_project_id, ""
-                    )
+                    edge["source_project_alias"] = project_id_to_alias.get(source_project_id, "")
                 if not edge.get("source_project_id"):
                     edge["source_project_id"] = source_project_id
                 if not edge.get("source_project_name"):

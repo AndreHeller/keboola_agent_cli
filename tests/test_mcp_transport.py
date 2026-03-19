@@ -227,9 +227,7 @@ class TestHttpTransportFunctions:
 class TestMcpServiceTransportSelection:
     """Tests for McpService._get_server_url() transport selection."""
 
-    def test_stdio_mode_returns_none(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_stdio_mode_returns_none(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         """In stdio mode, _get_server_url() returns None."""
         monkeypatch.setenv("KBAGENT_MCP_TRANSPORT", "stdio")
         from keboola_agent_cli.config_store import ConfigStore

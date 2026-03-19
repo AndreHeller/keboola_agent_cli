@@ -586,9 +586,7 @@ def format_lineage_table(console: Console, data: dict[str, Any]) -> None:
         if linked_buckets:
             _render_linked_buckets_table(console, linked_buckets)
     elif not errors:
-        console.print(
-            "\nNo bucket sharing detected across queried projects."
-        )
+        console.print("\nNo bucket sharing detected across queried projects.")
 
 
 def _render_lineage_summary(console: Console, summary: dict[str, Any]) -> None:
@@ -733,9 +731,7 @@ def format_branches_table(console: Console, data: dict[str, Any]) -> None:
         active_id = active_branches.get(alias)
         # Compare as int to handle potential type mismatch from API
         is_active = (
-            branch_id is not None
-            and active_id is not None
-            and int(branch_id) == int(active_id)
+            branch_id is not None and active_id is not None and int(branch_id) == int(active_id)
         )
         active_display = "[bold green]>>>[/bold green]" if is_active else ""
 
@@ -788,3 +784,96 @@ def format_doctor_panel(console: Console, data: dict[str, Any]) -> None:
     lines.append(f"  Summary: {', '.join(parts)}")
 
     console.print(Panel("\n".join(lines), title="kbagent doctor", expand=False))
+
+
+def format_workspaces_table(console: Console, data: dict[str, Any]) -> None:
+    """Render a Rich table of workspaces grouped by project alias.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with "workspaces" and "errors" lists.
+    """
+    workspaces = data.get("workspaces", [])
+    errors = data.get("errors", [])
+
+    for err in errors:
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Project [bold]{err['project_alias']}[/bold]: "
+            f"{err['message']}"
+        )
+
+    if not workspaces:
+        if not errors:
+            console.print(
+                "No workspaces found. Use [bold]kbagent workspace create[/bold] to create one."
+            )
+        else:
+            console.print("No workspaces retrieved (all projects failed).")
+        return
+
+    table = Table(title="Workspaces")
+    table.add_column("Project", style="bold magenta")
+    table.add_column("ID", justify="right")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Backend")
+    table.add_column("Schema")
+    table.add_column("Created", style="dim")
+
+    prev_alias = None
+    for ws in workspaces:
+        alias = ws.get("project_alias", "unknown")
+        display_alias = alias if alias != prev_alias else ""
+        prev_alias = alias
+
+        table.add_row(
+            display_alias,
+            str(ws.get("workspace_id", ws.get("id", ""))),
+            ws.get("name", ""),
+            ws.get("backend", ""),
+            ws.get("schema", ""),
+            ws.get("created", ""),
+        )
+
+    console.print(table)
+    console.print()
+
+
+def format_query_results(console: Console, data: dict[str, Any]) -> None:
+    """Render SQL query results.
+
+    Shows query status and CSV results for each statement.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with query execution results.
+    """
+    alias = data.get("project_alias", "unknown")
+    workspace_id = data.get("workspace_id", "")
+    status = data.get("status", "unknown")
+
+    lines = [
+        f"[bold]Project:[/bold] {alias}",
+        f"[bold]Workspace:[/bold] {workspace_id}",
+        f"[bold]Status:[/bold] {status}",
+    ]
+
+    statements = data.get("statements", [])
+    for i, stmt in enumerate(statements):
+        lines.append(f"\n[bold]Statement {i + 1}:[/bold]")
+        lines.append(f"  Status: {stmt.get('status', 'unknown')}")
+        rows = stmt.get("rows_affected", 0)
+        lines.append(f"  Rows: {rows}")
+
+        csv_data = stmt.get("csv_data", "")
+        if csv_data:
+            # Show first few lines of CSV
+            csv_lines = csv_data.strip().split("\n")
+            preview_count = min(len(csv_lines), 11)  # header + 10 rows
+            lines.append("  [bold]Results:[/bold]")
+            for csv_line in csv_lines[:preview_count]:
+                lines.append(f"    {csv_line}")
+            if len(csv_lines) > preview_count:
+                lines.append(f"    ... ({len(csv_lines) - preview_count} more rows)")
+
+    panel = Panel("\n".join(lines), title=f"Query Results - Workspace {workspace_id}", expand=False)
+    console.print(panel)

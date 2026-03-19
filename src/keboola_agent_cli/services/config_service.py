@@ -126,9 +126,7 @@ class ConfigService(BaseService):
             all_configs.extend(configs)
 
         # Sort for deterministic output
-        all_configs.sort(
-            key=lambda c: (c["project_alias"], c["component_id"], c["config_id"])
-        )
+        all_configs.sort(key=lambda c: (c["project_alias"], c["component_id"], c["config_id"]))
         errors.sort(key=lambda e: e.get("project_alias", ""))
 
         return {"configs": all_configs, "errors": errors}

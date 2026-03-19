@@ -123,6 +123,7 @@ class TestListBranchesWithError:
 
     def test_list_branches_one_project_fails(self, tmp_config_dir: Path) -> None:
         """When one project fails, the other still returns results."""
+
         def make_client(url: str, token: str) -> MagicMock:
             mock = MagicMock()
             if token == "901-xxx":
@@ -410,8 +411,7 @@ class TestGetMergeUrl:
         result = svc.get_merge_url(alias="prod", branch_id=456)
 
         expected_url = (
-            "https://connection.keboola.com/admin/projects/258"
-            "/branch/456/development-overview"
+            "https://connection.keboola.com/admin/projects/258/branch/456/development-overview"
         )
         assert result["url"] == expected_url
         assert result["project_alias"] == "prod"
@@ -427,8 +427,7 @@ class TestGetMergeUrl:
         result = svc.get_merge_url(alias="prod")
 
         expected_url = (
-            "https://connection.keboola.com/admin/projects/258"
-            "/branch/789/development-overview"
+            "https://connection.keboola.com/admin/projects/258/branch/789/development-overview"
         )
         assert result["url"] == expected_url
         assert result["branch_id"] == 789

@@ -129,7 +129,9 @@ class BaseService:
                 except Exception as exc:
                     proj_alias = future_to_alias[future]
                     logger.debug(
-                        "Worker error for project '%s': %s", proj_alias, exc,
+                        "Worker error for project '%s': %s",
+                        proj_alias,
+                        exc,
                     )
                     errors.append(
                         {

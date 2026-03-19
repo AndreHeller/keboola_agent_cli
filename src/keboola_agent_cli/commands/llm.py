@@ -76,9 +76,11 @@ def llm_export(
     if formatter.json_mode:
         projects = kbc_service.resolve_projects([project] if project else None)
         resolved_alias = next(iter(projects.keys()))
-        formatter.output({
-            "message": f"LLM export completed for project '{resolved_alias}'",
-            "output_dir": str(resolved_alias),
-        })
+        formatter.output(
+            {
+                "message": f"LLM export completed for project '{resolved_alias}'",
+                "output_dir": str(resolved_alias),
+            }
+        )
     else:
         formatter.console.print("[bold green]LLM export completed successfully.[/bold green]")

@@ -146,7 +146,9 @@ class TestDetectMcpServerCommand:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_local_install_preferred(self, mock_which: MagicMock) -> None:
         """When keboola_mcp_server is locally installed, returns it (fastest)."""
-        mock_which.side_effect = lambda cmd: "/usr/local/bin/keboola_mcp_server" if cmd == "keboola_mcp_server" else None
+        mock_which.side_effect = lambda cmd: (
+            "/usr/local/bin/keboola_mcp_server" if cmd == "keboola_mcp_server" else None
+        )
         result = detect_mcp_server_command()
         assert result == ["keboola_mcp_server"]
 
@@ -154,6 +156,7 @@ class TestDetectMcpServerCommand:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_python_module_second(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         """When python is available and module exists, returns python -m."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "python":
                 return "/usr/bin/python"
@@ -168,9 +171,12 @@ class TestDetectMcpServerCommand:
     @patch("keboola_agent_cli.services.mcp_service.subprocess.run")
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_python_module_not_installed_falls_to_uvx(
-        self, mock_which: MagicMock, mock_run: MagicMock,
+        self,
+        mock_which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         """When python exists but module not installed, falls back to uvx."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd in ("python", "uvx"):
                 return f"/usr/bin/{cmd}"
@@ -198,6 +204,7 @@ class TestDetectMcpServerCommand:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_local_install_preferred_over_uvx(self, mock_which: MagicMock) -> None:
         """Local install is preferred even when uvx is also available."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd in ("keboola_mcp_server", "uvx"):
                 return f"/usr/local/bin/{cmd}"
@@ -349,9 +356,7 @@ class TestMcpServiceListTools:
         assert create_tool["multi_project"] is False
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_list_tools_all_projects_fail(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_list_tools_all_projects_fail(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When all projects fail, list_tools returns empty tools and accumulated errors."""
         mock_run.side_effect = RuntimeError("Connection refused")
 
@@ -449,12 +454,22 @@ class TestMcpServiceCallTool:
         # so we can test the routing logic without a real event loop.
         expected = {
             "results": [
-                {"content": [{"configs": ["cfg1", "cfg2"]}], "isError": False, "project_alias": "prod"},
-                {"content": [{"configs": ["cfg1", "cfg2"]}], "isError": False, "project_alias": "dev"},
+                {
+                    "content": [{"configs": ["cfg1", "cfg2"]}],
+                    "isError": False,
+                    "project_alias": "prod",
+                },
+                {
+                    "content": [{"configs": ["cfg1", "cfg2"]}],
+                    "isError": False,
+                    "project_alias": "dev",
+                },
             ],
             "errors": [],
         }
-        with patch.object(svc, "_gather_read_results", new_callable=AsyncMock, return_value=expected):
+        with patch.object(
+            svc, "_gather_read_results", new_callable=AsyncMock, return_value=expected
+        ):
             result = svc.call_tool("list_configs", {"component_id": "keboola.ex-db-mysql"})
 
         assert len(result["results"]) == 2
@@ -491,9 +506,7 @@ class TestMcpServiceCallTool:
         assert result["results"][0]["project_alias"] == "prod"
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_call_write_tool_single_project(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_call_write_tool_single_project(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Write tools execute on a single project only."""
         mock_run.return_value = {
             "content": [{"created": True}],
@@ -514,9 +527,7 @@ class TestMcpServiceCallTool:
         assert result["errors"] == []
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_call_write_tool_with_explicit_alias(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_call_write_tool_with_explicit_alias(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Write tools use the explicit alias when provided."""
         mock_run.return_value = {
             "content": [{"deleted": True}],
@@ -625,9 +636,7 @@ class TestMcpServiceErrorAccumulation:
         assert "Connection timeout" in result["errors"][0]["message"]
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_write_tool_failure_returns_error(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_write_tool_failure_returns_error(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When a write tool fails, the error is captured in the errors list."""
         mock_run.side_effect = RuntimeError("MCP server crashed")
 
@@ -674,6 +683,7 @@ class TestCheckServerAvailable:
         self, mock_which: MagicMock, tmp_path: Path
     ) -> None:
         """When keboola_mcp_server is directly available, status is 'pass'."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "keboola_mcp_server":
                 return "/usr/local/bin/keboola_mcp_server"
@@ -694,6 +704,7 @@ class TestCheckServerAvailable:
         self, mock_which: MagicMock, mock_run: MagicMock, tmp_path: Path
     ) -> None:
         """When only python is available and module exists, status is 'pass'."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "python":
                 return "/usr/bin/python"
@@ -736,9 +747,12 @@ class TestEnsureMcpInstalled:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_binary_already_available(self, mock_which: MagicMock) -> None:
         """When binary is already in PATH, no installation needed."""
-        mock_which.side_effect = lambda cmd: "/usr/local/bin/keboola_mcp_server" if cmd == "keboola_mcp_server" else None
+        mock_which.side_effect = lambda cmd: (
+            "/usr/local/bin/keboola_mcp_server" if cmd == "keboola_mcp_server" else None
+        )
 
         from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+
         result = ensure_mcp_installed()
 
         assert result["method"] == "binary"
@@ -748,6 +762,7 @@ class TestEnsureMcpInstalled:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_python_module_available(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         """When python module is available, no installation needed."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "python":
                 return "/usr/bin/python"
@@ -757,6 +772,7 @@ class TestEnsureMcpInstalled:
         mock_run.return_value = MagicMock(returncode=0)
 
         from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+
         result = ensure_mcp_installed()
 
         assert result["method"] == "python_module"
@@ -766,6 +782,7 @@ class TestEnsureMcpInstalled:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_uv_tool_install_success(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
         """When only uv is available, runs uv tool install successfully."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "uv":
                 return "/usr/local/bin/uv"
@@ -781,6 +798,7 @@ class TestEnsureMcpInstalled:
         ]
 
         from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+
         result = ensure_mcp_installed()
 
         assert result["method"] == "uv_tool_install"
@@ -789,6 +807,7 @@ class TestEnsureMcpInstalled:
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_uvx_fallback(self, mock_which: MagicMock) -> None:
         """When only uvx is available (no uv), returns fallback message."""
+
         def which_side_effect(cmd: str) -> str | None:
             if cmd == "uvx":
                 return "/usr/local/bin/uvx"
@@ -797,6 +816,7 @@ class TestEnsureMcpInstalled:
         mock_which.side_effect = which_side_effect
 
         from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+
         result = ensure_mcp_installed()
 
         assert result["method"] == "uvx_fallback"
@@ -809,6 +829,7 @@ class TestEnsureMcpInstalled:
         mock_which.return_value = None
 
         from keboola_agent_cli.services.mcp_service import ensure_mcp_installed
+
         result = ensure_mcp_installed()
 
         assert result["method"] == "not_found"
@@ -873,9 +894,7 @@ class TestUnknownToolName:
     """Tests for Phase 6: Unknown MCP tool name validation."""
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_unknown_tool_name_error(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_unknown_tool_name_error(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Calling a nonexistent tool raises ConfigError with a clear message."""
         mock_run.return_value = _sample_tools()
 
@@ -889,9 +908,7 @@ class TestUnknownToolName:
             svc.call_tool("nonexistent_tool", {})
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_known_tool_name_passes_validation(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_known_tool_name_passes_validation(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Calling a known tool does not raise ConfigError for tool name."""
         call_count = 0
         tools = _sample_tools()
@@ -1069,9 +1086,7 @@ class TestCallToolWithBranch:
         assert result["results"][0]["project_alias"] == "prod"
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_tool_list_with_branch(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_tool_list_with_branch(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """list_tools with branch_id passes it through to MCP server."""
         mock_run.return_value = _sample_tools()
 
@@ -1097,9 +1112,7 @@ class TestValidateToolInputReturnsTuple:
     """Tests that validate_tool_input returns (missing_params, known_tool_names)."""
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_returns_tuple_with_known_tools(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_returns_tuple_with_known_tools(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """validate_tool_input returns a tuple of (missing, known_tools)."""
         tools = [
             {
@@ -1119,9 +1132,7 @@ class TestValidateToolInputReturnsTuple:
         ]
         mock_run.return_value = tools
 
-        store = _setup_store(
-            tmp_path, projects={"prod": {"token": "tok-prod"}}
-        )
+        store = _setup_store(tmp_path, projects={"prod": {"token": "tok-prod"}})
         svc = McpService(config_store=store)
 
         missing, known = svc.validate_tool_input("list_configs", {})
@@ -1129,9 +1140,7 @@ class TestValidateToolInputReturnsTuple:
         assert known == {"list_configs", "create_config"}
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_no_missing_when_all_provided(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_no_missing_when_all_provided(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When all required params are provided, missing list is empty."""
         tools = [
             {
@@ -1146,9 +1155,7 @@ class TestValidateToolInputReturnsTuple:
         ]
         mock_run.return_value = tools
 
-        store = _setup_store(
-            tmp_path, projects={"prod": {"token": "tok-prod"}}
-        )
+        store = _setup_store(tmp_path, projects={"prod": {"token": "tok-prod"}})
         svc = McpService(config_store=store)
 
         missing, known = svc.validate_tool_input(
@@ -1158,15 +1165,11 @@ class TestValidateToolInputReturnsTuple:
         assert "list_configs" in known
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_unknown_tool_returns_empty_missing(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_unknown_tool_returns_empty_missing(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Unknown tool name returns empty missing and known tools set."""
         mock_run.return_value = _sample_tools()
 
-        store = _setup_store(
-            tmp_path, projects={"prod": {"token": "tok-prod"}}
-        )
+        store = _setup_store(tmp_path, projects={"prod": {"token": "tok-prod"}})
         svc = McpService(config_store=store)
 
         missing, known = svc.validate_tool_input("nonexistent_tool", {})
@@ -1183,9 +1186,7 @@ class TestCallToolWithKnownTools:
     """Tests that call_tool skips list_tools when _known_tools is provided."""
 
     @patch("keboola_agent_cli.services.mcp_service.asyncio.run")
-    def test_known_tools_skips_list_tools(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_known_tools_skips_list_tools(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """When _known_tools is provided, call_tool does not call list_tools."""
         mock_run.return_value = {
             "content": [{"created": True}],
@@ -1292,10 +1293,7 @@ class TestSemaphoredHelper:
                 current -= 1
             return task_id
 
-        tasks = [
-            asyncio.create_task(_semaphored(sem, tracked_task(i)))
-            for i in range(10)
-        ]
+        tasks = [asyncio.create_task(_semaphored(sem, tracked_task(i))) for i in range(10)]
         results = await asyncio.gather(*tasks)
 
         assert sorted(results) == list(range(10))

@@ -13,7 +13,9 @@ class ProjectConfig(BaseModel):
     project_name: str = Field(
         default="", description="Human-readable project name (populated on add)"
     )
-    project_id: int | None = Field(default=None, description="Keboola project ID (populated on add)")
+    project_id: int | None = Field(
+        default=None, description="Keboola project ID (populated on add)"
+    )
     active_branch_id: int | None = Field(
         default=None,
         description="Active development branch ID (None = main/production branch)",

@@ -7,6 +7,7 @@ mapping are encapsulated here.
 Inherits shared retry/error logic from BaseHttpClient.
 """
 
+import json
 import logging
 import time
 from typing import Any
@@ -18,6 +19,8 @@ from . import __version__
 from .constants import (
     DEFAULT_JOB_LIMIT,
     DEFAULT_TIMEOUT,
+    QUERY_JOB_MAX_WAIT,
+    QUERY_JOB_POLL_INTERVAL,
     STORAGE_JOB_MAX_WAIT,
     STORAGE_JOB_POLL_INTERVAL,
 )
@@ -51,6 +54,7 @@ class KeboolaClient(BaseHttpClient):
             timeout=DEFAULT_TIMEOUT,
         )
         self._queue_client: httpx.Client | None = None
+        self._query_client: httpx.Client | None = None
 
     @property
     def _queue_base_url(self) -> str:
@@ -66,11 +70,27 @@ class KeboolaClient(BaseHttpClient):
             logger.warning("Queue URL derivation did not change hostname: %s", hostname)
         return urlunparse(parsed._replace(netloc=queue_host))
 
+    @property
+    def _query_base_url(self) -> str:
+        """Derive Query Service base URL from the Storage API URL.
+
+        Replaces 'connection.' with 'query.' in the hostname.
+        E.g. https://connection.keboola.com -> https://query.keboola.com
+        """
+        parsed = urlparse(self._stack_url)
+        hostname = parsed.hostname or ""
+        query_host = hostname.replace("connection.", "query.", 1)
+        if query_host == hostname:
+            logger.warning("Query URL derivation did not change hostname: %s", hostname)
+        return urlunparse(parsed._replace(netloc=query_host))
+
     def close(self) -> None:
         """Close the underlying HTTP clients."""
         super().close()
         if self._queue_client is not None:
             self._queue_client.close()
+        if self._query_client is not None:
+            self._query_client.close()
 
     def __enter__(self) -> "KeboolaClient":
         return self
@@ -91,9 +111,26 @@ class KeboolaClient(BaseHttpClient):
                 headers=self._client._headers.copy(),
             )
         return self._do_request(
-            method, path,
+            method,
+            path,
             client=self._queue_client,
             base_url=self._queue_base_url,
+            **kwargs,
+        )
+
+    def _query_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Execute a Query Service request with retry. Lazily creates the query client."""
+        if self._query_client is None:
+            self._query_client = httpx.Client(
+                base_url=self._query_base_url,
+                timeout=DEFAULT_TIMEOUT,
+                headers=self._client._headers.copy(),
+            )
+        return self._do_request(
+            method,
+            path,
+            client=self._query_client,
+            base_url=self._query_base_url,
             **kwargs,
         )
 
@@ -295,3 +332,340 @@ class KeboolaClient(BaseHttpClient):
         safe_job_id = quote(job_id, safe="")
         response = self._queue_request("GET", f"/jobs/{safe_job_id}")
         return response.json()
+
+    # --- Queue Job Creation ---
+
+    def create_job(
+        self,
+        component_id: str,
+        config_id: str,
+        config_data: dict[str, Any] | None = None,
+        mode: str = "run",
+    ) -> dict[str, Any]:
+        """Create and run a Queue API job.
+
+        Args:
+            component_id: Component ID (e.g. keboola.sandboxes).
+            config_id: Configuration ID.
+            config_data: Optional runtime config data override.
+            mode: Job mode (default: run).
+
+        Returns:
+            Job dict from the Queue API.
+        """
+        body: dict[str, Any] = {
+            "component": component_id,
+            "config": config_id,
+            "mode": mode,
+        }
+        if config_data:
+            body["configData"] = config_data
+        response = self._queue_request("POST", "/jobs", json=body)
+        return response.json()
+
+    def wait_for_queue_job(self, job_id: str) -> dict[str, Any]:
+        """Poll a Queue API job until it reaches a terminal state.
+
+        Args:
+            job_id: The Queue job ID.
+
+        Returns:
+            Completed job dict.
+
+        Raises:
+            KeboolaApiError: If the job fails or times out.
+        """
+        deadline = time.monotonic() + STORAGE_JOB_MAX_WAIT
+        while time.monotonic() < deadline:
+            job = self.get_job_detail(job_id)
+            if job.get("isFinished"):
+                if job.get("status") == "error":
+                    result = job.get("result", {})
+                    error_msg = (
+                        result.get("message", "Queue job failed")
+                        if isinstance(result, dict)
+                        else "Queue job failed"
+                    )
+                    raise KeboolaApiError(
+                        message=f"Queue job {job_id} failed: {error_msg}",
+                        status_code=500,
+                        error_code="QUEUE_JOB_FAILED",
+                        retryable=False,
+                    )
+                return job
+            time.sleep(STORAGE_JOB_POLL_INTERVAL)
+
+        raise KeboolaApiError(
+            message=f"Queue job {job_id} did not complete within {STORAGE_JOB_MAX_WAIT}s",
+            status_code=504,
+            error_code="QUEUE_JOB_TIMEOUT",
+            retryable=True,
+        )
+
+    # --- Workspace CRUD ---
+
+    def create_workspace(
+        self,
+        backend: str = "snowflake",
+        read_only: bool = True,
+    ) -> dict[str, Any]:
+        """Create a new workspace.
+
+        Args:
+            backend: Workspace backend (snowflake, bigquery, etc.).
+            read_only: Whether the workspace is read-only.
+
+        Returns:
+            Workspace dict including connection credentials (password only available on creation).
+        """
+        body: dict[str, Any] = {"backend": backend}
+        if read_only:
+            body["readOnlyStorageAccess"] = True
+        response = self._request("POST", "/v2/storage/workspaces", json=body)
+        return response.json()
+
+    def list_workspaces(self) -> list[dict[str, Any]]:
+        """List all workspaces in the project."""
+        response = self._request("GET", "/v2/storage/workspaces")
+        return response.json()
+
+    def get_workspace(self, workspace_id: int) -> dict[str, Any]:
+        """Get workspace details (note: password is NOT included)."""
+        response = self._request("GET", f"/v2/storage/workspaces/{workspace_id}")
+        return response.json()
+
+    def delete_workspace(self, workspace_id: int) -> None:
+        """Delete a workspace (synchronous)."""
+        self._request("DELETE", f"/v2/storage/workspaces/{workspace_id}")
+
+    def reset_workspace_password(self, workspace_id: int) -> dict[str, Any]:
+        """Reset workspace password. Returns new password."""
+        response = self._request("POST", f"/v2/storage/workspaces/{workspace_id}/password")
+        return response.json()
+
+    def create_sandbox_config(
+        self,
+        name: str,
+        description: str = "",
+        backend_size: str = "small",
+    ) -> dict[str, Any]:
+        """Create a keboola.sandboxes configuration.
+
+        This is needed to make workspaces visible in the Keboola UI.
+        The UI only shows workspaces tied to a sandboxes config.
+
+        Args:
+            name: Human-readable name for the workspace.
+            description: Optional description.
+            backend_size: Backend size (small, medium, large).
+
+        Returns:
+            Configuration dict with id, name, etc.
+        """
+        config = {
+            "parameters": {
+                "runtime": {"shared": False},
+                "storage": {"input": {"tables": []}, "output": {"tables": []}},
+                "parameters": {"id": "", "blocks": []},
+                "backendSize": backend_size,
+            },
+            "runtime": {"shared": False},
+        }
+        response = self._request(
+            "POST",
+            "/v2/storage/components/keboola.sandboxes/configs",
+            data={
+                "name": name,
+                "description": description,
+                "configuration": json.dumps(config),
+            },
+        )
+        return response.json()
+
+    def delete_config(self, component_id: str, config_id: str) -> None:
+        """Delete a component configuration.
+
+        Args:
+            component_id: Component ID.
+            config_id: Configuration ID.
+        """
+        safe_component = quote(component_id, safe="")
+        safe_config = quote(config_id, safe="")
+        self._request(
+            "DELETE",
+            f"/v2/storage/components/{safe_component}/configs/{safe_config}",
+        )
+
+    def create_config_workspace(
+        self,
+        branch_id: int,
+        component_id: str,
+        config_id: str,
+        backend: str = "snowflake",
+    ) -> dict[str, Any]:
+        """Create a workspace tied to a specific configuration.
+
+        Args:
+            branch_id: Branch ID (use main branch ID for production).
+            component_id: Component ID (e.g. keboola.snowflake-transformation).
+            config_id: Configuration ID.
+            backend: Workspace backend.
+
+        Returns:
+            Workspace dict including connection credentials.
+        """
+        safe_component = quote(component_id, safe="")
+        safe_config = quote(config_id, safe="")
+        response = self._request(
+            "POST",
+            f"/v2/storage/branch/{branch_id}/components/{safe_component}/configs/{safe_config}/workspaces",
+            json={"backend": backend},
+        )
+        return response.json()
+
+    def list_config_workspaces(
+        self,
+        branch_id: int,
+        component_id: str,
+        config_id: str,
+    ) -> list[dict[str, Any]]:
+        """List workspaces tied to a specific configuration."""
+        safe_component = quote(component_id, safe="")
+        safe_config = quote(config_id, safe="")
+        response = self._request(
+            "GET",
+            f"/v2/storage/branch/{branch_id}/components/{safe_component}/configs/{safe_config}/workspaces",
+        )
+        return response.json()
+
+    def load_workspace_tables(
+        self,
+        workspace_id: int,
+        tables: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Load tables into a workspace (async operation).
+
+        Args:
+            workspace_id: Target workspace ID.
+            tables: List of table load definitions, each with at minimum:
+                - source: table ID (e.g. "in.c-bucket.table")
+                - destination: target table name in workspace
+
+        Returns:
+            Completed storage job dict (polls until done).
+
+        Raises:
+            KeboolaApiError: If the load job fails or times out.
+        """
+        body: dict[str, Any] = {"input": tables}
+        response = self._request(
+            "POST",
+            f"/v2/storage/workspaces/{workspace_id}/load",
+            json=body,
+        )
+        return self._wait_for_storage_job(response.json())
+
+    # --- Query Service ---
+
+    def submit_query(
+        self,
+        branch_id: int,
+        workspace_id: int,
+        statements: list[str],
+        transactional: bool = False,
+    ) -> dict[str, Any]:
+        """Submit SQL statements to the Query Service.
+
+        Args:
+            branch_id: Branch ID.
+            workspace_id: Workspace ID.
+            statements: List of SQL statements to execute.
+            transactional: Whether to wrap in a transaction.
+
+        Returns:
+            Query job dict with id and status.
+        """
+        body: dict[str, Any] = {
+            "statements": statements,
+            "transactional": transactional,
+        }
+        response = self._query_request(
+            "POST",
+            f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
+            json=body,
+        )
+        return response.json()
+
+    def get_query_job(self, query_job_id: str) -> dict[str, Any]:
+        """Get query job status."""
+        response = self._query_request("GET", f"/api/v1/queries/{query_job_id}")
+        return response.json()
+
+    def export_query_results(
+        self,
+        query_job_id: str,
+        statement_id: str,
+        file_type: str = "csv",
+    ) -> str:
+        """Export query results as CSV (or other format).
+
+        Returns:
+            Raw CSV string of query results.
+        """
+        response = self._query_request(
+            "GET",
+            f"/api/v1/queries/{query_job_id}/{statement_id}/export",
+            params={"fileType": file_type},
+        )
+        return response.text
+
+    def get_query_history(
+        self,
+        branch_id: int,
+        workspace_id: int,
+    ) -> dict[str, Any]:
+        """Get query history for a workspace."""
+        response = self._query_request(
+            "GET",
+            f"/api/v1/branches/{branch_id}/workspaces/{workspace_id}/queries",
+        )
+        return response.json()
+
+    def wait_for_query_job(self, query_job_id: str) -> dict[str, Any]:
+        """Poll a Query Service job until it reaches a terminal state.
+
+        Args:
+            query_job_id: The query job ID.
+
+        Returns:
+            Completed query job dict.
+
+        Raises:
+            KeboolaApiError: If the query fails or times out.
+        """
+        deadline = time.monotonic() + QUERY_JOB_MAX_WAIT
+        while time.monotonic() < deadline:
+            job = self.get_query_job(query_job_id)
+            status = job.get("status", "")
+            if status == "completed":
+                return job
+            if status in ("error", "failed"):
+                error_msg = (
+                    job.get("error", {}).get("message", "")
+                    if isinstance(job.get("error"), dict)
+                    else str(job.get("error", "Query execution failed"))
+                )
+                raise KeboolaApiError(
+                    message=f"Query job failed: {error_msg}",
+                    status_code=500,
+                    error_code="QUERY_JOB_FAILED",
+                    retryable=False,
+                )
+            time.sleep(QUERY_JOB_POLL_INTERVAL)
+
+        raise KeboolaApiError(
+            message=f"Query job {query_job_id} did not complete within {QUERY_JOB_MAX_WAIT}s",
+            status_code=504,
+            error_code="QUERY_JOB_TIMEOUT",
+            retryable=True,
+        )

@@ -2113,7 +2113,9 @@ class TestDoctor:
 
         with (
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
-            patch("keboola_agent_cli.services.doctor_service.default_client_factory") as MockFactory,
+            patch(
+                "keboola_agent_cli.services.doctor_service.default_client_factory"
+            ) as MockFactory,
         ):
             MockStore.return_value = store
             MockFactory.return_value = mock_client
@@ -2155,7 +2157,9 @@ class TestDoctor:
 
         with (
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
-            patch("keboola_agent_cli.services.doctor_service.default_client_factory") as MockFactory,
+            patch(
+                "keboola_agent_cli.services.doctor_service.default_client_factory"
+            ) as MockFactory,
         ):
             MockStore.return_value = store
             MockFactory.return_value = fail_client
@@ -3723,7 +3727,12 @@ class TestOrgSetupBasic:
             "stack_url": "https://connection.keboola.com",
             "projects_found": 2,
             "projects_added": [
-                {"project_id": 100, "project_name": "Alpha", "alias": "alpha", "action": "would_add"},
+                {
+                    "project_id": 100,
+                    "project_name": "Alpha",
+                    "alias": "alpha",
+                    "action": "would_add",
+                },
                 {"project_id": 200, "project_name": "Beta", "alias": "beta", "action": "would_add"},
             ],
             "projects_skipped": [],
@@ -3734,7 +3743,10 @@ class TestOrgSetupBasic:
         with (
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
-            patch("keboola_agent_cli.commands.org._resolve_manage_token", return_value="manage-token-123456789012345678"),
+            patch(
+                "keboola_agent_cli.commands.org._resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
         ):
             MockStore.return_value = store
             MockOrgService.return_value = self._make_org_service_mock(result_data)
@@ -3745,8 +3757,10 @@ class TestOrgSetupBasic:
                     "--json",
                     "org",
                     "setup",
-                    "--org-id", "123",
-                    "--url", "https://connection.keboola.com",
+                    "--org-id",
+                    "123",
+                    "--url",
+                    "https://connection.keboola.com",
                     "--dry-run",
                 ],
             )
@@ -3770,8 +3784,20 @@ class TestOrgSetupBasic:
             "stack_url": "https://connection.keboola.com",
             "projects_found": 2,
             "projects_added": [
-                {"project_id": 100, "project_name": "Alpha", "alias": "alpha", "token": "901-...ab", "action": "added"},
-                {"project_id": 200, "project_name": "Beta", "alias": "beta", "token": "901-...cd", "action": "added"},
+                {
+                    "project_id": 100,
+                    "project_name": "Alpha",
+                    "alias": "alpha",
+                    "token": "901-...ab",
+                    "action": "added",
+                },
+                {
+                    "project_id": 200,
+                    "project_name": "Beta",
+                    "alias": "beta",
+                    "token": "901-...cd",
+                    "action": "added",
+                },
             ],
             "projects_skipped": [],
             "projects_failed": [],
@@ -3781,7 +3807,10 @@ class TestOrgSetupBasic:
         with (
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
-            patch("keboola_agent_cli.commands.org._resolve_manage_token", return_value="manage-token-123456789012345678"),
+            patch(
+                "keboola_agent_cli.commands.org._resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
         ):
             MockStore.return_value = store
             MockOrgService.return_value = self._make_org_service_mock(result_data)
@@ -3792,8 +3821,10 @@ class TestOrgSetupBasic:
                     "--json",
                     "org",
                     "setup",
-                    "--org-id", "123",
-                    "--url", "https://connection.keboola.com",
+                    "--org-id",
+                    "123",
+                    "--url",
+                    "https://connection.keboola.com",
                     "--yes",
                 ],
             )
@@ -3816,10 +3847,20 @@ class TestOrgSetupBasic:
             "stack_url": "https://connection.keboola.com",
             "projects_found": 2,
             "projects_added": [
-                {"project_id": 200, "project_name": "Beta", "alias": "beta", "token": "901-...cd", "action": "added"},
+                {
+                    "project_id": 200,
+                    "project_name": "Beta",
+                    "alias": "beta",
+                    "token": "901-...cd",
+                    "action": "added",
+                },
             ],
             "projects_skipped": [
-                {"project_id": 100, "project_name": "Alpha", "reason": "Already registered in config"},
+                {
+                    "project_id": 100,
+                    "project_name": "Alpha",
+                    "reason": "Already registered in config",
+                },
             ],
             "projects_failed": [],
             "dry_run": False,
@@ -3828,7 +3869,10 @@ class TestOrgSetupBasic:
         with (
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
-            patch("keboola_agent_cli.commands.org._resolve_manage_token", return_value="manage-token-123456789012345678"),
+            patch(
+                "keboola_agent_cli.commands.org._resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
         ):
             MockStore.return_value = store
             MockOrgService.return_value = self._make_org_service_mock(result_data)
@@ -3839,8 +3883,10 @@ class TestOrgSetupBasic:
                     "--json",
                     "org",
                     "setup",
-                    "--org-id", "123",
-                    "--url", "https://connection.keboola.com",
+                    "--org-id",
+                    "123",
+                    "--url",
+                    "https://connection.keboola.com",
                     "--yes",
                 ],
             )
@@ -3867,7 +3913,10 @@ class TestOrgSetupBasic:
         with (
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
-            patch("keboola_agent_cli.commands.org._resolve_manage_token", return_value="manage-token-123456789012345678"),
+            patch(
+                "keboola_agent_cli.commands.org._resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
         ):
             MockStore.return_value = store
             MockOrgService.return_value = mock_service
@@ -3878,8 +3927,10 @@ class TestOrgSetupBasic:
                     "--json",
                     "org",
                     "setup",
-                    "--org-id", "123",
-                    "--url", "https://connection.keboola.com",
+                    "--org-id",
+                    "123",
+                    "--url",
+                    "https://connection.keboola.com",
                     "--yes",
                 ],
             )
@@ -3897,7 +3948,8 @@ class TestOrgSetupBasic:
                 "--json",
                 "org",
                 "setup",
-                "--url", "https://connection.keboola.com",
+                "--url",
+                "https://connection.keboola.com",
             ],
         )
 
@@ -4548,9 +4600,7 @@ class TestBranchList:
             MockJobService.return_value = JobService(config_store=store)
 
             mock_branch = MagicMock()
-            mock_branch.list_branches.side_effect = ConfigError(
-                "Project 'nonexistent' not found."
-            )
+            mock_branch.list_branches.side_effect = ConfigError("Project 'nonexistent' not found.")
             MockBranchService.return_value = mock_branch
 
             result = runner.invoke(app, ["--json", "branch", "list", "--project", "nonexistent"])
@@ -5216,9 +5266,7 @@ class TestToolAutoResolveBranch:
         output = json.loads(result.output)
         assert output["status"] == "ok"
         # Verify the service was called with the auto-resolved branch
-        mock_mcp.list_tools.assert_called_once_with(
-            aliases=["prod"], branch_id="456"
-        )
+        mock_mcp.list_tools.assert_called_once_with(aliases=["prod"], branch_id="456")
 
     def test_tool_call_auto_resolves_active_branch(self, tmp_path: Path) -> None:
         """tool call auto-resolves active_branch_id from project config."""
@@ -5278,7 +5326,9 @@ class TestToolAutoResolveBranch:
 class TestInit:
     """Tests for `kbagent init` command."""
 
-    def test_init_creates_local_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_init_creates_local_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """init creates .kbagent/config.json in CWD."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
@@ -5319,7 +5369,9 @@ class TestInit:
         assert gitignore.is_file()
         assert ".kbagent/" in gitignore.read_text(encoding="utf-8")
 
-    def test_init_from_global_copies_projects(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_init_from_global_copies_projects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """init --from-global copies projects from global config."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)

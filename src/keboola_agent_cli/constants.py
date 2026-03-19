@@ -13,9 +13,7 @@ MAX_RETRIES: int = 3
 BACKOFF_BASE: float = 1.0  # seconds; delays: 1s, 2s, 4s
 
 # --- HTTP Timeout ---
-DEFAULT_TIMEOUT: httpx.Timeout = httpx.Timeout(
-    connect=5.0, read=30.0, write=10.0, pool=5.0
-)
+DEFAULT_TIMEOUT: httpx.Timeout = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
 # --- API Error Handling ---
 MAX_API_ERROR_LENGTH: int = 500
@@ -81,3 +79,10 @@ MCP_PYPI_URL: str = "https://pypi.org/pypi/keboola-mcp-server/json"
 # --- Domain Validation Constants ---
 VALID_COMPONENT_TYPES: list[str] = ["extractor", "writer", "transformation", "application"]
 VALID_STATUSES: list[str] = ["processing", "terminated", "cancelled", "success", "error"]
+
+# --- Query Service ---
+QUERY_JOB_POLL_INTERVAL: float = 1.0  # seconds between polls for query job status
+QUERY_JOB_MAX_WAIT: float = 120.0  # max seconds to wait for a query job
+
+# --- Workspace Defaults ---
+DEFAULT_WORKSPACE_BACKEND: str = "snowflake"

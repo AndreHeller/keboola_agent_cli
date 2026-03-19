@@ -102,9 +102,7 @@ class JobService(BaseService):
         projects = self.resolve_projects(aliases)
 
         def worker(alias: str, project: ProjectConfig) -> tuple[Any, ...]:
-            return self._fetch_project_jobs(
-                alias, project, component_id, config_id, status, limit
-            )
+            return self._fetch_project_jobs(alias, project, component_id, config_id, status, limit)
 
         successes, errors = self._run_parallel(projects, worker)
 
@@ -114,9 +112,7 @@ class JobService(BaseService):
             all_jobs.extend(jobs)
 
         # Sort for deterministic output
-        all_jobs.sort(
-            key=lambda j: (j.get("project_alias", ""), str(j.get("id", "")))
-        )
+        all_jobs.sort(key=lambda j: (j.get("project_alias", ""), str(j.get("id", ""))))
         errors.sort(key=lambda e: e.get("project_alias", ""))
 
         return {"jobs": all_jobs, "errors": errors}

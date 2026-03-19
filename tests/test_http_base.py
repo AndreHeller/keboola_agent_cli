@@ -201,7 +201,8 @@ class TestBaseHttpClientRetry:
         )
         try:
             response = base_client._do_request(
-                "GET", "/test-path",
+                "GET",
+                "/test-path",
                 client=alt_client,
                 base_url="https://queue.keboola.com",
             )

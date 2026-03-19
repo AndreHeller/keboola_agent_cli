@@ -758,7 +758,9 @@ class TestLineageParallelExecution:
         service = LineageService(config_store=store)
         assert service._resolve_max_workers() == 20
 
-    def test_env_var_overrides_config(self, tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_var_overrides_config(
+        self, tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """KBAGENT_MAX_PARALLEL_WORKERS env var overrides config.json value."""
         store = setup_single_project(tmp_config_dir)
         config = store.load()
@@ -769,7 +771,9 @@ class TestLineageParallelExecution:
         service = LineageService(config_store=store)
         assert service._resolve_max_workers() == 25
 
-    def test_invalid_env_var_falls_back_to_config(self, tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_invalid_env_var_falls_back_to_config(
+        self, tmp_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Invalid env var value falls back to config.json."""
         store = setup_single_project(tmp_config_dir)
         config = store.load()

@@ -40,7 +40,9 @@ class TestExtractHostFromUrl:
         assert result == "connection.north-europe.azure.keboola.com"
 
     def test_url_with_path(self) -> None:
-        assert _extract_host_from_url("https://connection.keboola.com/v2/") == "connection.keboola.com"
+        assert (
+            _extract_host_from_url("https://connection.keboola.com/v2/") == "connection.keboola.com"
+        )
 
     def test_empty_url_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot extract hostname"):

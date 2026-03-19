@@ -128,9 +128,7 @@ def _compute_job_stats(jobs: list[dict[str, Any]]) -> dict[str, Any]:
     failing_configs = []
     for cs in config_stats.values():
         if cs["error_count"] > 0:
-            cs["error_rate_pct"] = round(
-                (cs["error_count"] / cs["total_runs"]) * 100, 1
-            )
+            cs["error_rate_pct"] = round((cs["error_count"] / cs["total_runs"]) * 100, 1)
             failing_configs.append(cs)
     failing_configs.sort(key=lambda x: x["error_rate_pct"], reverse=True)
 
@@ -226,18 +224,18 @@ class ExplorerService(BaseService):
             "#",
             "# Edit this file and use it with: kbagent explorer --tiers tiers.yaml",
             "",
-            "description: \"Project catalog\"",
+            'description: "Project catalog"',
             "",
             "tiers:",
             "  L0:",
-            "    name: \"Data Sources / Extraction\"",
-            "    description: \"Raw data extraction from external systems\"",
+            '    name: "Data Sources / Extraction"',
+            '    description: "Raw data extraction from external systems"',
             "  L1:",
-            "    name: \"Processing / Transformation\"",
-            "    description: \"Data processing, transformation, and modeling\"",
+            '    name: "Processing / Transformation"',
+            '    description: "Data processing, transformation, and modeling"',
             "  L2:",
-            "    name: \"Output / Delivery\"",
-            "    description: \"Final data products, dashboards, and data sharing\"",
+            '    name: "Output / Delivery"',
+            '    description: "Final data products, dashboards, and data sharing"',
             "",
             "projects:",
         ]
@@ -297,23 +295,17 @@ class ExplorerService(BaseService):
 
         # Step 1: Collect configs
         logger.info("Collecting configurations from %d projects...", len(projects))
-        config_result = self._config_service.list_configs(
-            aliases=list(projects.keys())
-        )
+        config_result = self._config_service.list_configs(aliases=list(projects.keys()))
         all_errors.extend(config_result.get("errors", []))
 
         # Step 2: Collect jobs
         logger.info("Collecting job history from %d projects...", len(projects))
-        job_result = self._job_service.list_jobs(
-            aliases=list(projects.keys()), limit=job_limit
-        )
+        job_result = self._job_service.list_jobs(aliases=list(projects.keys()), limit=job_limit)
         all_errors.extend(job_result.get("errors", []))
 
         # Step 3: Collect lineage
         logger.info("Collecting lineage from %d projects...", len(projects))
-        lineage_result = self._lineage_service.get_lineage(
-            aliases=list(projects.keys())
-        )
+        lineage_result = self._lineage_service.get_lineage(aliases=list(projects.keys()))
         all_errors.extend(lineage_result.get("errors", []))
 
         # Step 4: Group data by project
@@ -334,21 +326,25 @@ class ExplorerService(BaseService):
             src_alias = edge.get("source_project_alias", "")
             tgt_alias = edge.get("target_project_alias", "")
             if src_alias:
-                sharing_out_by_project.setdefault(src_alias, []).append({
-                    "bucket": edge.get("source_bucket_id", ""),
-                    "target_project": tgt_alias,
-                    "target_project_name": edge.get("target_project_name", ""),
-                    "target_bucket": edge.get("target_bucket_id", ""),
-                    "sharing_type": edge.get("sharing_type", ""),
-                })
+                sharing_out_by_project.setdefault(src_alias, []).append(
+                    {
+                        "bucket": edge.get("source_bucket_id", ""),
+                        "target_project": tgt_alias,
+                        "target_project_name": edge.get("target_project_name", ""),
+                        "target_bucket": edge.get("target_bucket_id", ""),
+                        "sharing_type": edge.get("sharing_type", ""),
+                    }
+                )
             if tgt_alias:
-                sharing_in_by_project.setdefault(tgt_alias, []).append({
-                    "bucket": edge.get("target_bucket_id", ""),
-                    "source_project": src_alias,
-                    "source_project_name": edge.get("source_project_name", ""),
-                    "source_bucket": edge.get("source_bucket_id", ""),
-                    "sharing_type": edge.get("sharing_type", ""),
-                })
+                sharing_in_by_project.setdefault(tgt_alias, []).append(
+                    {
+                        "bucket": edge.get("target_bucket_id", ""),
+                        "source_project": src_alias,
+                        "source_project_name": edge.get("source_project_name", ""),
+                        "source_bucket": edge.get("source_bucket_id", ""),
+                        "sharing_type": edge.get("sharing_type", ""),
+                    }
+                )
 
         # Load tier config if provided
         tier_map: dict[str, str] | None = None
@@ -366,11 +362,13 @@ class ExplorerService(BaseService):
         for alias, project in projects.items():
             tier, was_unclassified = _assign_tier(alias, tier_map)
             if was_unclassified:
-                all_errors.append({
-                    "project_alias": alias,
-                    "error_code": "TIER_UNCLASSIFIED",
-                    "message": f"Project '{alias}' has no tier mapping — defaulting to L0",
-                })
+                all_errors.append(
+                    {
+                        "project_alias": alias,
+                        "error_code": "TIER_UNCLASSIFIED",
+                        "message": f"Project '{alias}' has no tier mapping — defaulting to L0",
+                    }
+                )
             tiers[tier].append(alias)
 
             # Group configs by type
@@ -381,13 +379,15 @@ class ExplorerService(BaseService):
                 if ctype not in by_type:
                     by_type[ctype] = {"count": 0, "configs": []}
                 by_type[ctype]["count"] += 1
-                by_type[ctype]["configs"].append({
-                    "config_id": cfg["config_id"],
-                    "config_name": cfg["config_name"],
-                    "config_description": cfg.get("config_description", ""),
-                    "component_id": cfg["component_id"],
-                    "component_name": cfg.get("component_name", ""),
-                })
+                by_type[ctype]["configs"].append(
+                    {
+                        "config_id": cfg["config_id"],
+                        "config_name": cfg["config_name"],
+                        "config_description": cfg.get("config_description", ""),
+                        "component_id": cfg["component_id"],
+                        "component_name": cfg.get("component_name", ""),
+                    }
+                )
 
             jobs = jobs_by_project.get(alias, [])
             job_stats = _compute_job_stats(jobs)
@@ -407,35 +407,39 @@ class ExplorerService(BaseService):
             }
 
         # Step 6: Collect orchestrations
-        orchestrations = self._collect_orchestrations(
-            configs_by_project, all_errors
-        )
+        orchestrations = self._collect_orchestrations(configs_by_project, all_errors)
 
         # Step 7: Build lineage for catalog
         lineage_edges = []
         for edge in lineage_result.get("edges", []):
-            lineage_edges.append({
-                "source_project_alias": edge.get("source_project_alias", ""),
-                "source_project_id": str(edge.get("source_project_id", "")),
-                "source_project_name": edge.get("source_project_name", ""),
-                "source_bucket_id": edge.get("source_bucket_id", ""),
-                "target_project_alias": edge.get("target_project_alias", ""),
-                "target_project_id": str(edge.get("target_project_id", "")),
-                "target_project_name": edge.get("target_project_name", ""),
-                "target_bucket_id": edge.get("target_bucket_id", ""),
-                "sharing_type": edge.get("sharing_type", ""),
-            })
+            lineage_edges.append(
+                {
+                    "source_project_alias": edge.get("source_project_alias", ""),
+                    "source_project_id": str(edge.get("source_project_id", "")),
+                    "source_project_name": edge.get("source_project_name", ""),
+                    "source_bucket_id": edge.get("source_bucket_id", ""),
+                    "target_project_alias": edge.get("target_project_alias", ""),
+                    "target_project_id": str(edge.get("target_project_id", "")),
+                    "target_project_name": edge.get("target_project_name", ""),
+                    "target_bucket_id": edge.get("target_bucket_id", ""),
+                    "sharing_type": edge.get("sharing_type", ""),
+                }
+            )
 
-        sharing_out_count = len({
-            e.get("source_project_alias")
-            for e in lineage_result.get("edges", [])
-            if e.get("source_project_alias")
-        })
-        receiving_in_count = len({
-            e.get("target_project_alias")
-            for e in lineage_result.get("edges", [])
-            if e.get("target_project_alias")
-        })
+        sharing_out_count = len(
+            {
+                e.get("source_project_alias")
+                for e in lineage_result.get("edges", [])
+                if e.get("source_project_alias")
+            }
+        )
+        receiving_in_count = len(
+            {
+                e.get("target_project_alias")
+                for e in lineage_result.get("edges", [])
+                if e.get("target_project_alias")
+            }
+        )
 
         # Determine stack_url from first project
         first_project = next(iter(projects.values()))
@@ -499,18 +503,22 @@ class ExplorerService(BaseService):
                 logger.info("Catalog passed schema validation")
             except jsonschema.ValidationError as exc:
                 logger.warning("Catalog schema validation failed: %s", exc.message)
-                all_errors.append({
-                    "project_alias": "_schema",
-                    "error_code": "SCHEMA_VALIDATION_ERROR",
-                    "message": f"Schema validation: {exc.message}",
-                })
+                all_errors.append(
+                    {
+                        "project_alias": "_schema",
+                        "error_code": "SCHEMA_VALIDATION_ERROR",
+                        "message": f"Schema validation: {exc.message}",
+                    }
+                )
             except (json.JSONDecodeError, jsonschema.SchemaError) as exc:
                 logger.warning("Failed to load/parse schema: %s", exc)
-                all_errors.append({
-                    "project_alias": "_schema",
-                    "error_code": "SCHEMA_LOAD_ERROR",
-                    "message": f"Failed to load schema: {exc}",
-                })
+                all_errors.append(
+                    {
+                        "project_alias": "_schema",
+                        "error_code": "SCHEMA_LOAD_ERROR",
+                        "message": f"Failed to load schema: {exc}",
+                    }
+                )
 
         # Step 9: Write files (atomic: write .tmp then os.replace)
         output_dir = Path(output_dir)
@@ -542,9 +550,7 @@ class ExplorerService(BaseService):
             "configs_count": sum(
                 p["configurations"]["total_configs"] for p in project_data.values()
             ),
-            "jobs_sampled": sum(
-                p["job_stats"]["total_jobs"] for p in project_data.values()
-            ),
+            "jobs_sampled": sum(p["job_stats"]["total_jobs"] for p in project_data.values()),
             "lineage_edges": len(lineage_edges),
             "orchestrations_count": len(orchestrations),
             "errors": all_errors,
@@ -568,19 +574,23 @@ class ExplorerService(BaseService):
         try:
             data = yaml.safe_load(tiers_config.read_text())
         except Exception as exc:
-            all_errors.append({
-                "project_alias": "_tiers",
-                "error_code": "TIERS_CONFIG_ERROR",
-                "message": f"Failed to load tiers config: {exc}",
-            })
+            all_errors.append(
+                {
+                    "project_alias": "_tiers",
+                    "error_code": "TIERS_CONFIG_ERROR",
+                    "message": f"Failed to load tiers config: {exc}",
+                }
+            )
             return None, None, None
 
         if not isinstance(data, dict):
-            all_errors.append({
-                "project_alias": "_tiers",
-                "error_code": "TIERS_CONFIG_ERROR",
-                "message": "Tiers config must be a YAML mapping",
-            })
+            all_errors.append(
+                {
+                    "project_alias": "_tiers",
+                    "error_code": "TIERS_CONFIG_ERROR",
+                    "message": "Tiers config must be a YAML mapping",
+                }
+            )
             return None, None, None
 
         project_map: dict[str, str] = {}
@@ -590,9 +600,7 @@ class ExplorerService(BaseService):
         tier_descriptions: dict[str, dict[str, str]] = {}
         for tier_key, tier_def in data.get("tiers", {}).items():
             if isinstance(tier_def, dict):
-                tier_descriptions[str(tier_key).upper()] = {
-                    k: str(v) for k, v in tier_def.items()
-                }
+                tier_descriptions[str(tier_key).upper()] = {k: str(v) for k, v in tier_def.items()}
 
         catalog_description = data.get("description")
         if catalog_description:
@@ -636,8 +644,7 @@ class ExplorerService(BaseService):
         max_workers = min(len(orch_items), self._resolve_max_workers())
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(_fetch_one, alias, cfg): (alias, cfg)
-                for alias, cfg in orch_items
+                executor.submit(_fetch_one, alias, cfg): (alias, cfg) for alias, cfg in orch_items
             }
             for future in as_completed(futures):
                 alias, cfg = futures[future]
@@ -646,14 +653,14 @@ class ExplorerService(BaseService):
                     _, _, parsed = future.result()
                     orchestrations[f"{alias}|{config_id}"] = parsed
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to fetch orchestration %s/%s: %s", alias, config_id, exc
+                    logger.warning("Failed to fetch orchestration %s/%s: %s", alias, config_id, exc)
+                    all_errors.append(
+                        {
+                            "project_alias": alias,
+                            "error_code": "ORCHESTRATION_ERROR",
+                            "message": f"Failed to fetch flow {config_id}: {exc}",
+                        }
                     )
-                    all_errors.append({
-                        "project_alias": alias,
-                        "error_code": "ORCHESTRATION_ERROR",
-                        "message": f"Failed to fetch flow {config_id}: {exc}",
-                    })
 
         return orchestrations
 
@@ -694,29 +701,32 @@ class ExplorerService(BaseService):
                 if not isinstance(task_cfg, dict):
                     task_cfg = {}
                 comp_id = task_cfg.get("componentId", "")
-                tasks.append({
-                    "name": task.get("name", ""),
-                    "component_id": comp_id,
-                    "component_short": comp_id.split(".")[-1] if comp_id else "",
-                    "config_id": str(task_cfg.get("configId", task_cfg.get("configurationId", ""))),
-                    "enabled": task.get("enabled", True),
-                    "continue_on_failure": task.get("continueOnFailure", False),
-                    "type_icon": _type_icon(comp_id),
-                })
+                tasks.append(
+                    {
+                        "name": task.get("name", ""),
+                        "component_id": comp_id,
+                        "component_short": comp_id.split(".")[-1] if comp_id else "",
+                        "config_id": str(
+                            task_cfg.get("configId", task_cfg.get("configurationId", ""))
+                        ),
+                        "enabled": task.get("enabled", True),
+                        "continue_on_failure": task.get("continueOnFailure", False),
+                        "type_icon": _type_icon(comp_id),
+                    }
+                )
 
             # dependsOn is a list of raw integers (phase ids)
             depends_on_raw = phase.get("dependsOn", [])
-            depends_on = [
-                d.get("phaseId", d) if isinstance(d, dict) else d
-                for d in depends_on_raw
-            ]
+            depends_on = [d.get("phaseId", d) if isinstance(d, dict) else d for d in depends_on_raw]
 
-            phases.append({
-                "id": phase_id,
-                "name": phase.get("name", ""),
-                "depends_on": depends_on,
-                "tasks": tasks,
-            })
+            phases.append(
+                {
+                    "id": phase_id,
+                    "name": phase.get("name", ""),
+                    "depends_on": depends_on,
+                    "tasks": tasks,
+                }
+            )
 
         total_tasks = sum(len(p["tasks"]) for p in phases)
 

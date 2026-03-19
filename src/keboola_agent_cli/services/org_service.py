@@ -117,11 +117,13 @@ class OrgService:
 
             # Skip already-registered projects (idempotency)
             if project_id in existing_project_ids:
-                skipped.append({
-                    "project_id": project_id,
-                    "project_name": project_name,
-                    "reason": "Already registered in config",
-                })
+                skipped.append(
+                    {
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "reason": "Already registered in config",
+                    }
+                )
                 continue
 
             # Generate unique alias
@@ -129,12 +131,14 @@ class OrgService:
             used_aliases.add(alias)
 
             if dry_run:
-                added.append({
-                    "project_id": project_id,
-                    "project_name": project_name,
-                    "alias": alias,
-                    "action": "would_add",
-                })
+                added.append(
+                    {
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "alias": alias,
+                        "action": "would_add",
+                    }
+                )
                 continue
 
             # Create token and register project
@@ -149,27 +153,33 @@ class OrgService:
                 )
                 # Re-read to get masked token
                 registered = self._config_store.get_project(alias)
-                added.append({
-                    "project_id": project_id,
-                    "project_name": project_name,
-                    "alias": alias,
-                    "token": mask_token(registered.token) if registered else "***",
-                    "action": "added",
-                })
+                added.append(
+                    {
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "alias": alias,
+                        "token": mask_token(registered.token) if registered else "***",
+                        "action": "added",
+                    }
+                )
             except KeboolaApiError as exc:
-                failed.append({
-                    "project_id": project_id,
-                    "project_name": project_name,
-                    "alias": alias,
-                    "error": str(exc),
-                })
+                failed.append(
+                    {
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "alias": alias,
+                        "error": str(exc),
+                    }
+                )
             except Exception as exc:
-                failed.append({
-                    "project_id": project_id,
-                    "project_name": project_name,
-                    "alias": alias,
-                    "error": str(exc),
-                })
+                failed.append(
+                    {
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "alias": alias,
+                        "error": str(exc),
+                    }
+                )
 
         return {
             "organization_id": org_id,
@@ -204,7 +214,9 @@ class OrgService:
 
         logger.info(
             "Creating token for project %d (%s) with description '%s'",
-            project_id, project_name, description,
+            project_id,
+            project_name,
+            description,
         )
 
         # Create a Storage API token via Manage API

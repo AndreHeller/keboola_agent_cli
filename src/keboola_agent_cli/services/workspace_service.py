@@ -196,6 +196,14 @@ class WorkspaceService(BaseService):
         connection = ws_data.get("connection", {})
         workspace_id = ws_data.get("id")
 
+        # Reset password so we can return it (job doesn't expose the initial password)
+        password = ""
+        try:
+            pw_data = client.reset_workspace_password(workspace_id)
+            password = pw_data.get("password", "")
+        except KeboolaApiError:
+            logger.debug("Could not reset password for workspace %s", workspace_id)
+
         return {
             "project_alias": alias,
             "workspace_id": workspace_id,
@@ -207,12 +215,12 @@ class WorkspaceService(BaseService):
             "database": connection.get("database", ""),
             "schema": connection.get("schema", ""),
             "user": connection.get("user", ""),
-            "password": "",
+            "password": password,
             "read_only": True,
             "ui_mode": True,
             "message": (
                 f"Workspace '{name}' ({workspace_id}) created in project '{alias}' (visible in UI). "
-                "Use 'kbagent workspace password' to get credentials."
+                "Save the password -- it cannot be retrieved later!"
             ),
         }
 

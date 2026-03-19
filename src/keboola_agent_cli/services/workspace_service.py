@@ -383,7 +383,7 @@ class WorkspaceService(BaseService):
                 transactional=transactional,
             )
 
-            query_job_id = str(query_job.get("id", ""))
+            query_job_id = str(query_job.get("queryJobId", query_job.get("id", "")))
 
             # Wait for completion
             completed_job = client.wait_for_query_job(query_job_id)
@@ -394,14 +394,15 @@ class WorkspaceService(BaseService):
             for stmt in statements:
                 stmt_id = str(stmt.get("id", ""))
                 status = stmt.get("status", "")
+                num_rows = stmt.get("numberOfRows", stmt.get("resultRows", 0))
                 result_entry: dict[str, Any] = {
                     "statement_id": stmt_id,
                     "status": status,
-                    "rows_affected": stmt.get("resultRows", 0),
+                    "rows_affected": num_rows,
                 }
 
                 # Try to export results if there are rows
-                if status == "completed" and stmt.get("resultRows", 0) > 0:
+                if status == "completed" and num_rows > 0:
                     try:
                         csv_data = client.export_query_results(query_job_id, stmt_id)
                         result_entry["csv_data"] = csv_data

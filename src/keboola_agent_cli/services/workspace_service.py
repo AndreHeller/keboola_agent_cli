@@ -57,20 +57,23 @@ class WorkspaceService(BaseService):
         name: str = "",
         backend: str = "snowflake",
         read_only: bool = True,
+        ui_mode: bool = False,
     ) -> dict[str, Any]:
-        """Create a new workspace visible in the Keboola UI.
+        """Create a new workspace.
 
-        Creates a keboola.sandboxes configuration and a workspace tied to it.
-        This ensures the workspace appears in the Keboola UI Workspaces tab.
+        Two modes:
+        - Default (headless): fast (~1s) via Storage API. Not visible in Keboola UI.
+        - UI mode (--ui): slower (~15s) via Queue job. Visible in UI Workspaces tab.
 
-        IMPORTANT: The password is only available in the creation response.
-        It cannot be retrieved later (only reset).
+        IMPORTANT: Password is only available on creation (headless mode).
+        In UI mode, password must be retrieved via 'workspace password' command.
 
         Args:
             alias: Project alias.
-            name: Human-readable name for the workspace (shown in UI).
+            name: Human-readable name for the workspace.
             backend: Workspace backend (snowflake, bigquery, etc.).
             read_only: Whether the workspace has read-only storage access.
+            ui_mode: If True, create via Queue job (visible in Keboola UI).
 
         Returns:
             Dict with workspace details including connection credentials.
@@ -78,34 +81,61 @@ class WorkspaceService(BaseService):
         projects = self.resolve_projects([alias])
         project = projects[alias]
         branch_id = self._resolve_branch_id(alias, project)
-
-        # Generate a default name if not provided
         effective_name = name or f"kbagent-{alias}"
 
         client = self._client_factory(project.stack_url, project.token)
         try:
-            # Step 1: Create keboola.sandboxes config (makes workspace visible in UI)
+            # Step 1: Create keboola.sandboxes config
             sandbox_config = client.create_sandbox_config(
                 name=effective_name,
                 description="Created by kbagent CLI",
             )
             config_id = sandbox_config.get("id", "")
 
-            # Step 2: Create workspace tied to the sandbox config
-            ws_data = client.create_config_workspace(
-                branch_id=branch_id,
-                component_id="keboola.sandboxes",
-                config_id=config_id,
-                backend=backend,
-            )
+            if ui_mode:
+                return self._create_workspace_via_job(
+                    client,
+                    alias,
+                    effective_name,
+                    config_id,
+                    backend,
+                )
+            else:
+                return self._create_workspace_direct(
+                    client,
+                    alias,
+                    effective_name,
+                    config_id,
+                    branch_id,
+                    backend,
+                    read_only,
+                )
         finally:
             client.close()
+
+    def _create_workspace_direct(
+        self,
+        client: Any,
+        alias: str,
+        name: str,
+        config_id: str,
+        branch_id: int,
+        backend: str,
+        read_only: bool,
+    ) -> dict[str, Any]:
+        """Create workspace via Storage API (fast, headless)."""
+        ws_data = client.create_config_workspace(
+            branch_id=branch_id,
+            component_id="keboola.sandboxes",
+            config_id=config_id,
+            backend=backend,
+        )
 
         connection = ws_data.get("connection", {})
         return {
             "project_alias": alias,
             "workspace_id": ws_data.get("id"),
-            "name": effective_name,
+            "name": name,
             "config_id": config_id,
             "backend": connection.get("backend", backend),
             "host": connection.get("host", ""),
@@ -115,9 +145,74 @@ class WorkspaceService(BaseService):
             "user": connection.get("user", ""),
             "password": connection.get("password", ""),
             "read_only": read_only,
+            "ui_mode": False,
             "message": (
-                f"Workspace '{effective_name}' ({ws_data.get('id')}) created in project '{alias}'. "
+                f"Workspace '{name}' created in project '{alias}'. "
                 "Save the password -- it cannot be retrieved later!"
+            ),
+        }
+
+    def _create_workspace_via_job(
+        self,
+        client: Any,
+        alias: str,
+        name: str,
+        config_id: str,
+        backend: str,
+    ) -> dict[str, Any]:
+        """Create workspace via Queue job (slower, visible in UI)."""
+        job = client.create_job(
+            component_id="keboola.sandboxes",
+            config_id=config_id,
+            config_data={
+                "parameters": {
+                    "task": "create",
+                    "type": backend,
+                    "shared": False,
+                },
+            },
+        )
+        job_id = str(job.get("id", ""))
+
+        # Wait for the job to complete
+        client.wait_for_queue_job(job_id)
+
+        # Find the workspace created by the job
+        workspaces = client.list_config_workspaces(
+            branch_id=int(job.get("branchId", 0)),
+            component_id="keboola.sandboxes",
+            config_id=config_id,
+        )
+
+        if not workspaces:
+            raise KeboolaApiError(
+                message=f"Sandbox job completed but no workspace found for config {config_id}",
+                status_code=500,
+                error_code="WORKSPACE_NOT_FOUND",
+                retryable=False,
+            )
+
+        ws_data = workspaces[0]
+        connection = ws_data.get("connection", {})
+        workspace_id = ws_data.get("id")
+
+        return {
+            "project_alias": alias,
+            "workspace_id": workspace_id,
+            "name": name,
+            "config_id": config_id,
+            "backend": connection.get("backend", backend),
+            "host": connection.get("host", ""),
+            "warehouse": connection.get("warehouse", ""),
+            "database": connection.get("database", ""),
+            "schema": connection.get("schema", ""),
+            "user": connection.get("user", ""),
+            "password": "",
+            "read_only": True,
+            "ui_mode": True,
+            "message": (
+                f"Workspace '{name}' ({workspace_id}) created in project '{alias}' (visible in UI). "
+                "Use 'kbagent workspace password' to get credentials."
             ),
         }
 

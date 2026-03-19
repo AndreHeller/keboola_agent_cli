@@ -38,17 +38,23 @@ def workspace_create(
         "--read-only/--no-read-only",
         help="Whether the workspace has read-only storage access",
     ),
+    ui: bool = typer.Option(
+        False,
+        "--ui",
+        help="Create via Queue job (slower ~15s, visible in Keboola UI)",
+    ),
 ) -> None:
     """Create a new workspace.
 
-    Returns workspace credentials including password (only shown once!).
+    Default: fast headless mode via Storage API (~1s).
+    With --ui: creates via Queue job (~15s), visible in Keboola UI Workspaces tab.
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "workspace_service")
 
     try:
         result = service.create_workspace(
-            alias=project, name=name, backend=backend, read_only=read_only
+            alias=project, name=name, backend=backend, read_only=read_only, ui_mode=ui
         )
         formatter.output(
             result,

@@ -333,6 +333,75 @@ class KeboolaClient(BaseHttpClient):
         response = self._queue_request("GET", f"/jobs/{safe_job_id}")
         return response.json()
 
+    # --- Queue Job Creation ---
+
+    def create_job(
+        self,
+        component_id: str,
+        config_id: str,
+        config_data: dict[str, Any] | None = None,
+        mode: str = "run",
+    ) -> dict[str, Any]:
+        """Create and run a Queue API job.
+
+        Args:
+            component_id: Component ID (e.g. keboola.sandboxes).
+            config_id: Configuration ID.
+            config_data: Optional runtime config data override.
+            mode: Job mode (default: run).
+
+        Returns:
+            Job dict from the Queue API.
+        """
+        body: dict[str, Any] = {
+            "component": component_id,
+            "config": config_id,
+            "mode": mode,
+        }
+        if config_data:
+            body["configData"] = config_data
+        response = self._queue_request("POST", "/jobs", json=body)
+        return response.json()
+
+    def wait_for_queue_job(self, job_id: str) -> dict[str, Any]:
+        """Poll a Queue API job until it reaches a terminal state.
+
+        Args:
+            job_id: The Queue job ID.
+
+        Returns:
+            Completed job dict.
+
+        Raises:
+            KeboolaApiError: If the job fails or times out.
+        """
+        deadline = time.monotonic() + STORAGE_JOB_MAX_WAIT
+        while time.monotonic() < deadline:
+            job = self.get_job_detail(job_id)
+            if job.get("isFinished"):
+                if job.get("status") == "error":
+                    result = job.get("result", {})
+                    error_msg = (
+                        result.get("message", "Queue job failed")
+                        if isinstance(result, dict)
+                        else "Queue job failed"
+                    )
+                    raise KeboolaApiError(
+                        message=f"Queue job {job_id} failed: {error_msg}",
+                        status_code=500,
+                        error_code="QUEUE_JOB_FAILED",
+                        retryable=False,
+                    )
+                return job
+            time.sleep(STORAGE_JOB_POLL_INTERVAL)
+
+        raise KeboolaApiError(
+            message=f"Queue job {job_id} did not complete within {STORAGE_JOB_MAX_WAIT}s",
+            status_code=504,
+            error_code="QUEUE_JOB_TIMEOUT",
+            retryable=True,
+        )
+
     # --- Workspace CRUD ---
 
     def create_workspace(

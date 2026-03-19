@@ -393,7 +393,15 @@ class KeboolaClient(BaseHttpClient):
         Returns:
             Configuration dict with id, name, etc.
         """
-        config = {"parameters": {"backendSize": backend_size}}
+        config = {
+            "parameters": {
+                "runtime": {"shared": False},
+                "storage": {"input": {"tables": []}, "output": {"tables": []}},
+                "parameters": {"id": "", "blocks": []},
+                "backendSize": backend_size,
+            },
+            "runtime": {"shared": False},
+        }
         response = self._request(
             "POST",
             "/v2/storage/components/keboola.sandboxes/configs",

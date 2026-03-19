@@ -269,12 +269,15 @@ Then explore:
 
 ### Workspaces (SQL Debugging)
 
-  kbagent workspace create --project ALIAS [--backend snowflake] [--read-only/--no-read-only]
-    Create a temporary workspace for SQL debugging.
-    Returns connection credentials including password (shown only once!).
-    Default backend is snowflake. Use --no-read-only for write access.
-    Example:
-      kbagent --json workspace create --project prod
+  kbagent workspace create --project ALIAS [--name NAME] [--backend snowflake] [--ui] [--read-only/--no-read-only]
+    Create a temporary workspace for SQL debugging. Two modes:
+    - Default (headless): fast (~1s) via Storage API. Password returned immediately.
+    - --ui flag: slower (~15s) via Queue job. Workspace visible in Keboola UI Workspaces tab.
+    Both modes return connection credentials including password.
+    --name sets a human-readable name (default: kbagent-ALIAS).
+    Examples:
+      kbagent --json workspace create --project prod --name "debug-transform"
+      kbagent --json workspace create --project prod --name "debug-ui" --ui
 
   kbagent workspace list [--project NAME]
     List workspaces from connected projects.
@@ -288,7 +291,8 @@ Then explore:
       kbagent --json workspace detail --project prod --workspace-id 12345
 
   kbagent workspace delete --project ALIAS --workspace-id ID
-    Delete a workspace. Workspaces also expire automatically server-side.
+    Delete a workspace and its associated sandbox config.
+    Workspaces also expire automatically server-side.
     Example:
       kbagent --json workspace delete --project prod --workspace-id 12345
 
@@ -307,6 +311,7 @@ Then explore:
   kbagent workspace query --project ALIAS --workspace-id ID --file query.sql [--transactional]
     Execute SQL in a workspace via Query Service. Provide SQL via --sql or --file.
     Polls until complete and returns results as CSV.
+    Uses the Storage API token for auth -- no Snowflake credentials needed.
     Example:
       kbagent --json workspace query --project prod --workspace-id 12345 --sql "SELECT * FROM users LIMIT 10"
 
@@ -459,6 +464,14 @@ Then explore:
 
      # Step 5: Clean up (optional -- workspaces expire automatically)
      kbagent --json workspace delete --project prod --workspace-id WS_ID
+
+     Alternative: create a standalone workspace (not from transformation):
+     kbagent --json workspace create --project prod --name "debug-ws"
+       # ^ headless mode, fast (~1s), not visible in Keboola UI
+     kbagent --json workspace create --project prod --name "debug-ws" --ui
+       # ^ UI mode, slower (~15s), visible in Keboola UI Workspaces tab
+     kbagent --json workspace load --project prod --workspace-id WS_ID --tables in.c-bucket.my-table
+     kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT * FROM \"my-table\" LIMIT 10"
 
 16. Setting up projects -- two approaches:
 

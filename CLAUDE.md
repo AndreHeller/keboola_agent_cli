@@ -200,7 +200,7 @@ kbagent explorer init-tiers [--output FILE]
 
 kbagent llm export --project ALIAS [--with-samples] [--sample-limit N] [--max-samples N]
 
-kbagent workspace create --project ALIAS [--backend snowflake] [--read-only/--no-read-only]
+kbagent workspace create --project ALIAS [--name NAME] [--backend snowflake] [--ui] [--read-only/--no-read-only]
 kbagent workspace list [--project NAME]
 kbagent workspace detail --project ALIAS --workspace-id ID
 kbagent workspace delete --project ALIAS --workspace-id ID

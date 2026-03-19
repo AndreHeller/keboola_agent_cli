@@ -23,6 +23,11 @@ def workspace_create(
         "--project",
         help="Project alias to create the workspace in",
     ),
+    name: str = typer.Option(
+        "",
+        "--name",
+        help="Name for the workspace (shown in Keboola UI)",
+    ),
     backend: str = typer.Option(
         "snowflake",
         "--backend",
@@ -42,12 +47,15 @@ def workspace_create(
     service = get_service(ctx, "workspace_service")
 
     try:
-        result = service.create_workspace(alias=project, backend=backend, read_only=read_only)
+        result = service.create_workspace(
+            alias=project, name=name, backend=backend, read_only=read_only
+        )
         formatter.output(
             result,
             lambda c, d: (
                 c.print(f"[bold green]Success:[/bold green] {d['message']}"),
                 c.print(f"\n[bold]Workspace ID:[/bold] {d['workspace_id']}"),
+                c.print(f"[bold]Name:[/bold] {d.get('name', '')}"),
                 c.print(f"[bold]Host:[/bold] {d['host']}"),
                 c.print(f"[bold]Schema:[/bold] {d['schema']}"),
                 c.print(f"[bold]User:[/bold] {d['user']}"),

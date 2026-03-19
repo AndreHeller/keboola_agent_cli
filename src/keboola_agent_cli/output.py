@@ -814,10 +814,9 @@ def format_workspaces_table(console: Console, data: dict[str, Any]) -> None:
     table = Table(title="Workspaces")
     table.add_column("Project", style="bold magenta")
     table.add_column("ID", justify="right")
-    table.add_column("Backend", style="bold cyan")
-    table.add_column("Host", style="dim")
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Backend")
     table.add_column("Schema")
-    table.add_column("User", style="dim")
     table.add_column("Created", style="dim")
 
     prev_alias = None
@@ -829,10 +828,9 @@ def format_workspaces_table(console: Console, data: dict[str, Any]) -> None:
         table.add_row(
             display_alias,
             str(ws.get("workspace_id", ws.get("id", ""))),
+            ws.get("name", ""),
             ws.get("backend", ""),
-            ws.get("host", ""),
             ws.get("schema", ""),
-            ws.get("user", ""),
             ws.get("created", ""),
         )
 

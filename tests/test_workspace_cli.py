@@ -63,6 +63,8 @@ class TestWorkspaceCreate:
         mock_ws.create_workspace.return_value = {
             "project_alias": "prod",
             "workspace_id": 42,
+            "name": "my-workspace",
+            "config_id": "cfg-123",
             "backend": "snowflake",
             "host": "account.snowflakecomputing.com",
             "warehouse": "KEBOOLA_PROD",
@@ -71,7 +73,7 @@ class TestWorkspaceCreate:
             "user": "KEBOOLA_WORKSPACE_42",
             "password": "s3cret!Passw0rd",
             "read_only": True,
-            "message": "Workspace 42 created in project 'prod'. Save the password!",
+            "message": "Workspace 'my-workspace' (42) created in project 'prod'. Save the password!",
         }
 
         with (

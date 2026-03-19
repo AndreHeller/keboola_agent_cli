@@ -54,16 +54,21 @@ class WorkspaceService(BaseService):
     def create_workspace(
         self,
         alias: str,
+        name: str = "",
         backend: str = "snowflake",
         read_only: bool = True,
     ) -> dict[str, Any]:
-        """Create a new workspace in a project.
+        """Create a new workspace visible in the Keboola UI.
+
+        Creates a keboola.sandboxes configuration and a workspace tied to it.
+        This ensures the workspace appears in the Keboola UI Workspaces tab.
 
         IMPORTANT: The password is only available in the creation response.
         It cannot be retrieved later (only reset).
 
         Args:
             alias: Project alias.
+            name: Human-readable name for the workspace (shown in UI).
             backend: Workspace backend (snowflake, bigquery, etc.).
             read_only: Whether the workspace has read-only storage access.
 
@@ -72,10 +77,27 @@ class WorkspaceService(BaseService):
         """
         projects = self.resolve_projects([alias])
         project = projects[alias]
+        branch_id = self._resolve_branch_id(alias, project)
+
+        # Generate a default name if not provided
+        effective_name = name or f"kbagent-{alias}"
 
         client = self._client_factory(project.stack_url, project.token)
         try:
-            ws_data = client.create_workspace(backend=backend, read_only=read_only)
+            # Step 1: Create keboola.sandboxes config (makes workspace visible in UI)
+            sandbox_config = client.create_sandbox_config(
+                name=effective_name,
+                description="Created by kbagent CLI",
+            )
+            config_id = sandbox_config.get("id", "")
+
+            # Step 2: Create workspace tied to the sandbox config
+            ws_data = client.create_config_workspace(
+                branch_id=branch_id,
+                component_id="keboola.sandboxes",
+                config_id=config_id,
+                backend=backend,
+            )
         finally:
             client.close()
 
@@ -83,6 +105,8 @@ class WorkspaceService(BaseService):
         return {
             "project_alias": alias,
             "workspace_id": ws_data.get("id"),
+            "name": effective_name,
+            "config_id": config_id,
             "backend": connection.get("backend", backend),
             "host": connection.get("host", ""),
             "warehouse": connection.get("warehouse", ""),
@@ -92,7 +116,7 @@ class WorkspaceService(BaseService):
             "password": connection.get("password", ""),
             "read_only": read_only,
             "message": (
-                f"Workspace {ws_data.get('id')} created in project '{alias}'. "
+                f"Workspace '{effective_name}' ({ws_data.get('id')}) created in project '{alias}'. "
                 "Save the password -- it cannot be retrieved later!"
             ),
         }
@@ -124,17 +148,14 @@ class WorkspaceService(BaseService):
                         {
                             "project_alias": alias,
                             "id": ws.get("id"),
+                            "name": ws.get("name", ""),
                             "backend": connection.get("backend", ""),
                             "host": connection.get("host", ""),
                             "schema": connection.get("schema", ""),
                             "user": connection.get("user", ""),
                             "created": ws.get("created", ""),
-                            "component_id": ws.get("configurationId", {}).get("component", "")
-                            if isinstance(ws.get("configurationId"), dict)
-                            else "",
-                            "config_id": ws.get("configurationId", {}).get("config", "")
-                            if isinstance(ws.get("configurationId"), dict)
-                            else "",
+                            "component_id": ws.get("component") or "",
+                            "config_id": ws.get("configurationId") or "",
                         }
                     )
                 return (alias, workspaces, True)
@@ -206,7 +227,7 @@ class WorkspaceService(BaseService):
         }
 
     def delete_workspace(self, alias: str, workspace_id: int) -> dict[str, Any]:
-        """Delete a workspace.
+        """Delete a workspace and its associated sandboxes config (if any).
 
         Args:
             alias: Project alias.
@@ -220,7 +241,24 @@ class WorkspaceService(BaseService):
 
         client = self._client_factory(project.stack_url, project.token)
         try:
+            # Get workspace details to find associated config
+            config_id = None
+            try:
+                ws_data = client.get_workspace(workspace_id)
+                component = ws_data.get("component")
+                config_id = ws_data.get("configurationId")
+            except KeboolaApiError:
+                pass  # Workspace might not exist, proceed with delete
+
+            # Delete the workspace
             client.delete_workspace(workspace_id)
+
+            # Clean up associated sandboxes config
+            if config_id and component == "keboola.sandboxes":
+                try:
+                    client.delete_config("keboola.sandboxes", config_id)
+                except KeboolaApiError:
+                    logger.debug("Could not delete sandbox config %s", config_id)
         finally:
             client.close()
 

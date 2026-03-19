@@ -44,6 +44,7 @@ SAMPLE_WORKSPACE_NO_PASSWORD = {
 SAMPLE_WORKSPACE_LIST = [
     {
         "id": 42,
+        "name": "my-workspace",
         "connection": {
             "backend": "snowflake",
             "host": "account.snowflakecomputing.com",
@@ -51,10 +52,12 @@ SAMPLE_WORKSPACE_LIST = [
             "user": "KEBOOLA_WORKSPACE_42",
         },
         "created": "2025-09-10T14:00:00Z",
-        "configurationId": {"component": "keboola.snowflake-transformation", "config": "123"},
+        "component": "keboola.snowflake-transformation",
+        "configurationId": "123",
     },
     {
         "id": 99,
+        "name": "",
         "connection": {
             "backend": "snowflake",
             "host": "account.snowflakecomputing.com",
@@ -62,7 +65,8 @@ SAMPLE_WORKSPACE_LIST = [
             "user": "KEBOOLA_WORKSPACE_99",
         },
         "created": "2025-09-11T08:30:00Z",
-        "configurationId": {},
+        "component": None,
+        "configurationId": None,
     },
 ]
 
@@ -78,7 +82,12 @@ class TestCreateWorkspace:
     def test_create_workspace_success(self, tmp_config_dir: Path) -> None:
         """create_workspace returns workspace details including password."""
         mock_client = MagicMock()
-        mock_client.create_workspace.return_value = SAMPLE_WORKSPACE
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.create_sandbox_config.return_value = {
+            "id": "cfg-123",
+            "name": "test-ws",
+        }
+        mock_client.create_config_workspace.return_value = SAMPLE_WORKSPACE
 
         store = setup_single_project(tmp_config_dir)
         svc = WorkspaceService(
@@ -86,10 +95,14 @@ class TestCreateWorkspace:
             client_factory=lambda url, token: mock_client,
         )
 
-        result = svc.create_workspace(alias="prod", backend="snowflake", read_only=True)
+        result = svc.create_workspace(
+            alias="prod", name="test-ws", backend="snowflake", read_only=True
+        )
 
         assert result["project_alias"] == "prod"
         assert result["workspace_id"] == 42
+        assert result["name"] == "test-ws"
+        assert result["config_id"] == "cfg-123"
         assert result["backend"] == "snowflake"
         assert result["host"] == "account.snowflakecomputing.com"
         assert result["warehouse"] == "KEBOOLA_PROD"
@@ -100,11 +113,18 @@ class TestCreateWorkspace:
         assert result["read_only"] is True
         assert "Save the password" in result["message"]
 
-        mock_client.create_workspace.assert_called_once_with(
-            backend="snowflake",
-            read_only=True,
+        mock_client.create_sandbox_config.assert_called_once_with(
+            name="test-ws",
+            description="Created by kbagent CLI",
         )
-        mock_client.close.assert_called_once()
+        mock_client.create_config_workspace.assert_called_once_with(
+            branch_id=123,
+            component_id="keboola.sandboxes",
+            config_id="cfg-123",
+            backend="snowflake",
+        )
+        # close() called twice: once in _resolve_branch_id, once in create_workspace
+        assert mock_client.close.call_count == 2
 
     def test_create_workspace_unknown_project(self, tmp_config_dir: Path) -> None:
         """create_workspace raises ConfigError for an unknown alias."""
@@ -117,7 +137,8 @@ class TestCreateWorkspace:
     def test_create_workspace_api_error(self, tmp_config_dir: Path) -> None:
         """create_workspace propagates KeboolaApiError from the client."""
         mock_client = MagicMock()
-        mock_client.create_workspace.side_effect = KeboolaApiError(
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.create_sandbox_config.side_effect = KeboolaApiError(
             message="Quota exceeded",
             error_code="QUOTA_EXCEEDED",
             status_code=403,
@@ -156,10 +177,12 @@ class TestListWorkspacesSingleProject:
         assert len(workspaces) == 2
         assert workspaces[0]["project_alias"] == "prod"
         assert workspaces[0]["id"] == 42
+        assert workspaces[0]["name"] == "my-workspace"
         assert workspaces[0]["backend"] == "snowflake"
         assert workspaces[0]["component_id"] == "keboola.snowflake-transformation"
         assert workspaces[0]["config_id"] == "123"
         assert workspaces[1]["id"] == 99
+        assert workspaces[1]["name"] == ""
         assert workspaces[1]["component_id"] == ""
         assert workspaces[1]["config_id"] == ""
 
@@ -331,6 +354,10 @@ class TestDeleteWorkspace:
     def test_delete_workspace_success(self, tmp_config_dir: Path) -> None:
         """delete_workspace calls the API and returns confirmation."""
         mock_client = MagicMock()
+        mock_client.get_workspace.return_value = {
+            "component": "keboola.sandboxes",
+            "configurationId": "cfg-123",
+        }
 
         store = setup_single_project(tmp_config_dir)
         svc = WorkspaceService(
@@ -343,12 +370,21 @@ class TestDeleteWorkspace:
         assert result["project_alias"] == "prod"
         assert result["workspace_id"] == 42
         assert "deleted" in result["message"]
+        mock_client.get_workspace.assert_called_once_with(42)
         mock_client.delete_workspace.assert_called_once_with(42)
+        mock_client.delete_config.assert_called_once_with("keboola.sandboxes", "cfg-123")
         mock_client.close.assert_called_once()
 
     def test_delete_workspace_api_error(self, tmp_config_dir: Path) -> None:
-        """delete_workspace propagates KeboolaApiError."""
+        """delete_workspace propagates KeboolaApiError from delete call."""
         mock_client = MagicMock()
+        # get_workspace fails (workspace lookup), but delete_workspace also fails
+        mock_client.get_workspace.side_effect = KeboolaApiError(
+            message="Workspace not found",
+            error_code="NOT_FOUND",
+            status_code=404,
+            retryable=False,
+        )
         mock_client.delete_workspace.side_effect = KeboolaApiError(
             message="Workspace not found",
             error_code="NOT_FOUND",

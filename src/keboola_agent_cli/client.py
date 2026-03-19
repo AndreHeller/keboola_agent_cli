@@ -7,6 +7,7 @@ mapping are encapsulated here.
 Inherits shared retry/error logic from BaseHttpClient.
 """
 
+import json
 import logging
 import time
 from typing import Any
@@ -372,6 +373,51 @@ class KeboolaClient(BaseHttpClient):
         """Reset workspace password. Returns new password."""
         response = self._request("POST", f"/v2/storage/workspaces/{workspace_id}/password")
         return response.json()
+
+    def create_sandbox_config(
+        self,
+        name: str,
+        description: str = "",
+        backend_size: str = "small",
+    ) -> dict[str, Any]:
+        """Create a keboola.sandboxes configuration.
+
+        This is needed to make workspaces visible in the Keboola UI.
+        The UI only shows workspaces tied to a sandboxes config.
+
+        Args:
+            name: Human-readable name for the workspace.
+            description: Optional description.
+            backend_size: Backend size (small, medium, large).
+
+        Returns:
+            Configuration dict with id, name, etc.
+        """
+        config = {"parameters": {"backendSize": backend_size}}
+        response = self._request(
+            "POST",
+            "/v2/storage/components/keboola.sandboxes/configs",
+            data={
+                "name": name,
+                "description": description,
+                "configuration": json.dumps(config),
+            },
+        )
+        return response.json()
+
+    def delete_config(self, component_id: str, config_id: str) -> None:
+        """Delete a component configuration.
+
+        Args:
+            component_id: Component ID.
+            config_id: Configuration ID.
+        """
+        safe_component = quote(component_id, safe="")
+        safe_config = quote(config_id, safe="")
+        self._request(
+            "DELETE",
+            f"/v2/storage/components/{safe_component}/configs/{safe_config}",
+        )
 
     def create_config_workspace(
         self,

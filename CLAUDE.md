@@ -164,6 +164,31 @@ Both inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/
 
 13. **Idempotency**: `org setup` skips already-registered projects by matching `project_id`. Safe to re-run.
 
+## Claude Code Plugin (Marketplace)
+
+This repo doubles as a Claude Code plugin marketplace. The plugin lives in `plugins/kbagent/` and contains a skill that teaches Claude how to use kbagent.
+
+**When to update the plugin:**
+- Adding/removing/renaming CLI commands → update `plugins/kbagent/skills/kbagent/SKILL.md` (decision table, workflows)
+- Changing response format or adding gotchas → update `plugins/kbagent/skills/kbagent/references/gotchas.md`
+- Changing workspace or branch behavior → update the respective `references/*.md` file
+- Bumping CLI version → also bump `plugins/kbagent/.claude-plugin/plugin.json` version
+
+**Structure:**
+```
+.claude-plugin/marketplace.json                        # Repo-level marketplace definition
+plugins/kbagent/
+  .claude-plugin/plugin.json                           # Plugin manifest (keep version in sync!)
+  skills/kbagent/
+    SKILL.md                                           # Lean: trigger rules + decision table
+    references/
+      workspace-workflow.md                            # SQL debugging step-by-step
+      branch-workflow.md                               # Dev branch lifecycle
+      gotchas.md                                       # Response parsing, common pitfalls
+```
+
+Note: `SKILL.md` instructs Claude to run `kbagent context` as its first step, which dynamically loads the full CLI documentation. This means command details stay in sync automatically. The plugin files only need updating when workflows, gotchas, or the skill's triggering description change.
+
 ## All CLI Commands
 
 ```

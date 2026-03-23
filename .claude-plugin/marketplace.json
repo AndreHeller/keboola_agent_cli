@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "keboola-agent-cli",
+  "version": "1.0.0",
+  "description": "Claude Code plugin for managing Keboola projects via kbagent CLI",
+  "owner": {
+    "name": "Keboola",
+    "email": "support@keboola.com"
+  },
+  "plugins": [
+    {
+      "name": "kbagent",
+      "source": "./plugins/kbagent",
+      "description": "AI-friendly interface to Keboola Connection projects — explore configs, jobs, lineage, call MCP tools, manage dev branches, and debug SQL in workspaces",
+      "category": "development"
+    }
+  ]
+}

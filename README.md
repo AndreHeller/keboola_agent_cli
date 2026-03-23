@@ -265,6 +265,7 @@ make clean          # remove caches and build artifacts
 
 - [Jordan Burger](https://github.com/jordanrburger)
 - [František Řehoř](https://github.com/frantisekrehor)
+- [Vojta Tůma](https://github.com/yustme)
 
 ## License
 

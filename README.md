@@ -47,7 +47,7 @@ uv tool install git+https://github.com/padak/keboola_agent_cli
 uv tool install --reinstall git+https://github.com/padak/keboola_agent_cli
 
 # Install a specific version
-uv tool install git+https://github.com/padak/keboola_agent_cli@v0.7.2
+uv tool install git+https://github.com/padak/keboola_agent_cli@v0.7.4
 
 # Run without installing (one-off use)
 uvx --from git+https://github.com/padak/keboola_agent_cli kbagent --help
@@ -224,6 +224,17 @@ Works with any Keboola stack -- AWS, Azure, GCP. Examples:
 - `https://connection.north-europe.azure.keboola.com` (Azure)
 - `https://connection.europe-west3.gcp.keboola.com` (GCP)
 - `https://connection.us-east4.gcp.keboola.com` (GCP)
+
+## Claude Code plugin
+
+This repo doubles as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin marketplace. Install the `kbagent` skill to teach Claude how to use the CLI effectively:
+
+```
+/plugin marketplace add padak/keboola_agent_cli
+/plugin install kbagent@keboola-agent-cli
+```
+
+Once installed, Claude automatically recognizes Keboola-related tasks and knows how to use `kbagent` commands, including workspace SQL debugging, dev branch workflows, and multi-project operations. The skill loads `kbagent context` dynamically so documentation stays in sync with the installed CLI version.
 
 ## KBC Explorer
 

@@ -11,7 +11,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from helpers import setup_single_project, setup_two_projects
+from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
+from keboola_agent_cli.models import ProjectConfig
 from keboola_agent_cli.services.workspace_service import WorkspaceService
 
 SAMPLE_WORKSPACE = {
@@ -116,6 +118,7 @@ class TestCreateWorkspace:
         mock_client.create_sandbox_config.assert_called_once_with(
             name="test-ws",
             description="Created by kbagent CLI",
+            branch_id=123,
         )
         mock_client.create_config_workspace.assert_called_once_with(
             branch_id=123,
@@ -153,6 +156,50 @@ class TestCreateWorkspace:
 
         with pytest.raises(KeboolaApiError, match="Quota exceeded"):
             svc.create_workspace(alias="prod")
+
+    def test_create_workspace_in_dev_branch(self, tmp_config_dir: Path) -> None:
+        """create_workspace uses active_branch_id for sandbox config endpoint."""
+        mock_client = MagicMock()
+        mock_client.create_sandbox_config.return_value = {
+            "id": "cfg-456",
+            "name": "branch-ws",
+        }
+        mock_client.create_config_workspace.return_value = SAMPLE_WORKSPACE
+
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-xxx",
+                project_name="Production",
+                project_id=258,
+                active_branch_id=200,
+            ),
+        )
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.create_workspace(
+            alias="prod", name="branch-ws", backend="snowflake"
+        )
+
+        assert result["config_id"] == "cfg-456"
+        # Sandbox config must be created in the dev branch
+        mock_client.create_sandbox_config.assert_called_once_with(
+            name="branch-ws",
+            description="Created by kbagent CLI",
+            branch_id=200,
+        )
+        # Config workspace must also use the dev branch
+        mock_client.create_config_workspace.assert_called_once_with(
+            branch_id=200,
+            component_id="keboola.sandboxes",
+            config_id="cfg-456",
+            backend="snowflake",
+        )
 
 
 class TestListWorkspacesSingleProject:
@@ -354,6 +401,7 @@ class TestDeleteWorkspace:
     def test_delete_workspace_success(self, tmp_config_dir: Path) -> None:
         """delete_workspace calls the API and returns confirmation."""
         mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
         mock_client.get_workspace.return_value = {
             "component": "keboola.sandboxes",
             "configurationId": "cfg-123",
@@ -372,12 +420,16 @@ class TestDeleteWorkspace:
         assert "deleted" in result["message"]
         mock_client.get_workspace.assert_called_once_with(42)
         mock_client.delete_workspace.assert_called_once_with(42)
-        mock_client.delete_config.assert_called_once_with("keboola.sandboxes", "cfg-123")
-        mock_client.close.assert_called_once()
+        mock_client.delete_config.assert_called_once_with(
+            "keboola.sandboxes", "cfg-123", branch_id=123
+        )
+        # close() called twice: once in _resolve_branch_id, once in delete_workspace
+        assert mock_client.close.call_count == 2
 
     def test_delete_workspace_api_error(self, tmp_config_dir: Path) -> None:
         """delete_workspace propagates KeboolaApiError from delete call."""
         mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
         # get_workspace fails (workspace lookup), but delete_workspace also fails
         mock_client.get_workspace.side_effect = KeboolaApiError(
             message="Workspace not found",
@@ -400,6 +452,37 @@ class TestDeleteWorkspace:
 
         with pytest.raises(KeboolaApiError, match="Workspace not found"):
             svc.delete_workspace(alias="prod", workspace_id=999)
+
+    def test_delete_workspace_in_dev_branch(self, tmp_config_dir: Path) -> None:
+        """delete_workspace uses active_branch_id for config deletion."""
+        mock_client = MagicMock()
+        mock_client.get_workspace.return_value = {
+            "component": "keboola.sandboxes",
+            "configurationId": "cfg-789",
+        }
+
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-xxx",
+                project_name="Production",
+                project_id=258,
+                active_branch_id=200,
+            ),
+        )
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.delete_workspace(alias="prod", workspace_id=42)
+
+        assert result["workspace_id"] == 42
+        mock_client.delete_config.assert_called_once_with(
+            "keboola.sandboxes", "cfg-789", branch_id=200
+        )
 
 
 class TestResetPassword:

@@ -448,6 +448,7 @@ class KeboolaClient(BaseHttpClient):
         name: str,
         description: str = "",
         backend_size: str = "small",
+        branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Create a keboola.sandboxes configuration.
 
@@ -458,6 +459,7 @@ class KeboolaClient(BaseHttpClient):
             name: Human-readable name for the workspace.
             description: Optional description.
             backend_size: Backend size (small, medium, large).
+            branch_id: Branch ID. If provided, creates config in that branch.
 
         Returns:
             Configuration dict with id, name, etc.
@@ -471,9 +473,10 @@ class KeboolaClient(BaseHttpClient):
             },
             "runtime": {"shared": False},
         }
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         response = self._request(
             "POST",
-            "/v2/storage/components/keboola.sandboxes/configs",
+            f"{prefix}/components/keboola.sandboxes/configs",
             data={
                 "name": name,
                 "description": description,
@@ -482,18 +485,22 @@ class KeboolaClient(BaseHttpClient):
         )
         return response.json()
 
-    def delete_config(self, component_id: str, config_id: str) -> None:
+    def delete_config(
+        self, component_id: str, config_id: str, branch_id: int | None = None
+    ) -> None:
         """Delete a component configuration.
 
         Args:
             component_id: Component ID.
             config_id: Configuration ID.
+            branch_id: Branch ID. If provided, deletes config in that branch.
         """
         safe_component = quote(component_id, safe="")
         safe_config = quote(config_id, safe="")
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         self._request(
             "DELETE",
-            f"/v2/storage/components/{safe_component}/configs/{safe_config}",
+            f"{prefix}/components/{safe_component}/configs/{safe_config}",
         )
 
     def create_config_workspace(

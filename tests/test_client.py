@@ -1510,3 +1510,71 @@ class TestDeleteDevBranch:
         ) as client:
             # Should not raise any exception
             client.delete_dev_branch(789)
+
+
+class TestCreateSandboxConfigBranch:
+    """Tests for create_sandbox_config() branch_id routing."""
+
+    def test_create_sandbox_config_no_branch(self, httpx_mock) -> None:
+        """Without branch_id, uses /v2/storage/components/... endpoint."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/components/keboola.sandboxes/configs",
+            method="POST",
+            json={"id": "cfg-1", "name": "test"},
+            status_code=201,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.create_sandbox_config(name="test")
+            assert result["id"] == "cfg-1"
+
+    def test_create_sandbox_config_with_branch(self, httpx_mock) -> None:
+        """With branch_id, uses /v2/storage/branch/{id}/components/... endpoint."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/branch/200/components/keboola.sandboxes/configs",
+            method="POST",
+            json={"id": "cfg-2", "name": "branch-ws"},
+            status_code=201,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            result = client.create_sandbox_config(name="branch-ws", branch_id=200)
+            assert result["id"] == "cfg-2"
+
+
+class TestDeleteConfigBranch:
+    """Tests for delete_config() branch_id routing."""
+
+    def test_delete_config_no_branch(self, httpx_mock) -> None:
+        """Without branch_id, uses /v2/storage/components/... endpoint."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/components/keboola.sandboxes/configs/cfg-1",
+            method="DELETE",
+            status_code=204,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            client.delete_config("keboola.sandboxes", "cfg-1")
+
+    def test_delete_config_with_branch(self, httpx_mock) -> None:
+        """With branch_id, uses /v2/storage/branch/{id}/components/... endpoint."""
+        httpx_mock.add_response(
+            url="https://connection.keboola.com/v2/storage/branch/200/components/keboola.sandboxes/configs/cfg-1",
+            method="DELETE",
+            status_code=204,
+        )
+
+        with KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token="901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k",
+        ) as client:
+            client.delete_config("keboola.sandboxes", "cfg-1", branch_id=200)

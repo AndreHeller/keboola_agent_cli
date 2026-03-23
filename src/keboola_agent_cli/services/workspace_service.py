@@ -85,10 +85,11 @@ class WorkspaceService(BaseService):
 
         client = self._client_factory(project.stack_url, project.token)
         try:
-            # Step 1: Create keboola.sandboxes config
+            # Step 1: Create keboola.sandboxes config (in the correct branch)
             sandbox_config = client.create_sandbox_config(
                 name=effective_name,
                 description="Created by kbagent CLI",
+                branch_id=branch_id,
             )
             config_id = sandbox_config.get("id", "")
 
@@ -341,6 +342,7 @@ class WorkspaceService(BaseService):
         """
         projects = self.resolve_projects([alias])
         project = projects[alias]
+        branch_id = self._resolve_branch_id(alias, project)
 
         client = self._client_factory(project.stack_url, project.token)
         try:
@@ -356,10 +358,12 @@ class WorkspaceService(BaseService):
             # Delete the workspace
             client.delete_workspace(workspace_id)
 
-            # Clean up associated sandboxes config
+            # Clean up associated sandboxes config (in the correct branch)
             if config_id and component == "keboola.sandboxes":
                 try:
-                    client.delete_config("keboola.sandboxes", config_id)
+                    client.delete_config(
+                        "keboola.sandboxes", config_id, branch_id=branch_id
+                    )
                 except KeboolaApiError:
                     logger.debug("Could not delete sandbox config %s", config_id)
         finally:

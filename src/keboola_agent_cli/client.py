@@ -404,43 +404,27 @@ class KeboolaClient(BaseHttpClient):
 
     # --- Workspace CRUD ---
 
-    def create_workspace(
-        self,
-        backend: str = "snowflake",
-        read_only: bool = True,
-    ) -> dict[str, Any]:
-        """Create a new workspace.
-
-        Args:
-            backend: Workspace backend (snowflake, bigquery, etc.).
-            read_only: Whether the workspace is read-only.
-
-        Returns:
-            Workspace dict including connection credentials (password only available on creation).
-        """
-        body: dict[str, Any] = {"backend": backend}
-        if read_only:
-            body["readOnlyStorageAccess"] = True
-        response = self._request("POST", "/v2/storage/workspaces", json=body)
-        return response.json()
-
-    def list_workspaces(self) -> list[dict[str, Any]]:
+    def list_workspaces(self, branch_id: int | None = None) -> list[dict[str, Any]]:
         """List all workspaces in the project."""
-        response = self._request("GET", "/v2/storage/workspaces")
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        response = self._request("GET", f"{prefix}/workspaces")
         return response.json()
 
-    def get_workspace(self, workspace_id: int) -> dict[str, Any]:
+    def get_workspace(self, workspace_id: int, branch_id: int | None = None) -> dict[str, Any]:
         """Get workspace details (note: password is NOT included)."""
-        response = self._request("GET", f"/v2/storage/workspaces/{workspace_id}")
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        response = self._request("GET", f"{prefix}/workspaces/{workspace_id}")
         return response.json()
 
-    def delete_workspace(self, workspace_id: int) -> None:
+    def delete_workspace(self, workspace_id: int, branch_id: int | None = None) -> None:
         """Delete a workspace (synchronous)."""
-        self._request("DELETE", f"/v2/storage/workspaces/{workspace_id}")
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        self._request("DELETE", f"{prefix}/workspaces/{workspace_id}")
 
-    def reset_workspace_password(self, workspace_id: int) -> dict[str, Any]:
+    def reset_workspace_password(self, workspace_id: int, branch_id: int | None = None) -> dict[str, Any]:
         """Reset workspace password. Returns new password."""
-        response = self._request("POST", f"/v2/storage/workspaces/{workspace_id}/password")
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        response = self._request("POST", f"{prefix}/workspaces/{workspace_id}/password")
         return response.json()
 
     def create_sandbox_config(
@@ -549,6 +533,7 @@ class KeboolaClient(BaseHttpClient):
         self,
         workspace_id: int,
         tables: list[dict[str, Any]],
+        branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Load tables into a workspace (async operation).
 
@@ -557,6 +542,7 @@ class KeboolaClient(BaseHttpClient):
             tables: List of table load definitions, each with at minimum:
                 - source: table ID (e.g. "in.c-bucket.table")
                 - destination: target table name in workspace
+            branch_id: Branch ID. Required for workspaces on dev branches.
 
         Returns:
             Completed storage job dict (polls until done).
@@ -564,10 +550,11 @@ class KeboolaClient(BaseHttpClient):
         Raises:
             KeboolaApiError: If the load job fails or times out.
         """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         body: dict[str, Any] = {"input": tables}
         response = self._request(
             "POST",
-            f"/v2/storage/workspaces/{workspace_id}/load",
+            f"{prefix}/workspaces/{workspace_id}/load",
             json=body,
         )
         return self._wait_for_storage_job(response.json())

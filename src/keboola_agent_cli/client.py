@@ -170,6 +170,51 @@ class KeboolaClient(BaseHttpClient):
         response = self._request("GET", "/v2/storage/components", params=params)
         return response.json()
 
+    def list_components_with_configs(self, branch_id: int | None = None) -> list[dict[str, Any]]:
+        """List all components with full configuration bodies and rows.
+
+        Makes a single API call to fetch everything needed for sync pull.
+        Uses the include=configuration,rows parameter to get full config
+        bodies and config rows in one request.
+
+        Args:
+            branch_id: If set, target a specific dev branch.
+
+        Returns:
+            List of component dicts, each containing a 'configurations' list
+            with full config bodies and nested 'rows'.
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        resp = self._request(
+            "GET",
+            f"{prefix}/components",
+            params={"include": "configuration,rows"},
+        )
+        return resp.json()
+
+    def list_config_rows(
+        self,
+        component_id: str,
+        config_id: str,
+        branch_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all rows for a specific configuration.
+
+        Args:
+            component_id: Component identifier (e.g. 'keboola.ex-http').
+            config_id: Configuration ID.
+            branch_id: If set, target a specific dev branch.
+
+        Returns:
+            List of config row dicts.
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        resp = self._request(
+            "GET",
+            f"{prefix}/components/{quote(component_id)}/configs/{quote(config_id)}/rows",
+        )
+        return resp.json()
+
     def get_config_detail(self, component_id: str, config_id: str) -> dict[str, Any]:
         """Get detailed information about a specific configuration.
 
@@ -187,6 +232,153 @@ class KeboolaClient(BaseHttpClient):
             f"/v2/storage/components/{safe_component_id}/configs/{safe_config_id}",
         )
         return response.json()
+
+    def create_config(
+        self,
+        component_id: str,
+        name: str,
+        configuration: dict[str, Any],
+        description: str = "",
+        branch_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a new configuration for a component.
+
+        POST /v2/storage/[branch/{id}/]components/{comp_id}/configs
+
+        Args:
+            component_id: Component identifier.
+            name: Configuration name.
+            configuration: Configuration body (parameters, storage, etc.).
+            description: Optional description.
+            branch_id: If set, target a specific dev branch.
+
+        Returns:
+            Created configuration dict including the assigned 'id'.
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        resp = self._request(
+            "POST",
+            f"{prefix}/components/{quote(component_id)}/configs",
+            data={
+                "name": name,
+                "description": description,
+                "configuration": json.dumps(configuration),
+            },
+        )
+        return resp.json()
+
+    def update_config(
+        self,
+        component_id: str,
+        config_id: str,
+        name: str | None = None,
+        configuration: dict[str, Any] | None = None,
+        description: str | None = None,
+        change_description: str = "",
+        branch_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing configuration.
+
+        PUT /v2/storage/[branch/{id}/]components/{comp_id}/configs/{config_id}
+
+        Only provided (non-None) fields are sent in the request.
+
+        Returns:
+            Updated configuration dict.
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        data: dict[str, Any] = {}
+        if name is not None:
+            data["name"] = name
+        if description is not None:
+            data["description"] = description
+        if configuration is not None:
+            data["configuration"] = json.dumps(configuration)
+        if change_description:
+            data["changeDescription"] = change_description
+        resp = self._request(
+            "PUT",
+            f"{prefix}/components/{quote(component_id)}/configs/{quote(config_id)}",
+            data=data,
+        )
+        return resp.json()
+
+    def create_config_row(
+        self,
+        component_id: str,
+        config_id: str,
+        name: str,
+        configuration: dict[str, Any],
+        description: str = "",
+        branch_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a new configuration row.
+
+        POST /v2/storage/[branch/{id}/]components/{comp_id}/configs/{config_id}/rows
+
+        Returns:
+            Created row dict including the assigned 'id'.
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        resp = self._request(
+            "POST",
+            f"{prefix}/components/{quote(component_id)}/configs/{quote(config_id)}/rows",
+            data={
+                "name": name,
+                "description": description,
+                "configuration": json.dumps(configuration),
+            },
+        )
+        return resp.json()
+
+    def update_config_row(
+        self,
+        component_id: str,
+        config_id: str,
+        row_id: str,
+        name: str | None = None,
+        configuration: dict[str, Any] | None = None,
+        description: str | None = None,
+        change_description: str = "",
+        branch_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing configuration row.
+
+        PUT /v2/storage/[branch/{id}/]components/{comp_id}/configs/{config_id}/rows/{row_id}
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        data: dict[str, Any] = {}
+        if name is not None:
+            data["name"] = name
+        if description is not None:
+            data["description"] = description
+        if configuration is not None:
+            data["configuration"] = json.dumps(configuration)
+        if change_description:
+            data["changeDescription"] = change_description
+        resp = self._request(
+            "PUT",
+            f"{prefix}/components/{quote(component_id)}/configs/{quote(config_id)}/rows/{quote(row_id)}",
+            data=data,
+        )
+        return resp.json()
+
+    def delete_config_row(
+        self,
+        component_id: str,
+        config_id: str,
+        row_id: str,
+        branch_id: int | None = None,
+    ) -> None:
+        """Delete a configuration row.
+
+        DELETE /v2/storage/[branch/{id}/]components/{comp_id}/configs/{config_id}/rows/{row_id}
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        self._request(
+            "DELETE",
+            f"{prefix}/components/{quote(component_id)}/configs/{quote(config_id)}/rows/{quote(row_id)}",
+        )
 
     def _wait_for_storage_job(self, job: dict[str, Any]) -> dict[str, Any]:
         """Poll a Storage API job until it reaches a terminal state.

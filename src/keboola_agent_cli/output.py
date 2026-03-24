@@ -877,3 +877,59 @@ def format_query_results(console: Console, data: dict[str, Any]) -> None:
 
     panel = Panel("\n".join(lines), title=f"Query Results - Workspace {workspace_id}", expand=False)
     console.print(panel)
+
+
+def format_search_results(console: Console, data: dict[str, Any]) -> None:
+    """Render search results as a Rich table with match locations.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with "matches", "errors", and "stats".
+    """
+    matches = data.get("matches", [])
+    errors = data.get("errors", [])
+    stats = data.get("stats", {})
+
+    for err in errors:
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Project [bold]{err['project_alias']}[/bold]: "
+            f"{err['message']}"
+        )
+
+    if not matches:
+        console.print(
+            f"No matches found. Searched {stats.get('configs_searched', 0)} "
+            f"configurations across {stats.get('projects_searched', 0)} project(s)."
+        )
+        return
+
+    table = Table(title="Search Results")
+    table.add_column("Project", style="bold cyan")
+    table.add_column("Component", style="dim")
+    table.add_column("Config ID", justify="right")
+    table.add_column("Config Name")
+    table.add_column("Hits", justify="right", style="bold yellow")
+    table.add_column("Match Locations", style="dim", max_width=60)
+
+    for match in matches:
+        locations = match.get("match_locations", [])
+        # Show first 3 locations, truncate the rest
+        display_locations = ", ".join(locations[:3])
+        if len(locations) > 3:
+            display_locations += f", ... (+{len(locations) - 3})"
+
+        table.add_row(
+            match["project_alias"],
+            match["component_id"],
+            match["config_id"],
+            match["config_name"],
+            str(match.get("match_count", len(locations))),
+            display_locations,
+        )
+
+    console.print(table)
+    console.print(
+        f"\n[bold]{stats.get('matches_found', 0)}[/bold] matching config(s) "
+        f"in {stats.get('configs_searched', 0)} searched "
+        f"across {stats.get('projects_searched', 0)} project(s)."
+    )

@@ -14,6 +14,7 @@ Not all commands return data the same way. Key differences:
 | `tool call` | `{"results": [...]}` (one per project) |
 | `workspace list` | `{"workspaces": [...], "errors": [...]}` |
 | `branch list` | `{"branches": [...]}` |
+| `config search` | `{"matches": [...], "errors": [...], "stats": {...}}` |
 
 Always check the actual response structure rather than assuming a pattern.
 

@@ -82,13 +82,12 @@ After `uv tool install`, `kbagent` is available globally in your shell.
 
 ### Where is everything stored?
 
-All configuration lives in a single file:
+All configuration lives in a single file (permissions: `0600`):
 
-```
-~/.config/keboola-agent-cli/config.json    (permissions: 0600)
-```
+- **macOS:** `~/Library/Application Support/keboola-agent-cli/config.json`
+- **Linux:** `~/.config/keboola-agent-cli/config.json`
 
-This file contains **Storage API tokens** for each connected project. File permissions are set to `0600` (owner read/write only) to protect these tokens. Tokens are always masked in CLI output (e.g. `901-...pt0k`).
+This file contains **Storage API tokens** for each connected project. Tokens are always masked in CLI output (e.g. `901-...pt0k`).
 
 ### Workspace isolation (per-client directories)
 

@@ -2,13 +2,14 @@
 name: kbagent
 description: >
   Use when working with Keboola Connection projects via kbagent CLI.
-  Covers: exploring configurations (extractors, writers, transformations),
+  Covers: exploring and searching configurations (extractors, writers, transformations),
   browsing job history, analyzing cross-project data lineage, calling MCP tools
   across multiple projects, managing development branches, debugging SQL in
   temporary workspaces, bulk-onboarding organizations, and generating explorer
   dashboards. Triggers: kbagent, Keboola project, keboola configs, keboola jobs,
   keboola lineage, keboola transformations, keboola MCP tools, keboola workspace,
-  SQL debugging, keboola branches, keboola organization, keboola explorer.
+  SQL debugging, keboola branches, keboola organization, keboola explorer,
+  search configs, find in configurations, audit configurations.
 ---
 
 # kbagent -- Keboola Agent CLI
@@ -36,6 +37,7 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 |------|---------|
 | See what projects are connected | `kbagent --json project list` |
 | Browse configs across projects | `kbagent --json config list` |
+| Find a string in configs (audit, grep) | `kbagent --json config search -q "pattern" [-i] [-r]` |
 | Check for failed jobs | `kbagent --json job list --status error` |
 | Understand data flow between projects | `kbagent --json lineage` |
 | Generate visual dashboard | `kbagent explorer` |

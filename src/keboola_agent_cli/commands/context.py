@@ -90,6 +90,21 @@ Then explore:
     Example:
       kbagent --json config detail --project prod --component-id keboola.ex-db-snowflake --config-id 12345
 
+  kbagent config search --query PATTERN [--project NAME] [--component-type TYPE] [--component-id ID] [--ignore-case] [--regex]
+    Search through configuration bodies (names, descriptions, parameters, rows)
+    for a string or regex pattern. Reports matching configs and WHERE in the JSON
+    tree the match was found. Runs across all connected projects in parallel.
+    Default: case-sensitive substring match.
+    -i / --ignore-case: case-insensitive matching.
+    -r / --regex: interpret query as a regular expression.
+    --project can be repeated to limit to specific projects.
+    Examples:
+      kbagent --json config search --query "password"
+      kbagent --json config search --query "marketing" --ignore-case
+      kbagent --json config search --query "marketing" -i --project prod
+      kbagent --json config search --query "\\d{{3}}-\\d+" --regex
+      kbagent --json config search --query "(password|secret|heslo)" --regex --ignore-case
+
 ### Job History
 
   kbagent job list [--project NAME] [--component-id ID] [--config-id ID] [--status STATUS] [--limit N]

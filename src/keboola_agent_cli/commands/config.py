@@ -1,14 +1,16 @@
-"""Configuration browsing commands - list and detail.
+"""Configuration browsing commands - list, detail, and search.
 
 Thin CLI layer: parses arguments, calls ConfigService, formats output.
 No business logic belongs here.
 """
 
+import re
+
 import typer
 
 from ..constants import VALID_COMPONENT_TYPES
 from ..errors import ConfigError, KeboolaApiError
-from ..output import format_config_detail, format_configs_table
+from ..output import format_config_detail, format_configs_table, format_search_results
 from ._helpers import emit_project_warnings, get_formatter, get_service, map_error_to_exit_code
 
 config_app = typer.Typer(help="Browse and inspect configurations")
@@ -95,3 +97,83 @@ def config_detail(
             retryable=exc.retryable,
         )
         raise typer.Exit(code=exit_code) from None
+
+
+@config_app.command("search")
+def config_search(
+    ctx: typer.Context,
+    query: str = typer.Option(..., "--query", "-q", help="Search string or regex pattern"),
+    project: list[str] | None = typer.Option(
+        None,
+        "--project",
+        help="Project alias to search (can be repeated for multiple projects)",
+    ),
+    component_type: str | None = typer.Option(
+        None,
+        "--component-type",
+        help="Filter by component type: extractor, writer, transformation, application",
+    ),
+    component_id: str | None = typer.Option(
+        None,
+        "--component-id",
+        help="Filter by specific component ID (e.g. keboola.ex-db-snowflake)",
+    ),
+    ignore_case: bool = typer.Option(
+        False,
+        "--ignore-case",
+        "-i",
+        help="Case-insensitive matching",
+    ),
+    use_regex: bool = typer.Option(
+        False,
+        "--regex",
+        "-r",
+        help="Interpret query as a regular expression",
+    ),
+) -> None:
+    """Search through configuration bodies for a string or pattern.
+
+    Searches config names, descriptions, parameters, and row definitions.
+    Reports which configurations match and where in the JSON tree.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "config_service")
+
+    # Validate component_type
+    if component_type and component_type not in VALID_COMPONENT_TYPES:
+        formatter.error(
+            message=f"Invalid component type '{component_type}'. "
+            f"Valid types: {', '.join(VALID_COMPONENT_TYPES)}",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2)
+
+    # Validate regex if provided
+    if use_regex:
+        try:
+            re.compile(query)
+        except re.error as exc:
+            formatter.error(
+                message=f"Invalid regex pattern: {exc}",
+                error_code="INVALID_ARGUMENT",
+            )
+            raise typer.Exit(code=2) from None
+
+    try:
+        result = service.search_configs(
+            query=query,
+            aliases=project,
+            component_type=component_type,
+            component_id=component_id,
+            ignore_case=ignore_case,
+            use_regex=use_regex,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        format_search_results(formatter.console, result)
+        emit_project_warnings(formatter, result)

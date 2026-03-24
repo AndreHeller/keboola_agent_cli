@@ -63,9 +63,6 @@ uv tool install git+https://github.com/padak/keboola_agent_cli
 # Update to latest version
 uv tool install --reinstall git+https://github.com/padak/keboola_agent_cli
 
-# Install a specific version
-uv tool install git+https://github.com/padak/keboola_agent_cli@v0.9.0
-
 # Run without installing (one-off use)
 uvx --from git+https://github.com/padak/keboola_agent_cli kbagent --help
 ```

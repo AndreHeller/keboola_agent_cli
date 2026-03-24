@@ -64,6 +64,24 @@ class ConfigService(BaseService):
         client = self._client_factory(project.stack_url, project.token)
         try:
             components = client.list_components(component_type=component_type)
+
+            # Fetch folder metadata (requires branch ID — search endpoint is branch-only)
+            folder_map: dict[str, str] = {}
+            try:
+                # Use active branch or find the default branch ID
+                branch_id = project.active_branch_id
+                if not branch_id:
+                    # Fetch default branch ID from dev-branches endpoint
+                    branches = client.list_dev_branches()
+                    default = next((b for b in branches if b.get("isDefault")), None)
+                    if default:
+                        branch_id = default["id"]
+                if branch_id:
+                    result = client.list_config_folder_metadata(branch_id=branch_id)
+                    folder_map = result if isinstance(result, dict) else {}
+            except Exception:
+                pass  # graceful fallback if search endpoint unavailable
+
             configs: list[dict[str, Any]] = []
             for component in components:
                 comp_id = component.get("id", "")
@@ -79,6 +97,7 @@ class ConfigService(BaseService):
                     # Extract last-modified info from currentVersion
                     current_version = cfg.get("currentVersion", {})
                     creator_token = current_version.get("creatorToken", {})
+                    cfg_id = str(cfg.get("id", ""))
 
                     configs.append(
                         {
@@ -86,12 +105,13 @@ class ConfigService(BaseService):
                             "component_id": comp_id,
                             "component_name": comp_name,
                             "component_type": comp_type,
-                            "config_id": str(cfg.get("id", "")),
+                            "config_id": cfg_id,
                             "config_name": cfg.get("name", ""),
                             "config_description": cfg.get("description", ""),
                             "last_modified": current_version.get("created", ""),
                             "last_modified_by": creator_token.get("description", ""),
                             "last_change_description": current_version.get("changeDescription", ""),
+                            "folder": folder_map.get(f"{comp_id}/{cfg_id}", ""),
                         }
                     )
             return (alias, configs, True)

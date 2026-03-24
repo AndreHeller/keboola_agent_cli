@@ -142,6 +142,32 @@ Then explore:
     Example:
       kbagent --json job detail --project prod --job-id 148512262
 
+### Storage (Buckets and Tables)
+
+  kbagent storage buckets [--project NAME]
+    List storage buckets with sharing/linked bucket information.
+    Shows which buckets are linked from other projects, including the
+    source project ID and name. This info is NOT available via MCP tools.
+    Examples:
+      kbagent --json storage buckets
+      kbagent --json storage buckets --project prod
+
+  kbagent storage bucket-detail --project NAME --bucket-id BUCKET_ID
+    Show detailed bucket info including Snowflake direct access paths.
+    For linked/shared buckets, resolves the correct Snowflake database
+    and schema from the source project. Each table includes a ready-to-use
+    fully-qualified Snowflake path with proper quoting.
+    CRITICAL for direct Snowflake access: linked buckets live in a different
+    database than the current project (e.g. sapi_1507 instead of sapi_226).
+    Example:
+      kbagent --json storage bucket-detail --project slevomat --bucket-id in.c-db
+
+  kbagent storage tables --project NAME [--bucket-id BUCKET_ID]
+    List storage tables, optionally filtered by bucket.
+    Example:
+      kbagent --json storage tables --project prod
+      kbagent --json storage tables --project prod --bucket-id in.c-main
+
 ### Data Lineage
 
   kbagent lineage [--project NAME]
@@ -557,6 +583,19 @@ Then explore:
        # ^ UI mode, slower (~15s), visible in Keboola UI Workspaces tab
      kbagent --json workspace load --project prod --workspace-id WS_ID --tables in.c-bucket.my-table
      kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT * FROM \"my-table\" LIMIT 10"
+
+     IMPORTANT -- Snowflake quoting rules for workspace queries:
+     Snowflake converts unquoted identifiers to UPPERCASE. If a database,
+     schema, or table name contains lowercase letters, dots, or hyphens,
+     you MUST double-quote it. This applies to ALL identifiers:
+       WRONG: SELECT * FROM sap_9.my_schema.my_table
+              (Snowflake reads this as SAP_9.MY_SCHEMA.MY_TABLE -- not found!)
+       RIGHT: SELECT * FROM "sap_9"."my_schema"."my_table"
+     Best practice: ALWAYS double-quote database, schema, and table names
+     in workspace queries, even if they look like they don't need it.
+     Keboola workspace database/schema names are often lowercase.
+     For shared/linked buckets, use 'kbagent storage bucket-detail' to get
+     the correct fully-qualified Snowflake path (source project DB differs).
 
 16. Setting up projects -- two approaches:
 

@@ -16,22 +16,39 @@ Keboola's web UI and standard API clients work great for a single project. But w
 
 ## What it can do
 
-| Command group | What it does |
-|---------------|-------------|
-| `project` | Add, remove, edit, list, and check status of connected Keboola projects |
-| `config` | Browse configurations (extractors, writers, transformations, applications) across projects |
-| `job` | Browse job history -- list and inspect jobs from the Queue API |
-| `lineage show` | Analyze cross-project data flow via bucket sharing (parallel across all projects) |
-| `org setup` | Bulk-onboard all projects from a Keboola organization (uses Manage API) |
-| `tool` | List and call MCP tools from keboola-mcp-server (read tools run across all projects in parallel) |
-| `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
-| `workspace` | Create workspaces, load tables, run SQL queries -- iterative SQL debugging without full jobs |
-| `explorer` | Generate KBC Explorer dashboard with catalog, orchestrations, and lineage visualization |
-| `llm export` | AI-optimized project export via `kbc` Go binary (auto-resolves credentials) |
-| `version` | Show kbagent version and check for kbc / MCP server updates |
-| `context` | Print comprehensive usage instructions for AI agents |
+**Setup & Info**
+
+| Command | What it does |
+|---------|-------------|
 | `init` | Initialize a local `.kbagent/` workspace for per-directory project isolation |
 | `doctor` | Health check -- verifies config, permissions, connectivity, MCP server availability |
+| `version` | Show kbagent version and check for dependency updates |
+| `context` | Print comprehensive usage instructions for AI agents |
+
+**Project Management**
+
+| Command | What it does |
+|---------|-------------|
+| `project` | Add, remove, edit, list, and check status of connected Keboola projects |
+| `org setup` | Bulk-onboard all projects from a Keboola organization (uses Manage API) |
+
+**Browse & Inspect**
+
+| Command | What it does |
+|---------|-------------|
+| `config` | List, detail, search, update, delete configurations across projects |
+| `job` | Browse job history -- list and inspect jobs from the Queue API |
+| `storage` | Browse buckets and tables with Snowflake path resolution for shared buckets |
+| `lineage` | Analyze cross-project data flow via bucket sharing |
+
+**Development**
+
+| Command | What it does |
+|---------|-------------|
+| `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
+| `workspace` | Create workspaces, load tables, run SQL queries -- iterative SQL debugging |
+| `tool` | List and call MCP tools from keboola-mcp-server (read tools run in parallel) |
+| `sync` | **(BETA)** Sync project configurations with local filesystem (GitOps workflow) |
 
 Every command supports `--json` for structured output and Rich formatting for human-readable output.
 
@@ -47,7 +64,7 @@ uv tool install git+https://github.com/padak/keboola_agent_cli
 uv tool install --reinstall git+https://github.com/padak/keboola_agent_cli
 
 # Install a specific version
-uv tool install git+https://github.com/padak/keboola_agent_cli@v0.7.4
+uv tool install git+https://github.com/padak/keboola_agent_cli@v0.9.0
 
 # Run without installing (one-off use)
 uvx --from git+https://github.com/padak/keboola_agent_cli kbagent --help
@@ -229,16 +246,11 @@ Works with any Keboola stack -- AWS, Azure, GCP. Examples:
 
 This repo doubles as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin marketplace. Install the `kbagent` skill to teach Claude how to use the CLI effectively:
 
-```
-/plugin marketplace add padak/keboola_agent_cli
-/plugin install kbagent@keboola-agent-cli
+```bash
+claude install-plugin https://github.com/padak/keboola_agent_cli
 ```
 
 Once installed, Claude automatically recognizes Keboola-related tasks and knows how to use `kbagent` commands, including workspace SQL debugging, dev branch workflows, and multi-project operations. The skill loads `kbagent context` dynamically so documentation stays in sync with the installed CLI version.
-
-## KBC Explorer
-
-A standalone HTML viewer for interactive visualization of cross-project data lineage graphs. Located in `kbc-explorer/` -- see [kbc-explorer/README.md](kbc-explorer/README.md) for details.
 
 ## Development
 
@@ -257,6 +269,7 @@ make test           # run all tests
 make test-unit      # run unit tests only
 make lint           # run ruff linter
 make format         # format code with ruff
+make hooks          # install pre-commit hook (lint + format)
 make check          # run lint + format-check + test (CI-like)
 make clean          # remove caches and build artifacts
 ```

@@ -26,7 +26,7 @@ from ..sync.config_format import (
     classify_component_type,
     local_config_to_api,
 )
-from ..sync.diff_engine import compute_changeset
+from ..sync.diff_engine import compute_changeset, config_hash
 from ..sync.git_utils import get_default_branch, is_git_repo
 from ..sync.manifest import (
     Manifest,
@@ -176,6 +176,7 @@ class SyncService(BaseService):
         alias: str,
         project_root: Path,
         force: bool = False,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Download all configurations from Keboola to local filesystem.
 
@@ -183,6 +184,7 @@ class SyncService(BaseService):
             alias: Project alias from config store.
             project_root: Root directory of the sync working tree.
             force: If True, overwrite existing local files without checking.
+            dry_run: If True, compute what would be pulled but don't write.
 
         Returns:
             Dict with pull statistics (configs, rows, files written).
@@ -212,17 +214,27 @@ class SyncService(BaseService):
 
         branch_dir = project_root / branch_dir_name
 
-        # Track stats
+        # Track stats and change details
         configs_pulled = 0
         rows_pulled = 0
         files_written = 0
         new_configurations: list[ManifestConfiguration] = []
         used_paths: set[str] = set()  # detect naming collisions
+        pull_details: list[dict[str, str]] = []  # per-config change info
 
-        # Build lookup for existing manifest paths by config ID
-        # so renames don't cause path changes (stable paths)
+        # Build lookups for existing manifest state
         existing_paths: dict[str, str] = {
             f"{c.component_id}/{c.id}": c.path for c in manifest.configurations
+        }
+        existing_keys: set[str] = set(existing_paths.keys())
+        existing_config_hashes: dict[str, str] = {
+            f"{c.component_id}/{c.id}": c.metadata.get("pull_config_hash", "")
+            for c in manifest.configurations
+        }
+        # Build lookup for file hashes at pull time (to detect local edits)
+        existing_file_hashes: dict[str, str] = {
+            f"{c.component_id}/{c.id}": c.metadata.get("pull_hash", "")
+            for c in manifest.configurations
         }
 
         for component in components:
@@ -236,6 +248,7 @@ class SyncService(BaseService):
 
                 # Reuse existing path if config is already tracked (stable paths)
                 lookup_key = f"{component_id}/{config_id}"
+                is_new = lookup_key not in existing_keys
                 if lookup_key in existing_paths:
                     rel_path = existing_paths[lookup_key]
                 else:
@@ -256,17 +269,94 @@ class SyncService(BaseService):
                 # Convert API format to local _config.yml
                 local_data = api_config_to_local(component_id, cfg, config_id)
 
-                # Extract code files (SQL, Python) if applicable.
-                # This modifies local_data in place (removes blocks/code)
-                # and writes separate code files (transform.sql, transform.py, etc.)
-                extract_code_files(component_id, local_data, config_dir)
+                # Compute normalized config hash BEFORE extract_code_files
+                # mutates local_data.  Used by 3-way diff to determine which
+                # side changed (local vs remote).
+                pull_cfg_hash = config_hash(local_data)
 
-                # Write _config.yml (without extracted code) and capture content hash
-                file_hash = self._write_config_file(config_dir, local_data)
-                files_written += 1
-                configs_pulled += 1
+                # Detect local modifications: if file hash differs from
+                # pull_hash stored in manifest, the user edited the file.
+                # Skip overwrite unless --force to avoid losing local work.
+                locally_modified = False
+                if not is_new and not force:
+                    old_file_hash = existing_file_hashes.get(lookup_key, "")
+                    if old_file_hash:
+                        config_file = config_dir / CONFIG_FILENAME
+                        if config_file.exists():
+                            current_file_hash = self._file_hash(config_file)
+                            locally_modified = current_file_hash != old_file_hash
 
-                # Handle rows
+                remote_unchanged = False  # set in else branch; default for locally_modified path
+                if locally_modified and not dry_run:
+                    # Preserve the existing local file -- don't overwrite.
+                    # Still update manifest entry (remote hash changes, but
+                    # local file stays as-is).
+                    file_hash = self._file_hash(config_dir / CONFIG_FILENAME)
+                    pull_details.append(
+                        {
+                            "action": "skipped",
+                            "component_id": component_id,
+                            "config_name": config_name,
+                            "path": rel_path,
+                            "reason": "locally modified",
+                        }
+                    )
+                elif locally_modified and dry_run:
+                    file_hash = ""
+                    pull_details.append(
+                        {
+                            "action": "skipped",
+                            "component_id": component_id,
+                            "config_name": config_name,
+                            "path": rel_path,
+                            "reason": "locally modified",
+                        }
+                    )
+                else:
+                    # Check if remote actually changed since last pull.
+                    # If pull_config_hash matches, skip write (idempotent).
+                    old_cfg_hash = existing_config_hashes.get(lookup_key, "")
+                    remote_unchanged = not is_new and old_cfg_hash and old_cfg_hash == pull_cfg_hash
+
+                    if remote_unchanged:
+                        # Nothing changed -- reuse existing file hash
+                        config_file = config_dir / CONFIG_FILENAME
+                        file_hash = self._file_hash(config_file) if config_file.exists() else ""
+                    else:
+                        # Extract code files (SQL, Python) if applicable.
+                        # This modifies local_data in place (removes
+                        # blocks/code) and writes separate code files.
+                        if not dry_run:
+                            extract_code_files(component_id, local_data, config_dir)
+                            file_hash = self._write_config_file(config_dir, local_data)
+                        else:
+                            file_hash = ""
+
+                        configs_pulled += 1
+                        files_written += 1
+
+                        if is_new:
+                            pull_details.append(
+                                {
+                                    "action": "new",
+                                    "component_id": component_id,
+                                    "config_name": config_name,
+                                    "path": rel_path,
+                                }
+                            )
+                        else:
+                            pull_details.append(
+                                {
+                                    "action": "updated",
+                                    "component_id": component_id,
+                                    "config_name": config_name,
+                                    "path": rel_path,
+                                }
+                            )
+
+                # Handle rows -- skip writing if config is unchanged or
+                # locally modified (rows inherit the parent config's state).
+                skip_rows = locally_modified or remote_unchanged
                 row_manifests: list[ManifestConfigRow] = []
                 used_row_paths: set[str] = set()
                 for row in cfg.get("rows", []):
@@ -283,37 +373,70 @@ class SyncService(BaseService):
                     used_row_paths.add(row_rel_path)
                     row_dir = config_dir / row_rel_path
 
-                    row_local = api_row_to_local(row, component_id)
-                    self._write_config_file(row_dir, row_local)
-                    files_written += 1
-                    rows_pulled += 1
+                    if not skip_rows:
+                        row_local = api_row_to_local(row, component_id)
+                        if not dry_run:
+                            self._write_config_file(row_dir, row_local)
+                        files_written += 1
+                        rows_pulled += 1
 
                     row_manifests.append(ManifestConfigRow(id=row_id, path=row_rel_path))
 
-                # Record in manifest (store file hash for change detection)
+                # Record in manifest (store file hash for change detection).
+                # For skipped configs: keep existing pull_hash (file untouched)
+                # but do NOT update pull_config_hash -- keep the old base so
+                # 3-way diff still correctly detects the local modification.
+                if locally_modified:
+                    old_pull_hash = existing_file_hashes.get(lookup_key, file_hash)
+                    old_cfg_hash = existing_config_hashes.get(lookup_key, pull_cfg_hash)
+                    cfg_metadata = {
+                        "pull_hash": old_pull_hash,
+                        "pull_config_hash": old_cfg_hash,
+                    }
+                else:
+                    cfg_metadata = {
+                        "pull_hash": file_hash,
+                        "pull_config_hash": pull_cfg_hash,
+                    }
                 new_configurations.append(
                     ManifestConfiguration(
                         branch_id=branch_id or 0,
                         component_id=component_id,
                         id=config_id,
                         path=rel_path,
-                        metadata={"pull_hash": file_hash},
+                        metadata=cfg_metadata,
                         rows=row_manifests,
                     )
                 )
 
-        # Update manifest with pulled configurations
-        manifest.configurations = new_configurations
-        save_manifest(project_root, manifest)
+        # Detect configs removed from remote (in old manifest but not in new)
+        new_keys = {f"{c.component_id}/{c.id}" for c in new_configurations}
+        for old_cfg in manifest.configurations:
+            old_key = f"{old_cfg.component_id}/{old_cfg.id}"
+            if old_key not in new_keys:
+                pull_details.append(
+                    {
+                        "action": "removed",
+                        "component_id": old_cfg.component_id,
+                        "config_name": "",
+                        "path": old_cfg.path,
+                    }
+                )
+
+        if not dry_run:
+            # Update manifest with pulled configurations
+            manifest.configurations = new_configurations
+            save_manifest(project_root, manifest)
 
         return {
-            "status": "pulled",
+            "status": "dry_run" if dry_run else "pulled",
             "project_alias": alias,
             "branch_id": branch_id,
             "branch_dir": branch_dir_name,
             "configs_pulled": configs_pulled,
             "rows_pulled": rows_pulled,
             "files_written": files_written,
+            "details": pull_details,
         }
 
     # ------------------------------------------------------------------
@@ -422,8 +545,10 @@ class SyncService(BaseService):
 
         # Build local configs list from manifest
         # Merge code files (transform.sql, code.py, etc.) back into config
-        # data so comparison with remote is apples-to-apples
+        # data so comparison with remote is apples-to-apples.
+        # Also track which configs have unchanged files (for 3-way fallback).
         local_configs: list[dict[str, Any]] = []
+        file_unchanged: dict[str, bool] = {}  # key -> True if file matches pull_hash
         for cfg in manifest.configurations:
             branch_path = self._find_branch_path(manifest, cfg.branch_id)
             config_dir = project_root / branch_path / cfg.path
@@ -431,6 +556,8 @@ class SyncService(BaseService):
             if local_data is None:
                 continue
             merge_code_files(cfg.component_id, local_data, config_dir)
+
+            key = f"{cfg.component_id}/{cfg.id}"
             local_configs.append(
                 {
                     "component_id": cfg.component_id,
@@ -440,6 +567,13 @@ class SyncService(BaseService):
                     "data": local_data,
                 }
             )
+
+            # Track whether the file was changed locally (for fallback 3-way)
+            pull_hash = cfg.metadata.get("pull_hash", "")
+            if pull_hash:
+                config_file = config_dir / CONFIG_FILENAME
+                current_hash = self._file_hash(config_file) if config_file.exists() else ""
+                file_unchanged[key] = current_hash == pull_hash
 
         # Also add untracked local configs (new files)
         for added_cfg in self._find_untracked_configs(project_root, manifest):
@@ -458,19 +592,69 @@ class SyncService(BaseService):
                 }
             )
 
-        changeset = compute_changeset(local_configs, remote_configs)
+        # Build set of manifest-tracked keys so that compute_changeset only
+        # flags configs that were previously pulled (not brand-new remote ones).
+        tracked_keys = {f"{cfg.component_id}/{cfg.id}" for cfg in manifest.configurations}
+
+        # Build base hashes for 3-way diff.
+        # Preferred: pull_config_hash (normalized hash stored at pull time).
+        # Fallback: if file is unchanged since pull, use current config_hash
+        # as the base (since local == base when file hasn't been modified).
+        base_hashes: dict[str, str] = {}
+        for cfg in manifest.configurations:
+            key = f"{cfg.component_id}/{cfg.id}"
+            pch = cfg.metadata.get("pull_config_hash")
+            if pch:
+                base_hashes[key] = pch
+            elif file_unchanged.get(key):
+                # File not modified locally → local data IS the base.
+                # Find the matching local_configs entry and hash it.
+                for lc in local_configs:
+                    if lc.get("config_id") == cfg.id and lc["component_id"] == cfg.component_id:
+                        base_hashes[key] = config_hash(lc["data"])
+                        break
+
+        changeset = compute_changeset(
+            local_configs, remote_configs, tracked_keys, base_hashes or None
+        )
 
         added = [c for c in changeset if c.change_type == "added"]
         modified = [c for c in changeset if c.change_type == "modified"]
+        remote_modified = [c for c in changeset if c.change_type == "remote_modified"]
+        conflicts = [c for c in changeset if c.change_type == "conflict"]
         deleted = [c for c in changeset if c.change_type == "deleted"]
+
+        # Detect remote-only configs (new on server, not yet pulled).
+        local_keys = {
+            f"{e['component_id']}/{e['config_id']}" for e in local_configs if e.get("config_id")
+        } | tracked_keys
+        remote_only: list[dict[str, str]] = []
+        for remote_key, remote_data in remote_configs.items():
+            if remote_key not in local_keys:
+                parts = remote_key.split("/", 1)
+                remote_only.append(
+                    {
+                        "component_id": parts[0] if parts else "",
+                        "config_id": parts[1] if len(parts) > 1 else "",
+                        "config_name": remote_data.get("name", ""),
+                    }
+                )
 
         return {
             "changes": [c.to_dict() for c in changeset],
+            "remote_only": remote_only,
             "summary": {
                 "added": len(added),
                 "modified": len(modified),
+                "remote_modified": len(remote_modified),
+                "conflict": len(conflicts),
                 "deleted": len(deleted),
-                "unchanged": len(local_configs) - len(added) - len(modified),
+                "unchanged": len(local_configs)
+                - len(added)
+                - len(modified)
+                - len(remote_modified)
+                - len(conflicts),
+                "remote_only": len(remote_only),
             },
         }
 
@@ -500,16 +684,28 @@ class SyncService(BaseService):
             Dict with push results (created, updated, deleted, errors).
         """
         diff_result = self.diff(alias, project_root)
-        changes = diff_result["changes"]
+        all_changes = diff_result["changes"]
+
+        # Only push local-side changes (added, modified, deleted).
+        # Skip remote_modified (need pull) and conflict (need resolution).
+        pushable_types = {"added", "modified", "deleted"}
+        changes = [c for c in all_changes if c["change_type"] in pushable_types]
+
+        # Warn about skipped changes
+        skipped = [c for c in all_changes if c["change_type"] not in pushable_types]
 
         if not changes:
-            return {
+            result: dict[str, Any] = {
                 "status": "no_changes",
                 "created": 0,
                 "updated": 0,
                 "deleted": 0,
                 "errors": [],
             }
+            if skipped:
+                result["skipped"] = len(skipped)
+                result["skipped_reason"] = "Remote changes detected. Run 'sync pull' first."
+            return result
 
         if dry_run:
             return {
@@ -531,6 +727,9 @@ class SyncService(BaseService):
         updated = 0
         deleted = 0
         errors: list[dict[str, str]] = []
+        pushed_details: list[dict[str, str]] = []
+        manifest_dirty = False
+        branch_path = manifest.branches[0].path if manifest.branches else "main"
 
         with client:
             for change in changes:
@@ -550,7 +749,32 @@ class SyncService(BaseService):
                             branch_id,
                         )
                         if result:
+                            new_id = str(result.get("id", ""))
+                            # Add to manifest with the API-assigned ID
+                            config_dir = project_root / branch_path / config_path_str
+                            config_file = config_dir / CONFIG_FILENAME
+                            file_hash = self._file_hash(config_file) if config_file.exists() else ""
+                            local_data = self._read_config_file(config_dir)
+                            if local_data is not None:
+                                merge_code_files(component_id, local_data, config_dir)
+                                cfg_hash = config_hash(local_data)
+                            else:
+                                cfg_hash = ""
+                            manifest.configurations.append(
+                                ManifestConfiguration(
+                                    branch_id=branch_id or 0,
+                                    component_id=component_id,
+                                    id=new_id,
+                                    path=config_path_str,
+                                    metadata={
+                                        "pull_hash": file_hash,
+                                        "pull_config_hash": cfg_hash,
+                                    },
+                                )
+                            )
+                            manifest_dirty = True
                             created += 1
+                            pushed_details.append(change)
 
                     elif change_type == "modified":
                         self._push_update(
@@ -562,15 +786,41 @@ class SyncService(BaseService):
                             manifest,
                             branch_id,
                         )
+                        # Update both hashes so pull knows local == remote
+                        config_dir = project_root / branch_path / config_path_str
+                        config_file = config_dir / CONFIG_FILENAME
+                        if config_file.exists():
+                            new_file_hash = self._file_hash(config_file)
+                            local_data = self._read_config_file(config_dir)
+                            if local_data is not None:
+                                merge_code_files(component_id, local_data, config_dir)
+                                new_cfg_hash = config_hash(local_data)
+                            else:
+                                new_cfg_hash = ""
+                            for cfg in manifest.configurations:
+                                if cfg.component_id == component_id and cfg.id == config_id:
+                                    cfg.metadata["pull_hash"] = new_file_hash
+                                    cfg.metadata["pull_config_hash"] = new_cfg_hash
+                                    break
+                            manifest_dirty = True
                         updated += 1
+                        pushed_details.append(change)
 
-                    elif change_type == "deleted" and force:
+                    elif change_type == "deleted":
                         client.delete_config(
                             component_id=component_id,
                             config_id=config_id,
                             branch_id=branch_id,
                         )
+                        # Remove from manifest
+                        manifest.configurations = [
+                            c
+                            for c in manifest.configurations
+                            if not (c.component_id == component_id and c.id == config_id)
+                        ]
+                        manifest_dirty = True
                         deleted += 1
+                        pushed_details.append(change)
 
                 except Exception as exc:
                     logger.warning(
@@ -589,9 +839,9 @@ class SyncService(BaseService):
                         }
                     )
 
-        # Re-pull to update manifest with new IDs and sync state
-        if created > 0 or updated > 0 or deleted > 0:
-            self.pull(alias, project_root, force=True)
+        # Save manifest with updated hashes / new IDs / removed entries
+        if manifest_dirty:
+            save_manifest(project_root, manifest)
 
         return {
             "status": "pushed",
@@ -599,6 +849,7 @@ class SyncService(BaseService):
             "updated": updated,
             "deleted": deleted,
             "errors": errors,
+            "pushed_details": pushed_details,
         }
 
     def _push_create(

@@ -15,15 +15,27 @@ from ..constants import DIFF_MAX_DEPTH, DIFF_MAX_LINES, ENCRYPTED_PLACEHOLDER
 from .secrets import is_encrypted_value
 
 # Keys that are internal bookkeeping and should be excluded from comparison.
-_IGNORED_KEYS: frozenset[str] = frozenset({"_keboola", "version", "_configuration_extra"})
+# NOTE: _configuration_extra is NOT ignored -- it carries the actual config
+# payload for components like keboola.flow (phases, tasks, conditions) that
+# don't use the standard "parameters" key.
+_IGNORED_KEYS: frozenset[str] = frozenset({"_keboola", "version"})
 
 
 class ConfigChange:
-    """Represents a single configuration change."""
+    """Represents a single configuration change.
+
+    ``change_type`` values:
+
+    - ``"added"`` -- new local config not yet in remote
+    - ``"modified"`` -- local changed, remote unchanged (safe to push)
+    - ``"remote_modified"`` -- remote changed, local unchanged (run pull)
+    - ``"conflict"`` -- both sides changed since last pull
+    - ``"deleted"`` -- local file removed, wants to delete from remote
+    """
 
     def __init__(
         self,
-        change_type: str,  # "added", "modified", "deleted"
+        change_type: str,
         component_id: str,
         config_id: str,  # empty string for new configs
         config_name: str,
@@ -269,28 +281,31 @@ def _repr_short(value: Any, max_length: int = 60) -> str:
 def compute_changeset(
     local_configs: list[dict[str, Any]],
     remote_configs: dict[str, dict[str, Any]],
+    tracked_keys: set[str] | None = None,
+    base_hashes: dict[str, str] | None = None,
 ) -> list[ConfigChange]:
-    """Compare local configs against remote state to produce a changeset.
+    """3-way diff: compare local vs base (pull_hash) vs remote.
 
     Args:
         local_configs: List of dicts with keys:
             ``component_id``, ``config_id``, ``config_name``, ``path``, ``data``.
         remote_configs: Dict keyed by ``"{component_id}/{config_id}"`` with
-            API config data.
+            API config data (already converted to local format).
+        tracked_keys: Optional set of ``"{component_id}/{config_id}"`` keys
+            from the manifest.  Only manifest-tracked remote configs can be
+            flagged as ``"deleted"``.
+        base_hashes: Optional dict of ``"{component_id}/{config_id}"`` ->
+            normalized config hash at last pull time.  Enables 3-way diff:
+
+            - local changed, remote unchanged → ``"modified"`` (safe push)
+            - local unchanged, remote changed → ``"remote_modified"`` (pull)
+            - both changed → ``"conflict"``
+
+            When ``None``, falls back to 2-way diff (any difference →
+            ``"modified"``).
 
     Returns:
-        List of :class:`ConfigChange` objects describing what needs to be
-        created, updated, or deleted.
-
-    Logic:
-
-    - For each local config with a ``config_id`` that exists in remote:
-      compare hashes; if different -> ``"modified"`` with
-      :func:`deep_diff` details.
-    - For each local config with an empty ``config_id`` (or not found in
-      remote): -> ``"added"``.
-    - For each remote config not referenced by any local config:
-      -> ``"deleted"``.
+        List of :class:`ConfigChange` objects.
     """
     changes: list[ConfigChange] = []
     seen_remote_keys: set[str] = set()
@@ -320,7 +335,7 @@ def compute_changeset(
                 seen_remote_keys.add(remote_key)
             continue
 
-        # Existing config -- compare
+        # Existing config -- 3-way compare
         seen_remote_keys.add(remote_key)
         remote_data: dict[str, Any] = remote_configs[remote_key]
 
@@ -331,10 +346,30 @@ def compute_changeset(
             # Unchanged -- skip
             continue
 
-        details = deep_diff(local_data, remote_data)
+        # Determine change direction using base hash (pull-time snapshot)
+        base_h = (base_hashes or {}).get(remote_key)
+        if base_h is not None:
+            local_changed = local_h != base_h
+            remote_changed = remote_h != base_h
+        else:
+            # No base hash available -- fall back to 2-way
+            local_changed = True
+            remote_changed = False
+
+        if local_changed and remote_changed:
+            change_type = "conflict"
+            details = deep_diff(local_data, remote_data)
+        elif remote_changed and not local_changed:
+            change_type = "remote_modified"
+            details = deep_diff(remote_data, local_data)
+        else:
+            # local_changed (and not remote_changed), or fallback
+            change_type = "modified"
+            details = deep_diff(local_data, remote_data)
+
         changes.append(
             ConfigChange(
-                change_type="modified",
+                change_type=change_type,
                 component_id=component_id,
                 config_id=config_id,
                 config_name=config_name,
@@ -345,9 +380,15 @@ def compute_changeset(
             )
         )
 
-    # Detect deleted configs (in remote but not referenced locally)
+    # Detect deleted configs: remote configs that were previously tracked
+    # in the manifest but whose local file was removed.
     for remote_key, remote_data in remote_configs.items():
         if remote_key in seen_remote_keys:
+            continue
+
+        # Only flag configs the manifest knows about.
+        # Unknown remote configs are new on the server side.
+        if tracked_keys is not None and remote_key not in tracked_keys:
             continue
 
         parts = remote_key.split("/", 1)

@@ -49,15 +49,17 @@ class TestNormalizeForComparison:
         assert "version" not in result
         assert "name" in result
 
-    def test_strips_configuration_extra(self) -> None:
-        """_configuration_extra key is removed from output."""
+    def test_preserves_configuration_extra(self) -> None:
+        """_configuration_extra is preserved -- it carries real config data for
+        components like keboola.flow (phases, tasks, conditions)."""
         data = {
             "name": "My Config",
             "_configuration_extra": {"runtime": {"backend": "snowflake"}},
             "parameters": {"sql": "SELECT 1"},
         }
         result = normalize_for_comparison(data)
-        assert "_configuration_extra" not in result
+        assert "_configuration_extra" in result
+        assert result["_configuration_extra"] == {"runtime": {"backend": "snowflake"}}
         assert "name" in result
 
     def test_replaces_encrypted_values(self) -> None:

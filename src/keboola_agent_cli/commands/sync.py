@@ -14,6 +14,19 @@ from ._helpers import get_formatter, get_service, map_error_to_exit_code
 sync_app = typer.Typer(help="(BETA) Sync project configurations with local filesystem")
 
 
+def _change_label(change: dict) -> str:
+    """Build a human-readable label for a config change entry."""
+    path = change.get("path", "")
+    name = change.get("config_name", "")
+    component = change["component_id"]
+    if path:
+        return f"{component}/{path}"
+    if name:
+        return f"{component}/{name}"
+    config_id = change.get("config_id", "")
+    return f"{component}/{config_id}" if config_id else component
+
+
 @sync_app.command("init")
 def sync_init(
     ctx: typer.Context,
@@ -97,6 +110,11 @@ def sync_pull(
         "--force",
         help="Overwrite local files without checking for modifications",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be pulled without writing any files",
+    ),
 ) -> None:
     """Download all configurations from a Keboola project to local files.
 
@@ -113,6 +131,7 @@ def sync_pull(
             alias=project,
             project_root=project_root,
             force=force,
+            dry_run=dry_run,
         )
     except FileNotFoundError as exc:
         formatter.error(message=str(exc), error_code="NOT_INITIALIZED")
@@ -130,12 +149,51 @@ def sync_pull(
     if formatter.json_mode:
         formatter.output(result)
     else:
-        formatter.success(
-            f"Pulled {result['configs_pulled']} configurations "
-            f"({result['rows_pulled']} rows) "
-            f"into {result['branch_dir']}/"
-        )
-        formatter.console.print(f"  Files written: {result['files_written']}")
+        is_dry = result.get("status") == "dry_run"
+        details = result.get("details", [])
+        new_cfgs = [d for d in details if d["action"] == "new"]
+        updated_cfgs = [d for d in details if d["action"] == "updated"]
+        removed_cfgs = [d for d in details if d["action"] == "removed"]
+        skipped_cfgs = [d for d in details if d["action"] == "skipped"]
+
+        has_changes = bool(new_cfgs or updated_cfgs or removed_cfgs)
+
+        if not has_changes and not skipped_cfgs:
+            formatter.console.print("[green]Already up to date.[/green] No changes from remote.")
+            return
+        elif is_dry:
+            formatter.console.print("[yellow]Dry run -- no files written:[/yellow]")
+            formatter.console.print(
+                f"  Would pull {result['configs_pulled']} configurations "
+                f"({result['rows_pulled']} rows), "
+                f"write {result['files_written']} files"
+            )
+        else:
+            formatter.success(
+                f"Pulled {result['configs_pulled']} configurations "
+                f"({result['rows_pulled']} rows) "
+                f"into {result['branch_dir']}/"
+            )
+            formatter.console.print(f"  Files written: {result['files_written']}")
+
+        if new_cfgs:
+            formatter.console.print(f"  [green]New ({len(new_cfgs)}):[/green]")
+            for d in new_cfgs:
+                formatter.console.print(f"    + {d['component_id']}/{d['config_name']}")
+        if updated_cfgs:
+            formatter.console.print(f"  [yellow]Updated ({len(updated_cfgs)}):[/yellow]")
+            for d in updated_cfgs:
+                formatter.console.print(f"    ~ {d['component_id']}/{d['config_name']}")
+        if removed_cfgs:
+            formatter.console.print(f"  [red]Removed from remote ({len(removed_cfgs)}):[/red]")
+            for d in removed_cfgs:
+                formatter.console.print(f"    - {d['path']}")
+        if skipped_cfgs:
+            formatter.console.print(
+                f"  [cyan]Skipped ({len(skipped_cfgs)}) -- locally modified:[/cyan]"
+            )
+            for d in skipped_cfgs:
+                formatter.console.print(f"    ! {d['component_id']}/{d['config_name']}")
 
 
 @sync_app.command("status")
@@ -239,30 +297,91 @@ def sync_diff(
     else:
         changes = result["changes"]
         summary = result["summary"]
+        remote_only = result.get("remote_only", [])
 
-        if not changes:
+        if not changes and not remote_only:
             formatter.console.print(
                 "[green]No differences found.[/green] Local and remote are in sync."
             )
             return
 
-        for change in changes:
-            change_type = change["change_type"]
-            path = change.get("path", change.get("config_name", ""))
-            prefix = {"added": "[green]+ ", "modified": "[yellow]~ ", "deleted": "[red]- "}
-            suffix = {"added": "[/green]", "modified": "[/yellow]", "deleted": "[/red]"}
-            formatter.console.print(
-                f"  {prefix.get(change_type, '')}"
-                f"{change_type.upper()} {change['component_id']}/{path}"
-                f"{suffix.get(change_type, '')}"
-            )
-            for detail in change.get("details", []):
-                formatter.console.print(f"    {detail}")
+        # Categorize changes by direction
+        prefix_map = {
+            "added": "[green]+ ",
+            "modified": "[yellow]~ ",
+            "remote_modified": "[cyan]~ ",
+            "conflict": "[red]! ",
+            "deleted": "[red]- ",
+        }
+        suffix_map = {
+            "added": "[/green]",
+            "modified": "[/yellow]",
+            "remote_modified": "[/cyan]",
+            "conflict": "[/red]",
+            "deleted": "[/red]",
+        }
+        label_map = {
+            "added": "ADDED",
+            "modified": "MODIFIED",
+            "remote_modified": "REMOTE MODIFIED",
+            "conflict": "CONFLICT",
+            "deleted": "DELETED",
+        }
 
-        formatter.console.print(
-            f"\n{summary['added']} to create, {summary['modified']} to update, "
-            f"{summary['deleted']} to delete"
-        )
+        local_changes = [c for c in changes if c["change_type"] in ("added", "modified", "deleted")]
+        remote_changes = [c for c in changes if c["change_type"] == "remote_modified"]
+        conflict_changes = [c for c in changes if c["change_type"] == "conflict"]
+
+        # Local changes (what push would do)
+        if local_changes:
+            formatter.console.print("[bold]Local changes (push would apply):[/bold]")
+            for change in local_changes:
+                ct = change["change_type"]
+                label = _change_label(change)
+                formatter.console.print(
+                    f"  {prefix_map[ct]}{label_map[ct]} {label}{suffix_map[ct]}"
+                )
+                for detail in change.get("details", []):
+                    formatter.console.print(f"    {detail}")
+            formatter.console.print(
+                f"\n{summary['added']} to create, {summary['modified']} to update, "
+                f"{summary['deleted']} to delete"
+            )
+
+        # Remote changes (need pull)
+        if remote_changes:
+            if local_changes:
+                formatter.console.print()
+            formatter.console.print("[bold]Remote changes (run 'sync pull' to fetch):[/bold]")
+            for change in remote_changes:
+                label = _change_label(change)
+                formatter.console.print(f"  [cyan]~ REMOTE MODIFIED {label}[/cyan]")
+                for detail in change.get("details", []):
+                    formatter.console.print(f"    {detail}")
+
+        # Conflicts (both sides changed)
+        if conflict_changes:
+            if local_changes or remote_changes:
+                formatter.console.print()
+            formatter.console.print(
+                "[bold red]Conflicts (both local and remote changed):[/bold red]"
+            )
+            for change in conflict_changes:
+                label = _change_label(change)
+                formatter.console.print(f"  [red]! CONFLICT {label}[/red]")
+                for detail in change.get("details", []):
+                    formatter.console.print(f"    {detail}")
+
+        # Remote-only configs (new on server, not yet pulled)
+        if remote_only:
+            if changes:
+                formatter.console.print()
+            formatter.console.print(
+                f"[bold]Remote only ({len(remote_only)} new, run 'sync pull' to fetch):[/bold]"
+            )
+            for cfg in remote_only:
+                name = cfg.get("config_name", cfg.get("config_id", ""))
+                formatter.console.print(f"  [cyan]+ NEW {cfg['component_id']}/{name}[/cyan]")
 
 
 @sync_app.command("push")
@@ -324,15 +443,16 @@ def sync_push(
 
         if status == "no_changes":
             formatter.console.print("[green]No changes to push.[/green]")
+            skipped_reason = result.get("skipped_reason")
+            if skipped_reason:
+                formatter.console.print(f"  [yellow]{skipped_reason}[/yellow]")
             return
 
         if status == "dry_run":
             formatter.console.print("[yellow]Dry run -- no changes applied:[/yellow]")
             for change in result.get("changes", []):
-                ct = change["change_type"]
-                formatter.console.print(
-                    f"  {ct.upper()} {change['component_id']}/{change.get('path', '')}"
-                )
+                label = _change_label(change)
+                formatter.console.print(f"  {change['change_type'].upper()} {label}")
             summary = result["summary"]
             formatter.console.print(
                 f"\nWould create {summary['added']}, update {summary['modified']}, "
@@ -345,6 +465,10 @@ def sync_push(
             f"{result['updated']} updated, "
             f"{result['deleted']} deleted"
         )
+        for change in result.get("pushed_details", []):
+            label = _change_label(change)
+            action = change["change_type"].upper()
+            formatter.console.print(f"  {action} {label}")
         for err in result.get("errors", []):
             formatter.warning(
                 f"  Error: {err['change_type']} {err['component_id']}/{err['config_id']}: "

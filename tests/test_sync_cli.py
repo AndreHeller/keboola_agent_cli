@@ -344,6 +344,20 @@ class TestSyncPullCli:
             "configs_pulled": 3,
             "rows_pulled": 1,
             "files_written": 4,
+            "details": [
+                {
+                    "action": "new",
+                    "component_id": "keboola.ex-db-snowflake",
+                    "config_name": "My Extractor",
+                    "path": "extractor/keboola.ex-db-snowflake/my-extractor",
+                },
+                {
+                    "action": "updated",
+                    "component_id": "keboola.snowflake-transformation",
+                    "config_name": "Main Transform",
+                    "path": "transformation/keboola.snowflake-transformation/main",
+                },
+            ],
         }
 
         with (

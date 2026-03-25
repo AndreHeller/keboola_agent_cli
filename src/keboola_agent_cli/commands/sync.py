@@ -196,33 +196,104 @@ def _format_push_result(formatter: Any, result: dict) -> None:
     )
 
 
+def _pull_one_liner(result: dict) -> str:
+    """One-line summary of a single pull result."""
+    details = result.get("details", [])
+    new_n = sum(1 for d in details if d["action"] == "new")
+    upd_n = sum(1 for d in details if d["action"] == "updated")
+    rem_n = sum(1 for d in details if d["action"] == "removed")
+    skip_n = sum(1 for d in details if d["action"] == "skipped")
+    if not new_n and not upd_n and not rem_n and not skip_n:
+        return "[green]up to date[/green]"
+    parts = []
+    if new_n:
+        parts.append(f"[green]+{new_n} new[/green]")
+    if upd_n:
+        parts.append(f"[yellow]~{upd_n} updated[/yellow]")
+    if rem_n:
+        parts.append(f"[red]-{rem_n} removed[/red]")
+    if skip_n:
+        parts.append(f"[cyan]!{skip_n} skipped[/cyan]")
+    return ", ".join(parts)
+
+
+def _diff_one_liner(result: dict) -> str:
+    """One-line summary of a single diff result."""
+    s = result.get("summary", {})
+    mod = s.get("modified", 0)
+    add = s.get("added", 0)
+    dlt = s.get("deleted", 0)
+    rmod = s.get("remote_modified", 0)
+    conf = s.get("conflict", 0)
+    ro = s.get("remote_only", 0)
+    if not any([mod, add, dlt, rmod, conf, ro]):
+        return "[green]in sync[/green]"
+    parts = []
+    if add:
+        parts.append(f"[green]+{add}[/green]")
+    if mod:
+        parts.append(f"[yellow]~{mod}[/yellow]")
+    if dlt:
+        parts.append(f"[red]-{dlt}[/red]")
+    if rmod:
+        parts.append(f"[cyan]~{rmod} remote[/cyan]")
+    if conf:
+        parts.append(f"[red]!{conf} conflict[/red]")
+    if ro:
+        parts.append(f"[cyan]+{ro} remote-only[/cyan]")
+    return ", ".join(parts)
+
+
+def _push_one_liner(result: dict) -> str:
+    """One-line summary of a single push result."""
+    status = result.get("status", "")
+    if status == "no_changes":
+        return "[green]nothing to push[/green]"
+    if status == "dry_run":
+        s = result.get("summary", {})
+        return f"would: +{s.get('added', 0)} ~{s.get('modified', 0)} -{s.get('deleted', 0)}"
+    c = result.get("created", 0)
+    u = result.get("updated", 0)
+    d = result.get("deleted", 0)
+    return f"+{c} created, ~{u} updated, -{d} deleted"
+
+
 def _format_all_results(
     formatter: Any,
     data: dict,
     per_project_formatter: Any = None,
+    one_liner: Any = None,
 ) -> None:
-    """Format multi-project results for human output."""
+    """Format multi-project results for human output.
+
+    In default mode: one line per project (compact summary).
+    With --verbose: full detail per project.
+    Errors always shown.
+    """
     summary = data["summary"]
     projects = data["projects"]
     skipped = data.get("skipped", [])
+    verbose = getattr(formatter, "verbose", False)
 
     for alias in sorted(projects):
         proj_result = projects[alias]
         if "error" in proj_result:
-            formatter.console.print(
-                f"\n[bold]{alias}:[/bold] [red]ERROR: {proj_result['error']}[/red]"
-            )
-        else:
+            formatter.console.print(f"  [red]x[/red] {alias}: [red]{proj_result['error']}[/red]")
+        elif verbose and per_project_formatter:
             formatter.console.print(f"\n[bold]{alias}:[/bold]")
-            if per_project_formatter:
-                per_project_formatter(formatter, proj_result)
+            per_project_formatter(formatter, proj_result)
+        elif one_liner:
+            formatter.console.print(f"  [green]OK[/green] {alias}: {one_liner(proj_result)}")
+        else:
+            formatter.console.print(f"  [green]OK[/green] {alias}")
 
     if skipped:
         formatter.console.print(f"\n[dim]Skipped (no manifest): {', '.join(skipped)}[/dim]")
 
     formatter.console.print(
         f"\n{summary['total']} projects: "
-        f"{summary['success']} OK, {summary['failed']} failed"
+        f"[green]{summary['success']} OK[/green], "
+        f"[red]{summary['failed']} failed[/red]"
         + (f", {summary.get('skipped', 0)} skipped" if summary.get("skipped") else "")
     )
 
@@ -279,7 +350,7 @@ def sync_pull(
         raise typer.Exit(code=2)
 
     if all_projects:
-        base_dir = directory.resolve()
+        base_dir = Path(directory).absolute()
         try:
             data = service.pull_all(base_dir, force=force, dry_run=dry_run)
         except ConfigError as exc:
@@ -289,7 +360,7 @@ def sync_pull(
         if formatter.json_mode:
             formatter.output(data)
         else:
-            _format_all_results(formatter, data, _format_pull_result)
+            _format_all_results(formatter, data, _format_pull_result, _pull_one_liner)
         return
 
     project_root = directory.resolve()
@@ -422,7 +493,7 @@ def sync_diff(
         raise typer.Exit(code=2)
 
     if all_projects:
-        base_dir = directory.resolve()
+        base_dir = Path(directory).absolute()
         try:
             data = service.diff_all(base_dir)
         except ConfigError as exc:
@@ -432,7 +503,7 @@ def sync_diff(
         if formatter.json_mode:
             formatter.output(data)
         else:
-            _format_all_results(formatter, data, _format_diff_result)
+            _format_all_results(formatter, data, _format_diff_result, _diff_one_liner)
         return
 
     project_root = directory.resolve()
@@ -593,7 +664,7 @@ def sync_push(
         raise typer.Exit(code=2)
 
     if all_projects:
-        base_dir = directory.resolve()
+        base_dir = Path(directory).absolute()
         try:
             data = service.push_all(base_dir, dry_run=dry_run, force=force)
         except ConfigError as exc:
@@ -603,7 +674,7 @@ def sync_push(
         if formatter.json_mode:
             formatter.output(data)
         else:
-            _format_all_results(formatter, data, _format_push_result)
+            _format_all_results(formatter, data, _format_push_result, _push_one_liner)
         return
 
     project_root = directory.resolve()

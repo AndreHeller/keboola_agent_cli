@@ -1,3 +1,3 @@
 """Keboola Agent CLI - AI-friendly interface to Keboola projects."""
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"

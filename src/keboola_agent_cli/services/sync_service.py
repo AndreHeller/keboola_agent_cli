@@ -17,8 +17,17 @@ from ..constants import (
     ALWAYS_IGNORED_COMPONENTS,
     BRANCH_MAPPING_FILENAME,
     CONFIG_FILENAME,
+    DEFAULT_JOBS_PER_CONFIG,
+    DEFAULT_MAX_SAMPLES,
+    DEFAULT_SAMPLE_LIMIT,
+    ENCRYPTED_COLUMN_MASK,
+    ENCRYPTED_COLUMN_PREFIX,
+    JOBS_FILENAME,
     KEBOOLA_DIR_NAME,
     MANIFEST_VERSION,
+    STORAGE_BUCKETS_FILENAME,
+    STORAGE_DIR_NAME,
+    STORAGE_SAMPLES_DIR_NAME,
 )
 from ..errors import ConfigError
 from ..sync.code_extraction import extract_code_files, merge_code_files
@@ -179,6 +188,12 @@ class SyncService(BaseService):
         project_root: Path,
         force: bool = False,
         dry_run: bool = False,
+        job_limit: int = DEFAULT_JOBS_PER_CONFIG,
+        no_storage: bool = False,
+        no_jobs: bool = False,
+        with_samples: bool = False,
+        sample_limit: int = DEFAULT_SAMPLE_LIMIT,
+        max_samples: int = DEFAULT_MAX_SAMPLES,
     ) -> dict[str, Any]:
         """Download all configurations from Keboola to local filesystem.
 
@@ -187,6 +202,12 @@ class SyncService(BaseService):
             project_root: Root directory of the sync working tree.
             force: If True, overwrite existing local files without checking.
             dry_run: If True, compute what would be pulled but don't write.
+            job_limit: Max jobs per config to pull (default 5).
+            no_storage: Skip storage metadata download.
+            no_jobs: Skip per-config jobs download.
+            with_samples: Download table data samples (opt-in).
+            sample_limit: Max rows per sample (default 100).
+            max_samples: Max number of tables to sample (default 50).
 
         Returns:
             Dict with pull statistics (configs, rows, files written).
@@ -200,10 +221,35 @@ class SyncService(BaseService):
         # Determine branch to pull from (git-branching aware)
         branch_id = self._resolve_branch_id(project, manifest, project_root)
 
-        # Fetch all components with configs from API
+        # Fetch all components with configs from API (+ storage metadata + jobs)
         client = self._client_factory(project.stack_url, project.token)
+        buckets_data: list[dict[str, Any]] = []
+        tables_data: list[dict[str, Any]] = []
+        jobs_grouped: list[dict[str, Any]] = []
+        samples_data: dict[str, str] = {}  # table_id -> CSV string
         with client:
             components = client.list_components_with_configs(branch_id=branch_id)
+
+            if not no_storage:
+                try:
+                    buckets_data = client.list_buckets_with_metadata()
+                    tables_data = client.list_tables_with_metadata()
+                except Exception:
+                    logger.warning("Failed to fetch storage metadata", exc_info=True)
+
+            if not no_jobs:
+                try:
+                    # API constraint: jobsPerGroup * limit <= 500
+                    group_limit = min(500 // max(job_limit, 1), 500)
+                    jobs_grouped = client.list_jobs_grouped(
+                        jobs_per_group=job_limit,
+                        limit=group_limit,
+                    )
+                except Exception:
+                    logger.warning("Failed to fetch grouped jobs", exc_info=True)
+
+            if with_samples and tables_data:
+                samples_data = self._fetch_samples(client, tables_data, sample_limit, max_samples)
 
         # Determine branch directory name
         branch_dir_name = self._find_branch_path(manifest, branch_id)
@@ -436,6 +482,18 @@ class SyncService(BaseService):
                     }
                 )
 
+        # -- Storage metadata (read-only, not tracked in manifest) --
+        storage_stats: dict[str, int] = {"buckets": 0, "tables": 0, "samples": 0}
+        if not dry_run and buckets_data:
+            storage_stats = self._write_storage_metadata(
+                project_root, buckets_data, tables_data, samples_data
+            )
+
+        # -- Per-config jobs (JSONL files next to _config.yml) --
+        jobs_written = 0
+        if not dry_run and jobs_grouped:
+            jobs_written = self._write_per_config_jobs(branch_dir, new_configurations, jobs_grouped)
+
         if not dry_run:
             # Update manifest with pulled configurations
             manifest.configurations = new_configurations
@@ -449,6 +507,8 @@ class SyncService(BaseService):
             "configs_pulled": configs_pulled,
             "rows_pulled": rows_pulled,
             "files_written": files_written,
+            "jobs_written": jobs_written,
+            "storage": storage_stats,
             "details": pull_details,
         }
 
@@ -967,6 +1027,12 @@ class SyncService(BaseService):
         base_dir: Path,
         force: bool = False,
         dry_run: bool = False,
+        job_limit: int = DEFAULT_JOBS_PER_CONFIG,
+        no_storage: bool = False,
+        no_jobs: bool = False,
+        with_samples: bool = False,
+        sample_limit: int = DEFAULT_SAMPLE_LIMIT,
+        max_samples: int = DEFAULT_MAX_SAMPLES,
     ) -> dict[str, Any]:
         """Pull all registered projects in parallel.
 
@@ -977,6 +1043,12 @@ class SyncService(BaseService):
             base_dir: Parent directory; each project gets a subdirectory.
             force: Overwrite local files without checking.
             dry_run: Compute what would be pulled but don't write.
+            job_limit: Max jobs per config to pull.
+            no_storage: Skip storage metadata download.
+            no_jobs: Skip per-config jobs download.
+            with_samples: Download table data samples.
+            sample_limit: Max rows per sample.
+            max_samples: Max number of tables to sample.
 
         Returns:
             Dict with per-project results and a summary.
@@ -993,7 +1065,18 @@ class SyncService(BaseService):
             try:
                 if not manifest_path.exists():
                     self.init_sync(alias, project_root)
-                result = self.pull(alias, project_root, force=force, dry_run=dry_run)
+                result = self.pull(
+                    alias,
+                    project_root,
+                    force=force,
+                    dry_run=dry_run,
+                    job_limit=job_limit,
+                    no_storage=no_storage,
+                    no_jobs=no_jobs,
+                    with_samples=with_samples,
+                    sample_limit=sample_limit,
+                    max_samples=max_samples,
+                )
                 results[alias] = result
                 success_count += 1
             except Exception as exc:
@@ -1399,6 +1482,266 @@ class SyncService(BaseService):
         if not branch_id and manifest.branches:
             branch_id = manifest.branches[0].id
         return branch_id
+
+    # ------------------------------------------------------------------
+    # Storage metadata / jobs / samples helpers
+    # ------------------------------------------------------------------
+
+    def _write_storage_metadata(
+        self,
+        project_root: Path,
+        buckets: list[dict[str, Any]],
+        tables: list[dict[str, Any]],
+        samples: dict[str, str],
+    ) -> dict[str, int]:
+        """Write storage bucket and table metadata to the filesystem.
+
+        Creates:
+            storage/buckets.json - list of all buckets
+            storage/tables/{bucket_id}/{table_name}.json - per-table metadata
+            storage/samples/{bucket}/{table}/sample.csv - data samples (if any)
+
+        Returns:
+            Dict with counts: buckets, tables, samples written.
+        """
+        storage_dir = project_root / STORAGE_DIR_NAME
+        storage_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write buckets index
+        bucket_summaries = [
+            {
+                "id": b.get("id", ""),
+                "name": b.get("name", ""),
+                "stage": b.get("stage", ""),
+                "description": b.get("description", ""),
+                "tables_count": b.get("tablesCount", 0),
+                "data_size_bytes": b.get("dataSizeBytes", 0),
+                "metadata": b.get("metadata", []),
+            }
+            for b in buckets
+        ]
+        buckets_file = storage_dir / STORAGE_BUCKETS_FILENAME
+        buckets_file.write_text(
+            json.dumps(bucket_summaries, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        # Group tables by bucket
+        tables_by_bucket: dict[str, list[dict[str, Any]]] = {}
+        for t in tables:
+            bucket_id = (
+                t.get("bucket", {}).get("id", "")
+                if isinstance(t.get("bucket"), dict)
+                else t.get("bucketId", "")
+            )
+            if not bucket_id:
+                continue
+            tables_by_bucket.setdefault(bucket_id, []).append(t)
+
+        tables_written = 0
+        tables_dir = storage_dir / "tables"
+        for bucket_id, bucket_tables in tables_by_bucket.items():
+            # Sanitize bucket_id for filesystem (replace dots with dashes)
+            safe_bucket = bucket_id.replace(".", "-")
+            bucket_dir = tables_dir / safe_bucket
+            bucket_dir.mkdir(parents=True, exist_ok=True)
+
+            for t in bucket_tables:
+                table_name = t.get("name", "unknown")
+                table_meta = {
+                    "id": t.get("id", ""),
+                    "name": table_name,
+                    "primary_key": t.get("primaryKey", []),
+                    "columns": t.get("columns", []),
+                    "rows_count": t.get("rowsCount", 0),
+                    "data_size_bytes": t.get("dataSizeBytes", 0),
+                    "last_import_date": t.get("lastImportDate", ""),
+                    "last_change_date": t.get("lastChangeDate", ""),
+                    "description": t.get("description", ""),
+                    "metadata": t.get("metadata", []),
+                    "column_metadata": t.get("columnMetadata", {}),
+                }
+                table_file = bucket_dir / f"{table_name}.json"
+                table_file.write_text(
+                    json.dumps(table_meta, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                tables_written += 1
+
+        # Write samples
+        samples_written = 0
+        if samples:
+            samples_dir = storage_dir / STORAGE_SAMPLES_DIR_NAME
+            for table_id, csv_data in samples.items():
+                # table_id format: "in.c-bucket.table" -> samples/in-c-bucket/table/
+                parts = table_id.split(".", 2)
+                if len(parts) >= 3:
+                    safe_bucket = f"{parts[0]}-{parts[1]}"
+                    table_name = parts[2]
+                else:
+                    safe_bucket = table_id.replace(".", "-")
+                    table_name = "data"
+                sample_dir = samples_dir / safe_bucket / table_name
+                sample_dir.mkdir(parents=True, exist_ok=True)
+
+                # Mask encrypted columns in CSV
+                masked_csv = self._mask_encrypted_columns(csv_data)
+                (sample_dir / "sample.csv").write_text(masked_csv, encoding="utf-8")
+                samples_written += 1
+
+        return {
+            "buckets": len(buckets),
+            "tables": tables_written,
+            "samples": samples_written,
+        }
+
+    def _write_per_config_jobs(
+        self,
+        branch_dir: Path,
+        configurations: list[ManifestConfiguration],
+        jobs_grouped: list[dict[str, Any]],
+    ) -> int:
+        """Write _jobs.jsonl files next to each configuration.
+
+        Matches grouped jobs to configs by componentId+configId,
+        then writes a JSONL file with light job records.
+
+        Returns:
+            Number of _jobs.jsonl files written.
+        """
+        # Build lookup: (component_id, config_id) -> list of jobs
+        jobs_by_config: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for group in jobs_grouped:
+            group_key = group.get("group", {})
+            component_id = group_key.get("componentId", "")
+            config_id = group_key.get("configId", "")
+            if component_id and config_id:
+                jobs_by_config[(component_id, config_id)] = group.get("jobs", [])
+
+        files_written = 0
+        for cfg in configurations:
+            key = (cfg.component_id, cfg.id)
+            jobs = jobs_by_config.get(key)
+            if not jobs:
+                continue
+
+            config_dir = branch_dir / cfg.path
+            config_dir.mkdir(parents=True, exist_ok=True)
+            jobs_file = config_dir / JOBS_FILENAME
+
+            lines: list[str] = []
+            for job in jobs:
+                light_job: dict[str, Any] = {
+                    "id": str(job.get("id", "")),
+                    "status": job.get("status", ""),
+                    "start_time": job.get("startTime", ""),
+                    "end_time": job.get("endTime", ""),
+                    "duration_seconds": job.get("durationSeconds", 0),
+                }
+                if job.get("mode") and job["mode"] != "run":
+                    light_job["mode"] = job["mode"]
+                # Include error message for failed/warning jobs
+                status = job.get("status", "")
+                if status in ("error", "warning", "terminated", "cancelled"):
+                    result = job.get("result", {})
+                    if isinstance(result, dict) and result.get("message"):
+                        light_job["error_message"] = result["message"]
+                lines.append(json.dumps(light_job, ensure_ascii=False))
+
+            jobs_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            files_written += 1
+
+        return files_written
+
+    def _fetch_samples(
+        self,
+        client: Any,
+        tables: list[dict[str, Any]],
+        sample_limit: int,
+        max_samples: int,
+    ) -> dict[str, str]:
+        """Fetch CSV data previews for tables, respecting limits.
+
+        Selects tables sorted by rowsCount descending (largest first),
+        limited to max_samples tables.
+
+        Returns:
+            Dict mapping table_id -> CSV string.
+        """
+        # Sort by rows count desc, pick top N
+        sorted_tables = sorted(
+            [t for t in tables if t.get("rowsCount", 0) > 0],
+            key=lambda t: t.get("rowsCount", 0),
+            reverse=True,
+        )[:max_samples]
+
+        # Storage API sync export limit
+        max_sync_columns = 30
+
+        samples: dict[str, str] = {}
+        for t in sorted_tables:
+            table_id = t.get("id", "")
+            if not table_id:
+                continue
+            try:
+                # Limit columns to max_sync_columns to avoid API 400 error
+                all_columns = t.get("columns", [])
+                columns = (
+                    all_columns[:max_sync_columns] if len(all_columns) > max_sync_columns else None
+                )
+                csv_data = client.get_table_data_preview(
+                    table_id, limit=sample_limit, columns=columns
+                )
+                samples[table_id] = csv_data
+            except Exception:
+                logger.warning("Failed to fetch sample for %s", table_id, exc_info=True)
+
+        return samples
+
+    @staticmethod
+    def _mask_encrypted_columns(csv_data: str) -> str:
+        """Mask encrypted column values in CSV data.
+
+        Encrypted columns in Keboola start with '#' in the column name.
+        Their values are replaced with the masked placeholder.
+        """
+        if not csv_data:
+            return csv_data
+
+        lines = csv_data.split("\n")
+        if not lines:
+            return csv_data
+
+        # Parse header to find encrypted column indices
+        import csv
+        import io
+
+        reader = csv.reader(io.StringIO(lines[0]))
+        try:
+            header = next(reader)
+        except StopIteration:
+            return csv_data
+
+        encrypted_indices = [
+            i for i, col in enumerate(header) if col.startswith(ENCRYPTED_COLUMN_PREFIX)
+        ]
+        if not encrypted_indices:
+            return csv_data
+
+        # Rewrite CSV with masked values
+        output = io.StringIO()
+        writer = csv.writer(output)
+        full_reader = csv.reader(io.StringIO(csv_data))
+        for row_idx, row in enumerate(full_reader):
+            if row_idx == 0:
+                writer.writerow(row)  # header unchanged
+            else:
+                for idx in encrypted_indices:
+                    if idx < len(row):
+                        row[idx] = ENCRYPTED_COLUMN_MASK
+                writer.writerow(row)
+
+        return output.getvalue()
 
     def _write_config_file(self, config_dir: Path, config_data: dict[str, Any]) -> str:
         """Write a ``_config.yml`` file and return its SHA256 hash."""

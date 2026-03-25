@@ -26,6 +26,9 @@ DEFAULT_TOKEN_DESCRIPTION: str = "kbagent-cli"
 
 # --- Job Limits ---
 DEFAULT_JOB_LIMIT: int = 50
+DEFAULT_JOBS_PER_CONFIG: int = 5
+# Max groups: constrained by API rule jobsPerGroup * limit <= 500
+DEFAULT_GROUPED_JOBS_LIMIT: int = 100
 MAX_JOB_LIMIT: int = 500
 
 # --- Retry-After Header ---
@@ -76,6 +79,10 @@ KBC_GITHUB_RELEASES_URL: str = (
 )
 MCP_PYPI_URL: str = "https://pypi.org/pypi/keboola-mcp-server/json"
 
+# --- AI Service ---
+AI_SERVICE_TIMEOUT: httpx.Timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
+SECRET_PLACEHOLDER: str = "<YOUR_SECRET>"
+
 # --- Domain Validation Constants ---
 VALID_COMPONENT_TYPES: list[str] = ["extractor", "writer", "transformation", "application"]
 VALID_STATUSES: list[str] = ["processing", "terminated", "cancelled", "success", "error"]
@@ -105,6 +112,16 @@ DEFAULT_NAMING_DATA_APP: str = "app/{component_id}/{config_name}"
 # Aliases used by sync subsystem
 CONFIG_YML_VERSION: int = MANIFEST_VERSION
 SANITIZE_NAME_MAX_LENGTH: int = 100
+
+# --- Sync Pull: Storage & Jobs ---
+JOBS_FILENAME: str = "_jobs.jsonl"
+STORAGE_DIR_NAME: str = "storage"
+STORAGE_BUCKETS_FILENAME: str = "buckets.json"
+STORAGE_SAMPLES_DIR_NAME: str = "samples"
+DEFAULT_SAMPLE_LIMIT: int = 100
+DEFAULT_MAX_SAMPLES: int = 50
+ENCRYPTED_COLUMN_PREFIX: str = "#"
+ENCRYPTED_COLUMN_MASK: str = "***ENCRYPTED***"
 
 # --- Ignored Components ---
 # Components that are always excluded from sync operations (pull/push/diff).

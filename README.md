@@ -48,7 +48,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
 | `workspace` | Create workspaces, load tables, run SQL queries -- iterative SQL debugging |
 | `tool` | List and call MCP tools from keboola-mcp-server (read tools run in parallel) |
-| `sync` | **(BETA)** Sync project configurations with local filesystem (GitOps workflow) |
+| `sync` | **(BETA)** Sync configurations, storage metadata, job history, and data samples to local filesystem (GitOps workflow) |
 
 Every command supports `--json` for structured output and Rich formatting for human-readable output.
 
@@ -208,6 +208,36 @@ Two create modes:
 # Visible in Keboola UI
 kbagent workspace create --project prod --name "debug-ws" --ui
 ```
+
+## Sync pull (project snapshot)
+
+Download complete project snapshots to your local filesystem -- configurations, storage metadata, job history, and data samples:
+
+```bash
+# Pull all projects (includes configs, storage metadata, per-config jobs)
+kbagent sync pull --all-projects
+
+# Include CSV data samples from tables
+kbagent sync pull --all-projects --with-samples
+
+# Customize
+kbagent sync pull --project prod --job-limit 10       # more job history per config
+kbagent sync pull --project prod --no-storage --no-jobs # configs only (faster)
+```
+
+What gets pulled:
+
+| Path | Content |
+|------|---------|
+| `main/*/_config.yml` | Configuration parameters (YAML) |
+| `main/*/_description.md` | Human descriptions |
+| `main/*/_jobs.jsonl` | Recent jobs per config (status, timing, errors) |
+| `main/*/transform.sql` | SQL code for Snowflake transformations |
+| `storage/buckets.json` | All buckets with metadata |
+| `storage/tables/{bucket}/{table}.json` | Table schemas, columns, row counts, sizes |
+| `storage/samples/...` | CSV data previews (opt-in: `--with-samples`) |
+
+Tables with >30 columns export only the first 30 (Storage API sync export limit). Encrypted columns are masked as `***ENCRYPTED***` in samples.
 
 ## JSON output format
 

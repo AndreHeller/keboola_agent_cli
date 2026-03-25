@@ -17,7 +17,9 @@ import httpx
 
 from . import __version__
 from .constants import (
+    DEFAULT_GROUPED_JOBS_LIMIT,
     DEFAULT_JOB_LIMIT,
+    DEFAULT_JOBS_PER_CONFIG,
     DEFAULT_TIMEOUT,
     QUERY_JOB_MAX_WAIT,
     QUERY_JOB_POLL_INTERVAL,
@@ -516,6 +518,14 @@ class KeboolaClient(BaseHttpClient):
         response = self._request("GET", "/v2/storage/buckets", params=params)
         return response.json()
 
+    def list_buckets_with_metadata(self) -> list[dict[str, Any]]:
+        """List storage buckets with metadata included.
+
+        Returns:
+            List of bucket dicts with metadata fields.
+        """
+        return self.list_buckets(include="metadata")
+
     def get_bucket_detail(
         self,
         bucket_id: str,
@@ -565,6 +575,42 @@ class KeboolaClient(BaseHttpClient):
             response = self._request("GET", f"{prefix}/tables", params=params)
         return response.json()
 
+    def list_tables_with_metadata(self) -> list[dict[str, Any]]:
+        """List all storage tables with columns and metadata.
+
+        Returns:
+            List of table dicts with columns, metadata, and bucket info.
+        """
+        return self.list_tables(include="columns,metadata,buckets")
+
+    def get_table_data_preview(
+        self,
+        table_id: str,
+        limit: int = 100,
+        columns: list[str] | None = None,
+    ) -> str:
+        """Get a CSV preview of table data.
+
+        Args:
+            table_id: Full table ID (e.g. "in.c-bucket.table").
+            limit: Max number of rows to return.
+            columns: Optional list of column names to export.
+                     Storage API limits sync export to 30 columns max.
+
+        Returns:
+            CSV string with table data preview.
+        """
+        safe_id = quote(table_id, safe="")
+        params: dict[str, Any] = {"limit": limit}
+        if columns:
+            params["columns"] = ",".join(columns)
+        response = self._request(
+            "GET",
+            f"/v2/storage/tables/{safe_id}/data-preview",
+            params=params,
+        )
+        return response.text
+
     def list_jobs(
         self,
         component_id: str | None = None,
@@ -594,6 +640,43 @@ class KeboolaClient(BaseHttpClient):
             params["status"] = status
 
         response = self._queue_request("GET", "/search/jobs", params=params)
+        return response.json()
+
+    def list_jobs_grouped(
+        self,
+        jobs_per_group: int = DEFAULT_JOBS_PER_CONFIG,
+        limit: int = DEFAULT_GROUPED_JOBS_LIMIT,
+        sort_by: str = "startTime",
+        sort_order: str = "desc",
+        created_time_from: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List jobs grouped by component+config from the Queue API.
+
+        Uses GET /search/grouped-jobs to fetch the latest N jobs for each
+        unique component+config combination in a single API call.
+
+        Args:
+            jobs_per_group: Max jobs per component+config group (1-500).
+            limit: Max number of groups to return (1-500).
+            sort_by: Sort field for jobs within each group.
+            sort_order: Sort direction ("asc" or "desc").
+            created_time_from: Optional ISO datetime filter (e.g. "2026-03-20T00:00:00Z").
+
+        Returns:
+            List of group dicts: [{"group": {"componentId": ..., "configId": ...}, "jobs": [...]}]
+        """
+        params: list[tuple[str, str]] = [
+            ("groupBy[]", "componentId"),
+            ("groupBy[]", "configId"),
+            ("jobsPerGroup", str(jobs_per_group)),
+            ("limit", str(limit)),
+            ("sortBy", sort_by),
+            ("sortOrder", sort_order),
+        ]
+        if created_time_from:
+            params.append(("filters[createdTimeFrom]", created_time_from))
+
+        response = self._queue_request("GET", "/search/grouped-jobs", params=params)
         return response.json()
 
     def get_job_detail(self, job_id: str) -> dict[str, Any]:

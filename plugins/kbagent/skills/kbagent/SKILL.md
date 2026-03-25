@@ -45,11 +45,14 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Edit an existing Keboola project connection | `kbagent project edit --alias ALIAS` |
 | Test connectivity to connected Keboola projects | `kbagent project status` |
 | Set up all projects from a Keboola organization | `kbagent org setup --org-id ORG-ID --url URL` |
+| List available components from connected projects | `kbagent component list` |
+| Show detailed information about a specific component | `kbagent component detail --component-id COMPONENT-ID` |
 | List configurations from connected projects | `kbagent config list` |
 | Show detailed information about a specific configuration | `kbagent config detail --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
 | Search through configuration bodies for a string or pattern | `kbagent config search --query QUERY` |
 | Update a configuration's name and/or description | `kbagent config update --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
 | Delete a configuration from a project | `kbagent config delete --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
+| Generate boilerplate configuration files for a Keboola component | `kbagent config new --component-id COMPONENT-ID` |
 | List jobs from connected projects | `kbagent job list` |
 | Show detailed information about a specific job | `kbagent job detail --project PROJECT --job-id JOB-ID` |
 | List storage buckets with sharing/linked bucket information | `kbagent storage buckets` |
@@ -85,6 +88,17 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Generate a tiers.yaml template from registered projects | `kbagent explorer init-tiers` |
 <!-- END AUTO-GENERATED COMMANDS -->
 
+### Sync pull notable flags
+
+| Flag | Effect |
+|------|--------|
+| `--with-samples` | Download CSV data previews (tables >30 columns auto-trimmed to first 30) |
+| `--job-limit N` | Max recent jobs per config (default 5) |
+| `--no-storage` | Skip storage bucket/table metadata |
+| `--no-jobs` | Skip per-config job history |
+| `--sample-limit N` | Max rows per sample (default 100) |
+| `--max-samples N` | Max tables to sample (default 50) |
+
 ## Response format
 
 All JSON responses follow one of two shapes:
@@ -102,6 +116,10 @@ All JSON responses follow one of two shapes:
 Check the `retryable` field -- if `true`, retry the operation.
 
 For detailed response parsing rules and common pitfalls, see [gotchas](references/gotchas.md).
+
+## Reading synced data (for agents)
+
+After `sync pull`, see [reading-synced-data](references/reading-synced-data.md) for how to parse `_jobs.jsonl`, storage metadata, table schemas, and data samples -- includes Python examples for finding failing configs, largest tables, and more.
 
 ## Sync & Git-branching workflow
 

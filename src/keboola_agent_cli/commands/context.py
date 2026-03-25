@@ -411,9 +411,26 @@ Then explore:
     Protects locally modified files (skips overwrite unless --force).
     Reports "Already up to date" when nothing changed.
     --dry-run shows what would be pulled without writing files.
+
+    Storage & job metadata (pulled by default alongside configs):
+    - storage/buckets.json -- all buckets with metadata
+    - storage/tables/{{bucket}}/{{table}}.json -- per-table schema, columns, row count, size
+    - _jobs.jsonl next to each _config.yml -- last N jobs per config (JSONL, light records)
+    Use --no-storage or --no-jobs to skip these.
+
+    Data samples (opt-in):
+    --with-samples downloads CSV previews to storage/samples/{{bucket}}/{{table}}/sample.csv
+    --sample-limit N: max rows per sample (default 100)
+    --max-samples N: max tables to sample (default 50)
+    Tables with >30 columns are auto-trimmed to first 30 (Storage API sync export limit).
+
+    Job history:
+    --job-limit N: max recent jobs per config (default 5)
+
     File format:
       _config.yml      -- YAML config (name, parameters, storage)
       _description.md  -- description as Markdown (always separate)
+      _jobs.jsonl      -- recent jobs (id, status, start/end time, duration, error)
       transform.sql    -- SQL with block markers (Snowflake transformations)
       transform.py     -- Python code with block markers
       code.py          -- custom Python app code
@@ -421,6 +438,8 @@ Then explore:
     Example:
       kbagent --json sync pull --project prod
       kbagent sync pull --all-projects
+      kbagent sync pull --all-projects --with-samples --job-limit 10
+      kbagent sync pull --project prod --no-jobs --no-storage
 
   kbagent sync status [--directory DIR]
     Show which local configs have been modified, added, or deleted since last pull.
@@ -671,9 +690,16 @@ Then explore:
      # File layout per config:
      # _config.yml      -- YAML (name, parameters, storage)
      # _description.md  -- description as readable Markdown
+     # _jobs.jsonl      -- recent jobs (status, timing, errors)
      # transform.sql    -- SQL code (Snowflake transformations)
      # transform.py     -- Python code (Python transformations)
      # code.py          -- Python app code (custom apps)
+
+     # Storage metadata is also pulled (storage/buckets.json, storage/tables/):
+     kbagent sync pull --all-projects                 # includes storage + jobs
+     kbagent sync pull --all-projects --no-storage    # skip storage metadata
+     kbagent sync pull --all-projects --no-jobs       # skip job history
+     kbagent sync pull --all-projects --with-samples  # include CSV data samples
 
      # Pull is idempotent: re-running pull when nothing changed reports
      # "Already up to date" and writes zero files. Locally modified files

@@ -131,7 +131,11 @@ def _format_pull_result(formatter: Any, result: dict) -> None:
 
     has_changes = bool(new_cfgs or updated_cfgs or removed_cfgs)
 
-    if not has_changes and not skipped_cfgs:
+    storage = result.get("storage", {})
+    jobs_written = result.get("jobs_written", 0)
+    has_extra = bool(storage.get("buckets") or storage.get("tables") or jobs_written)
+
+    if not has_changes and not skipped_cfgs and not has_extra:
         formatter.console.print("[green]Already up to date.[/green] No changes from remote.")
         return
     elif is_dry:
@@ -148,6 +152,14 @@ def _format_pull_result(formatter: Any, result: dict) -> None:
             f"into {result['branch_dir']}/"
         )
         formatter.console.print(f"  Files written: {result['files_written']}")
+        if storage.get("buckets") or storage.get("tables"):
+            formatter.console.print(
+                f"  Storage: {storage.get('buckets', 0)} buckets, {storage.get('tables', 0)} tables"
+            )
+        if storage.get("samples"):
+            formatter.console.print(f"  Samples: {storage['samples']} tables")
+        if jobs_written:
+            formatter.console.print(f"  Jobs: {jobs_written} configs with job history")
 
     if new_cfgs:
         formatter.console.print(f"  [green]New ({len(new_cfgs)}):[/green]")
@@ -355,6 +367,36 @@ def sync_pull(
         "--dry-run",
         help="Show what would be pulled without writing any files",
     ),
+    job_limit: int = typer.Option(
+        5,
+        "--job-limit",
+        help="Max recent jobs to pull per configuration (default 5)",
+    ),
+    no_storage: bool = typer.Option(
+        False,
+        "--no-storage",
+        help="Skip downloading storage bucket/table metadata",
+    ),
+    no_jobs: bool = typer.Option(
+        False,
+        "--no-jobs",
+        help="Skip downloading per-config job history",
+    ),
+    with_samples: bool = typer.Option(
+        False,
+        "--with-samples",
+        help="Download table data samples (CSV previews)",
+    ),
+    sample_limit: int = typer.Option(
+        100,
+        "--sample-limit",
+        help="Max rows per table sample (default 100)",
+    ),
+    max_samples: int = typer.Option(
+        50,
+        "--max-samples",
+        help="Max number of tables to sample (default 50)",
+    ),
 ) -> None:
     """Download configurations from a Keboola project to local files.
 
@@ -380,7 +422,17 @@ def sync_pull(
     if all_projects:
         base_dir = _safe_resolve_dir(directory)
         try:
-            data = service.pull_all(base_dir, force=force, dry_run=dry_run)
+            data = service.pull_all(
+                base_dir,
+                force=force,
+                dry_run=dry_run,
+                job_limit=job_limit,
+                no_storage=no_storage,
+                no_jobs=no_jobs,
+                with_samples=with_samples,
+                sample_limit=sample_limit,
+                max_samples=max_samples,
+            )
         except ConfigError as exc:
             formatter.error(message=exc.message, error_code="CONFIG_ERROR")
             raise typer.Exit(code=5) from None
@@ -408,6 +460,12 @@ def sync_pull(
             project_root=project_root,
             force=force,
             dry_run=dry_run,
+            job_limit=job_limit,
+            no_storage=no_storage,
+            no_jobs=no_jobs,
+            with_samples=with_samples,
+            sample_limit=sample_limit,
+            max_samples=max_samples,
         )
     except FileNotFoundError as exc:
         formatter.error(message=str(exc), error_code="NOT_INITIALIZED")

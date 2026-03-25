@@ -94,10 +94,37 @@ kbagent --json workspace query \
   --file query.sql
 ```
 
+## Shared/linked buckets -- different Snowflake database
+
+Linked buckets (shared from another project) live in a **different Snowflake database**
+than the current project's own tables. A workspace only mounts the current project's DB
+by default, so querying linked bucket tables requires a fully-qualified 3-part name:
+
+```sql
+-- WRONG: linked bucket table not found in workspace DB
+SELECT * FROM "in.c-shared-data"."my-table";
+
+-- RIGHT: use the source project's database
+SELECT * FROM "sapi_1507"."in.c-shared-data"."my-table";
+```
+
+To find the correct database for a linked bucket:
+
+```bash
+kbagent --json storage bucket-detail --project ALIAS --bucket-id in.c-shared-data
+# Response includes snowflake_path with correct database for each table
+```
+
+The `bucket-detail` response resolves the source project and provides ready-to-use
+fully-qualified Snowflake paths (e.g. `"sapi_1507"."in.c-shared-data"."my-table"`).
+
+**Rule of thumb**: if `storage buckets` shows "Linked From" for a bucket, always use
+`bucket-detail` to get the correct Snowflake path before querying in a workspace.
+
 ## Key details
 
 - **Password**: only returned on creation (headless) or after `workspace password` (reset)
 - **Expiration**: workspaces expire server-side automatically
-- **Quoting**: Snowflake identifiers with hyphens need double quotes: `"my-table"`
+- **Quoting**: Snowflake converts unquoted identifiers to UPPERCASE. Always double-quote database, schema, and table names -- Keboola names are typically lowercase (e.g. `"sapi_901"."in.c-main"."users"`)
 - **Query Service**: uses Storage API token for auth -- no Snowflake credentials needed in the query command
 - **Transactional mode**: add `--transactional` to wrap SQL in a transaction

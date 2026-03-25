@@ -36,7 +36,8 @@ Keboola's web UI and standard API clients work great for a single project. But w
 
 | Command | What it does |
 |---------|-------------|
-| `config` | List, detail, search, update, delete configurations across projects |
+| `config` | List, detail, search, update, delete configurations; generate new config scaffolds |
+| `component` | Discover and search Keboola components (AI-powered search, schema inspection) |
 | `job` | Browse job history -- list and inspect jobs from the Queue API |
 | `storage` | Browse buckets and tables with Snowflake path resolution for shared buckets |
 | `lineage` | Analyze cross-project data flow via bucket sharing |
@@ -48,7 +49,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
 | `workspace` | Create workspaces, load tables, run SQL queries -- iterative SQL debugging |
 | `tool` | List and call MCP tools from keboola-mcp-server (read tools run in parallel) |
-| `sync` | Sync project configurations, storage metadata, job history, and data samples to local filesystem |
+| `sync` | Sync project configurations to local filesystem; push with auto-encryption of secrets |
 
 Every command supports `--json` for structured output and Rich formatting for human-readable output.
 
@@ -208,6 +209,34 @@ Two create modes:
 # Visible in Keboola UI
 kbagent workspace create --project prod --name "debug-ws" --ui
 ```
+
+## Creating new configurations
+
+Generate boilerplate config files for any Keboola component using AI-powered schema and example discovery:
+
+```bash
+# Find the right component
+kbagent component list --query "snowflake extractor" --project prod
+
+# Inspect component schema and documentation
+kbagent --json component detail --component-id keboola.ex-db-snowflake --project prod
+
+# Generate scaffold files (auto-detects kbc project structure)
+kbagent config new --component-id keboola.ex-db-snowflake --project prod --name "My Import" --output-dir .
+# Creates: main/extractor/keboola.ex-db-snowflake/my-import/_config.yml
+
+# Edit the generated config -- fill in credentials, adjust parameters
+# Secret fields (#password) start as <YOUR_SECRET> placeholder
+
+# Push to Keboola (secrets auto-encrypted, config_id auto-assigned)
+kbagent sync push --project prod
+```
+
+For transformations, the scaffold also generates code files:
+- SQL transformations: `_config.yml` + `transform.sql`
+- Python transformations: `_config.yml` + `transform.py` + `pyproject.toml`
+- Custom Python apps: `_config.yml` + `code.py` + `pyproject.toml`
+- Flows/orchestrators: `_config.yml` with phases, tasks, and schedule skeleton
 
 ## Sync pull (project snapshot)
 

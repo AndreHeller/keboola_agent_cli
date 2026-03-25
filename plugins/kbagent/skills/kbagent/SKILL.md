@@ -118,6 +118,10 @@ For detailed response parsing rules and common pitfalls, see [gotchas](reference
 
 After `sync pull`, see [reading-synced-data](references/reading-synced-data.md) for how to parse `_jobs.jsonl`, storage metadata, table schemas, and data samples -- includes Python examples for finding failing configs, largest tables, and more.
 
+## Scaffold workflow (creating new configs)
+
+To create a new extractor, writer, transformation, or application from scratch, see [scaffold-workflow](references/scaffold-workflow.md) for the full flow: find component, generate scaffold, edit, push.
+
 ## Sync & Git-branching workflow
 
 For the full GitOps workflow (sync init, pull, edit, diff, push, git-branching with Keboola dev branch isolation), see [sync-workflow](references/sync-workflow.md).

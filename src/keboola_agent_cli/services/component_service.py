@@ -114,6 +114,11 @@ def _build_config_yml(detail: ComponentDetail, name: str) -> str:
         lines.append("")
         lines.append("# This component uses configuration rows. Add rows via 'rows/' subdirectory.")
 
+    # _keboola metadata (component_id required for sync push, config_id assigned on first push)
+    lines.append("")
+    lines.append("_keboola:")
+    lines.append(f"  component_id: {detail.component_id}")
+
     lines.append("")
     return "\n".join(lines)
 
@@ -284,7 +289,7 @@ def _build_pyproject_toml(component_id: str, name: str, packages: list[str] | No
     )
 
 
-def _build_flow_config_yml(name: str) -> str:
+def _build_flow_config_yml(name: str, component_id: str = "keboola.orchestrator") -> str:
     """Generate flow/orchestrator configuration YAML."""
     lines = [
         "version: 2",
@@ -308,6 +313,9 @@ def _build_flow_config_yml(name: str) -> str:
         "    tasks:",
         '      - component: "keboola.snowflake-transformation"',
         '        config: "transformation/keboola.snowflake-transformation/my-transform"',
+        "",
+        "_keboola:",
+        f"  component_id: {component_id}",
         "",
     ]
     return "\n".join(lines)
@@ -638,7 +646,7 @@ class ComponentService(BaseService):
             files.append(
                 {
                     "path": "_config.yml",
-                    "content": _build_flow_config_yml(config_name),
+                    "content": _build_flow_config_yml(config_name, detail.component_id),
                     "description": "Flow/orchestrator configuration",
                 }
             )

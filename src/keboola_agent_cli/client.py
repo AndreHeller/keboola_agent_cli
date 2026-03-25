@@ -57,6 +57,7 @@ class KeboolaClient(BaseHttpClient):
         )
         self._queue_client: httpx.Client | None = None
         self._query_client: httpx.Client | None = None
+        self._encrypt_client: httpx.Client | None = None
 
     @property
     def _queue_base_url(self) -> str:
@@ -86,6 +87,20 @@ class KeboolaClient(BaseHttpClient):
             logger.warning("Query URL derivation did not change hostname: %s", hostname)
         return urlunparse(parsed._replace(netloc=query_host))
 
+    @property
+    def _encrypt_base_url(self) -> str:
+        """Derive Encryption API base URL from the Storage API URL.
+
+        Replaces 'connection.' with 'encryption.' in the hostname.
+        E.g. https://connection.keboola.com -> https://encryption.keboola.com
+        """
+        parsed = urlparse(self._stack_url)
+        hostname = parsed.hostname or ""
+        encrypt_host = hostname.replace("connection.", "encryption.", 1)
+        if encrypt_host == hostname:
+            logger.warning("Encrypt URL derivation did not change hostname: %s", hostname)
+        return urlunparse(parsed._replace(netloc=encrypt_host))
+
     def close(self) -> None:
         """Close the underlying HTTP clients."""
         super().close()
@@ -93,6 +108,8 @@ class KeboolaClient(BaseHttpClient):
             self._queue_client.close()
         if self._query_client is not None:
             self._query_client.close()
+        if self._encrypt_client is not None:
+            self._encrypt_client.close()
 
     def __enter__(self) -> "KeboolaClient":
         return self
@@ -135,6 +152,49 @@ class KeboolaClient(BaseHttpClient):
             base_url=self._query_base_url,
             **kwargs,
         )
+
+    def _encrypt_request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Execute an Encryption API request with retry. Lazily creates the encrypt client."""
+        if self._encrypt_client is None:
+            self._encrypt_client = httpx.Client(
+                base_url=self._encrypt_base_url,
+                timeout=DEFAULT_TIMEOUT,
+                headers={"Content-Type": "application/json"},
+            )
+        return self._do_request(
+            method,
+            path,
+            client=self._encrypt_client,
+            base_url=self._encrypt_base_url,
+            **kwargs,
+        )
+
+    def encrypt_values(
+        self,
+        project_id: int,
+        component_id: str,
+        data: dict[str, str],
+    ) -> dict[str, str]:
+        """Encrypt secret values via the Keboola Encryption API.
+
+        Sends a dict of {key: plaintext} and receives {key: encrypted}.
+        Keys must start with '#'. Encrypted values start with 'KBC::ProjectSecure::'.
+
+        Args:
+            project_id: Keboola project numeric ID.
+            component_id: Component identifier (e.g. 'keboola.ex-db-snowflake').
+            data: Dict of secret keys to encrypt (e.g. {'#password': 'my-secret'}).
+
+        Returns:
+            Dict of {key: encrypted_value}.
+        """
+        response = self._encrypt_request(
+            "POST",
+            "/encrypt",
+            params={"projectId": project_id, "componentId": component_id},
+            json=data,
+        )
+        return response.json()
 
     def verify_token(self) -> TokenVerifyResponse:
         """Verify the storage API token and retrieve project information.

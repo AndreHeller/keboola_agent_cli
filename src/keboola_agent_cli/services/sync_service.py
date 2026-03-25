@@ -951,6 +951,43 @@ class SyncService(BaseService):
             "pushed_details": pushed_details,
         }
 
+    @staticmethod
+    def _encrypt_secrets_in_config(
+        client: Any,
+        project_id: int | None,
+        component_id: str,
+        configuration: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Encrypt #-prefixed secret values in configuration before push.
+
+        Walks the configuration dict recursively, collects all #-prefixed keys
+        with unencrypted string values, sends them to the Encryption API,
+        and replaces plaintext values with encrypted ones.
+        """
+        if not project_id:
+            return configuration
+
+        # Collect all unencrypted secret values
+        secrets: dict[str, str] = {}
+        _collect_secrets(configuration, "", secrets)
+
+        if not secrets:
+            return configuration
+
+        try:
+            encrypted = client.encrypt_values(
+                project_id=project_id,
+                component_id=component_id,
+                data=secrets,
+            )
+            # Apply encrypted values back into configuration
+            _apply_encrypted(configuration, "", encrypted)
+            logger.info("Encrypted %d secret value(s) for %s", len(encrypted), component_id)
+        except Exception as exc:
+            logger.warning("Failed to encrypt secrets for %s: %s", component_id, exc)
+
+        return configuration
+
     def _push_create(
         self,
         client: Any,
@@ -971,6 +1008,13 @@ class SyncService(BaseService):
         merge_code_files(component_id, local_data, config_dir)
 
         name, description, configuration = local_config_to_api(local_data)
+
+        # Encrypt #-prefixed secrets before sending to API
+        project_id = manifest.project.id if manifest.project else None
+        configuration = self._encrypt_secrets_in_config(
+            client, project_id, component_id, configuration
+        )
+
         result = client.create_config(
             component_id=component_id,
             name=name,
@@ -978,12 +1022,17 @@ class SyncService(BaseService):
             description=description,
             branch_id=branch_id,
         )
+        new_config_id = result.get("id", "")
         logger.info(
             "Created config %s/%s (ID: %s)",
             component_id,
             name,
-            result.get("id"),
+            new_config_id,
         )
+
+        # Write back: update local file with config_id + encrypted secrets
+        self._writeback_after_push(local_data, config_dir, new_config_id, configuration)
+
         return result
 
     def _push_update(
@@ -1007,6 +1056,13 @@ class SyncService(BaseService):
         merge_code_files(component_id, local_data, config_dir)
 
         name, description, configuration = local_config_to_api(local_data)
+
+        # Encrypt #-prefixed secrets before sending to API
+        project_id = manifest.project.id if manifest.project else None
+        configuration = self._encrypt_secrets_in_config(
+            client, project_id, component_id, configuration
+        )
+
         client.update_config(
             component_id=component_id,
             config_id=config_id,
@@ -1017,6 +1073,36 @@ class SyncService(BaseService):
             branch_id=branch_id,
         )
         logger.info("Updated config %s/%s", component_id, config_id)
+
+        # Write back: update local file with encrypted secrets
+        self._writeback_after_push(local_data, config_dir, config_id, configuration)
+
+    def _writeback_after_push(
+        self,
+        local_data: dict[str, Any],
+        config_dir: Path,
+        config_id: str,
+        pushed_configuration: dict[str, Any],
+    ) -> None:
+        """Update local _config.yml after a successful push.
+
+        Writes back:
+        - _keboola.config_id (assigned by API on first create)
+        - Encrypted secret values (so local matches remote state)
+        """
+        # Ensure _keboola section exists and has config_id
+        keboola_meta = local_data.setdefault("_keboola", {})
+        if config_id:
+            keboola_meta["config_id"] = config_id
+
+        # Apply encrypted values from the pushed configuration back to local_data
+        pushed_params = pushed_configuration.get("parameters", {})
+        local_params = local_data.get("parameters", {})
+        if pushed_params and local_params:
+            _apply_encrypted_to_local(local_params, pushed_params)
+
+        self._write_config_file(config_dir, local_data)
+        logger.debug("Updated local config at %s after push", config_dir)
 
     # ------------------------------------------------------------------
     # bulk operations (all projects)
@@ -1822,3 +1908,79 @@ class SyncService(BaseService):
                     )
 
         return added
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for secret encryption
+# ---------------------------------------------------------------------------
+
+_ENCRYPTED_PREFIX = "KBC::"
+
+
+def _is_secret_key(key: str) -> bool:
+    """Check if a YAML key represents a secret (starts with #)."""
+    return isinstance(key, str) and key.startswith("#")
+
+
+def _is_already_encrypted(value: Any) -> bool:
+    """Check if a value is already encrypted (KBC::*Secure::* prefix)."""
+    return isinstance(value, str) and value.startswith(_ENCRYPTED_PREFIX)
+
+
+def _collect_secrets(obj: Any, path_prefix: str, result: dict[str, str]) -> None:
+    """Recursively collect unencrypted #-prefixed secret values.
+
+    Builds a flat dict of {#path_key: plaintext_value} suitable for
+    the Encryption API. The Encryption API requires all keys to start
+    with '#'.
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if _is_secret_key(key) and isinstance(value, str) and not _is_already_encrypted(value):
+                # Use the key directly for the encrypt API
+                encrypt_key = f"#{path_prefix}{key}" if path_prefix else key
+                result[encrypt_key] = value
+            elif isinstance(value, (dict, list)):
+                child_prefix = f"{path_prefix}{key}." if path_prefix else f"{key}."
+                _collect_secrets(value, child_prefix, result)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            child_prefix = f"{path_prefix}[{i}]."
+            _collect_secrets(item, child_prefix, result)
+
+
+def _apply_encrypted(obj: Any, path_prefix: str, encrypted: dict[str, str]) -> None:
+    """Recursively apply encrypted values back into the configuration dict."""
+    if isinstance(obj, dict):
+        for key in list(obj.keys()):
+            value = obj[key]
+            if _is_secret_key(key) and isinstance(value, str) and not _is_already_encrypted(value):
+                encrypt_key = f"#{path_prefix}{key}" if path_prefix else key
+                if encrypt_key in encrypted:
+                    obj[key] = encrypted[encrypt_key]
+            elif isinstance(value, (dict, list)):
+                child_prefix = f"{path_prefix}{key}." if path_prefix else f"{key}."
+                _apply_encrypted(value, child_prefix, encrypted)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            child_prefix = f"{path_prefix}[{i}]."
+            _apply_encrypted(item, child_prefix, encrypted)
+
+
+def _apply_encrypted_to_local(local: Any, pushed: Any) -> None:
+    """Copy encrypted secret values from pushed config back into local data.
+
+    Walks both dicts in parallel. Where pushed has an encrypted value
+    for a #-key, replaces the local plaintext with it.
+    """
+    if isinstance(local, dict) and isinstance(pushed, dict):
+        for key in local:
+            if key not in pushed:
+                continue
+            if _is_secret_key(key) and _is_already_encrypted(pushed[key]):
+                local[key] = pushed[key]
+            elif isinstance(local[key], dict) and isinstance(pushed[key], dict):
+                _apply_encrypted_to_local(local[key], pushed[key])
+            elif isinstance(local[key], list) and isinstance(pushed[key], list):
+                for i in range(min(len(local[key]), len(pushed[key]))):
+                    _apply_encrypted_to_local(local[key][i], pushed[key][i])

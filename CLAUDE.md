@@ -54,6 +54,7 @@ src/keboola_agent_cli/
   http_base.py          # BaseHttpClient - shared HTTP foundation for both clients
   client.py             # LAYER 3: HTTP client (Storage API + Queue API)
   manage_client.py      # LAYER 3: HTTP client (Manage API, X-KBC-ManageApiToken)
+  ai_client.py          # LAYER 3: HTTP client (AI Service API, component schemas)
   config_store.py       # JSON persistence for config.json (0600 permissions)
   models.py             # Pydantic models shared across layers
   output.py             # OutputFormatter: JSON vs Rich dual-mode output
@@ -68,6 +69,7 @@ src/keboola_agent_cli/
     tool.py             # LAYER 1: CLI commands for MCP tool list/call (supports --branch)
     branch.py           # LAYER 1: CLI commands for branch lifecycle (list/create/use/reset/delete/merge)
     workspace.py        # LAYER 1: CLI commands for workspace lifecycle (create/list/delete/query)
+    component.py        # LAYER 1: CLI commands for component discovery and scaffold
     context.py          # LAYER 1: Agent usage instructions
     doctor.py           # LAYER 1: Health check command
   services/
@@ -80,6 +82,7 @@ src/keboola_agent_cli/
     mcp_service.py      # LAYER 2: MCP tool integration (keboola-mcp-server wrapper)
     branch_service.py   # LAYER 2: Branch lifecycle (create/use/reset/delete/merge, async job polling)
     workspace_service.py # LAYER 2: Workspace lifecycle (CRUD, table load, SQL query via Query Service)
+    component_service.py # LAYER 2: Component discovery, schema fetch, scaffold generation
     doctor_service.py   # LAYER 2: Health check business logic
 
 tests/
@@ -103,6 +106,9 @@ tests/
   test_doctor_service.py   # Doctor service tests
   test_http_base.py        # BaseHttpClient tests
   test_helpers.py          # Command helpers tests
+  test_ai_client.py        # AI Service client tests
+  test_component_service.py # Component service tests
+  test_component_cli.py    # Component CLI tests via CliRunner
   test_integration.py      # Integration tests (edge cases, linting)
 ```
 
@@ -117,12 +123,14 @@ CLI Commands (commands/)  -->  Services (services/)  -->  API Client (client.py,
 - Business logic changes: modify only `services/`
 - UI changes: modify only `commands/`
 
-### Two HTTP Clients
+### Three HTTP Clients
 
 - **KeboolaClient** (`client.py`): Storage API + Queue API, auth via `X-StorageApi-Token`
 - **ManageClient** (`manage_client.py`): Manage API, auth via `X-KBC-ManageApiToken`
 
-Both inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/backoff logic (429/5xx, exponential backoff, 3 retries) and common HTTP infrastructure.
+- **AiServiceClient** (`ai_client.py`): AI Service API, auth via `X-StorageApi-Token`, URL derived as `ai.{stack_suffix}`
+
+All three inherit from `BaseHttpClient` (`http_base.py`) which provides shared retry/backoff logic (429/5xx, exponential backoff, 3 retries) and common HTTP infrastructure.
 
 ### MCP Integration
 
@@ -230,6 +238,10 @@ kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--ta
 kbagent workspace query --project ALIAS --workspace-id ID --sql "SELECT ..." [--transactional]
 kbagent workspace query --project ALIAS --workspace-id ID --file query.sql
 kbagent workspace from-transformation --project ALIAS --component-id ID --config-id ID [--row-id ID]
+
+kbagent component list [--project NAME] [--type TYPE] [--query QUERY]
+kbagent component detail --component-id ID [--project NAME]
+kbagent config new --component-id ID [--name NAME] [--project NAME] [--output-dir DIR]
 
 kbagent context
 kbagent init [--from-global]

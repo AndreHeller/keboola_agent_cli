@@ -20,6 +20,7 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
 - Browse job history (running, succeeded, failed jobs)
 - Check connectivity and health of project connections
 - Analyze cross-project data lineage via bucket sharing
+- Discover components and generate config scaffolds with AI-powered search
 - Sync project configurations as local files (GitOps workflow)
 - Git-branching mode: map git branches to Keboola dev branches for safe parallel development
 - 3-way diff (local vs base vs remote) with conflict detection
@@ -73,6 +74,24 @@ Then explore:
       kbagent --json project status
       kbagent --json project status --project prod
 
+### Component Discovery
+
+  kbagent component list [--project NAME] [--type TYPE] [--query "search text"]
+    List or search available Keboola components.
+    Without --query: lists components from connected projects via Storage API.
+    With --query: uses AI-powered semantic search to find components by description.
+    --type: extractor, writer, transformation, application
+    --query: natural language search (e.g. "snowflake extractor", "S3 file loader")
+    Examples:
+      kbagent --json component list --project prod --type extractor
+      kbagent --json component list --project prod --query "snowflake"
+
+  kbagent component detail --component-id ID [--project NAME]
+    Show detailed component documentation including configuration schema,
+    examples count, and documentation URL.
+    Example:
+      kbagent --json component detail --component-id keboola.ex-db-snowflake --project prod
+
 ### Configuration Browsing
 
   kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID]
@@ -110,6 +129,20 @@ Then explore:
     Example:
       kbagent --json config delete --project prod --component-id keboola.python-transformation-v2 --config-id 12345
       kbagent --json config delete --project prod --component-id keboola.ex-http --config-id 67890 --branch 456
+
+  kbagent config new --component-id ID [--name NAME] [--project NAME] [--output-dir DIR]
+    Generate boilerplate configuration files for a Keboola component.
+    Fetches component schema and examples from AI Service to create
+    ready-to-edit _config.yml (plus transform.sql/transform.py/code.py
+    for transformations and Python apps).
+    --output-dir: write files to disk (auto-detects kbc project branch prefix).
+    Without --output-dir: prints scaffold to stdout.
+    Secret fields (#password etc.) use <YOUR_SECRET> placeholder.
+    After editing, push with 'sync push' -- secrets are auto-encrypted.
+    Examples:
+      kbagent --json config new --component-id keboola.ex-db-snowflake --project prod
+      kbagent config new --component-id keboola.snowflake-transformation --project prod --name "Clean Data"
+      kbagent config new --component-id keboola.ex-http --project prod --output-dir .
 
   kbagent config search --query PATTERN [--project NAME] [--component-type TYPE] [--component-id ID] [--ignore-case] [--regex]
     Search through configuration bodies (names, descriptions, parameters, rows)
@@ -401,6 +434,7 @@ Then explore:
     deletes removed. New configs get IDs from API automatically.
     --all-projects pushes all configured projects in parallel.
     Only pushes local-side changes (modified, added, deleted).
+    Secret values (#-prefixed keys) are automatically encrypted via Encryption API before sending.
     Skips remote_modified and conflict -- run pull first to resolve.
     --dry-run shows what would change without applying.
     After push, manifest is updated so subsequent pull sees "Already up to date".
@@ -674,6 +708,22 @@ Then explore:
      to use kbagent commands (the skill triggers on Keboola-related tasks).
      The plugin provides a decision table mapping goals to commands and
      references for common workflows (workspace debugging, branch lifecycle).
+
+20. Creating new configurations -- scaffold and push workflow:
+     # Step 1: Find the right component
+     kbagent --json component list --project prod --query "snowflake extractor"
+
+     # Step 2: Generate boilerplate config files on disk
+     kbagent config new --component-id keboola.ex-db-snowflake --project prod --name "My Import" --output-dir .
+       # ^ creates main/extractor/keboola.ex-db-snowflake/my-import/_config.yml
+       #   with parameters from real examples, #secrets as <YOUR_SECRET>
+
+     # Step 3: Edit the generated _config.yml -- fill in credentials, table mappings, etc.
+
+     # Step 4: Push to Keboola (secrets are auto-encrypted before sending)
+     kbagent sync push --project prod
+       # ^ encrypts #password etc. via Encryption API, creates config in Keboola,
+       #   writes back config_id and encrypted values to local file automatically
 
 ## Exit Codes
 

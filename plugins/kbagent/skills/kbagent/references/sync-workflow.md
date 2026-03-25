@@ -2,35 +2,59 @@
 
 Sync lets you manage Keboola configurations as local files with full git integration.
 
-## Basic workflow (no git-branching)
+## All-projects workflow (recommended)
 
 ```bash
-# 1. Initialize and pull
-mkdir my-project && cd my-project
-kbagent --json sync init --project prod
+# Download all configured projects in one command
+mkdir keboola && cd keboola
+kbagent sync pull --all-projects
+
+# Check status across all projects (compact one-liner per project)
+kbagent sync diff --all-projects
+
+# Push changes from all projects
+kbagent sync push --all-projects --dry-run   # preview
+kbagent sync push --all-projects             # apply
+```
+
+Each project gets its own subdirectory (named by alias). Projects are processed in parallel.
+
+## Single-project workflow
+
+```bash
+# Pull auto-inits if no manifest exists
 kbagent --json sync pull --project prod
 
-# 2. Edit locally -- configs are in _config.yml, SQL in transform.sql, Python in code.py
+# Edit locally -- configs are in _config.yml, description in _description.md,
+# SQL in transform.sql, Python in code.py
 # Use any IDE, get git diffs, code review, etc.
 
-# 3. Review changes
+# Review changes
 kbagent --json sync status                         # what changed locally
 kbagent --json sync diff --project prod            # 3-way diff vs remote
 
-# 4. Push
+# Push
 kbagent --json sync push --project prod --dry-run  # preview
 kbagent --json sync push --project prod            # apply
 ```
 
 ## File format
 
-| Component type | Files created |
-|---------------|---------------|
-| Any config | `_config.yml` (YAML: name, description, parameters, storage) |
+Every config directory contains:
+
+| File | Purpose |
+|------|---------|
+| `_config.yml` | YAML config (name, parameters, storage) |
+| `_description.md` | Description as readable Markdown (always separate) |
+
+Depending on component type, additional files are extracted:
+
+| Component type | Extra files |
+|---------------|-------------|
 | Snowflake transformation | `transform.sql` (SQL with `/* ===== BLOCK: ... ===== */` markers) |
 | Python transformation | `transform.py` + `pyproject.toml` (dependencies) |
 | Custom Python app | `code.py` + `pyproject.toml` |
-| Flow/orchestrator | `_config.yml` with phases, tasks, schedules inline |
+| Flow/orchestrator | phases, tasks, schedules inline in `_config.yml` |
 
 ## Git-branching workflow (recommended)
 

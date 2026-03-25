@@ -403,16 +403,24 @@ Then explore:
       kbagent --json sync init --project prod --git-branching
 
   kbagent sync pull --project ALIAS [--directory DIR] [--force] [--dry-run]
+  kbagent sync pull --all-projects [--directory DIR] [--force] [--dry-run]
     Download configurations from Keboola to local files.
+    --project: single project. --all-projects: all configured projects in
+    parallel, each in its own subdirectory (auto-inits if needed).
     Idempotent: only writes files that actually changed on the remote side.
     Protects locally modified files (skips overwrite unless --force).
     Reports "Already up to date" when nothing changed.
     --dry-run shows what would be pulled without writing files.
-    File format: _config.yml (YAML), transform.sql (SQL with block markers),
-    transform.py/code.py (Python), pyproject.toml (dependencies).
+    File format:
+      _config.yml      -- YAML config (name, parameters, storage)
+      _description.md  -- description as Markdown (always separate)
+      transform.sql    -- SQL with block markers (Snowflake transformations)
+      transform.py     -- Python code with block markers
+      code.py          -- custom Python app code
+      pyproject.toml   -- Python dependencies
     Example:
       kbagent --json sync pull --project prod
-      kbagent --json sync pull --project prod --dry-run
+      kbagent sync pull --all-projects
 
   kbagent sync status [--directory DIR]
     Show which local configs have been modified, added, or deleted since last pull.
@@ -421,7 +429,9 @@ Then explore:
       kbagent --json sync status
 
   kbagent sync diff --project ALIAS [--directory DIR]
+  kbagent sync diff --all-projects [--directory DIR]
     3-way diff between local files, pull-time snapshot, and remote Keboola state.
+    --all-projects shows compact one-line summary per project.
     Change types:
       - MODIFIED: local changed, remote unchanged (safe to push)
       - REMOTE MODIFIED: remote changed, local unchanged (run pull)
@@ -432,17 +442,20 @@ Then explore:
     Encrypted values are normalized so nonce changes don't cause false diffs.
     Example:
       kbagent --json sync diff --project prod
+      kbagent sync diff --all-projects
 
   kbagent sync push --project ALIAS [--directory DIR] [--dry-run] [--force]
+  kbagent sync push --all-projects [--directory DIR] [--dry-run] [--force]
     Push local changes to Keboola. Creates new configs, updates modified,
     deletes removed. New configs get IDs from API automatically.
+    --all-projects pushes all configured projects in parallel.
     Only pushes local-side changes (modified, added, deleted).
     Skips remote_modified and conflict -- run pull first to resolve.
     --dry-run shows what would change without applying.
     After push, manifest is updated so subsequent pull sees "Already up to date".
     Example:
       kbagent --json sync push --project prod --dry-run
-      kbagent --json sync push --project prod
+      kbagent sync push --all-projects --dry-run
 
   kbagent sync branch-link --project ALIAS [--branch-id ID] [--branch-name NAME]
     Link current git branch to a Keboola development branch.
@@ -642,20 +655,25 @@ Then explore:
        This creates Storage API tokens for ALL projects in the org and registers them automatically.
 
 17. Sync workflow -- manage configs as local files with GitOps:
-     # Step 1: Initialize and pull
+
+     # All projects at once (recommended):
+     mkdir keboola && cd keboola
+     kbagent sync pull --all-projects                 # downloads ALL projects
+     kbagent sync diff --all-projects                 # one-line status per project
+     kbagent sync push --all-projects --dry-run       # preview all changes
+
+     # Single project:
      mkdir my-project && cd my-project
-     kbagent --json sync init --project prod
-     kbagent --json sync pull --project prod
+     kbagent --json sync pull --project prod          # auto-inits if needed
+     kbagent --json sync diff --project prod
+     kbagent --json sync push --project prod
 
-     # Step 2: Edit configs locally
-     # SQL is in transform.sql, Python in code.py, config in _config.yml
-     # Edit with any IDE, get git diffs, code review, etc.
-
-     # Step 3: Review and push
-     kbagent --json sync status                      # local changes
-     kbagent --json sync diff --project prod         # vs remote
-     kbagent --json sync push --project prod --dry-run  # preview
-     kbagent --json sync push --project prod         # apply
+     # File layout per config:
+     # _config.yml      -- YAML (name, parameters, storage)
+     # _description.md  -- description as readable Markdown
+     # transform.sql    -- SQL code (Snowflake transformations)
+     # transform.py     -- Python code (Python transformations)
+     # code.py          -- Python app code (custom apps)
 
      # Pull is idempotent: re-running pull when nothing changed reports
      # "Already up to date" and writes zero files. Locally modified files

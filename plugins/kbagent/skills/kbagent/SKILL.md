@@ -73,10 +73,10 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | List available MCP tools from the keboola-mcp-server | `kbagent tool list` |
 | Call an MCP tool on keboola-mcp-server | `kbagent tool call <TOOL-NAME>` |
 | Initialize a sync working directory for a Keboola project | `kbagent sync init --project PROJECT` |
-| Download all configurations from a Keboola project to local files | `kbagent sync pull --project PROJECT` |
+| Download configurations from a Keboola project to local files | `kbagent sync pull` |
 | Show which local configurations have been modified, added, or deleted | `kbagent sync status` |
-| Show detailed diff between local and remote configurations | `kbagent sync diff --project PROJECT` |
-| Push local configuration changes to a Keboola project | `kbagent sync push --project PROJECT` |
+| Show detailed diff between local and remote configurations | `kbagent sync diff` |
+| Push local configuration changes to a Keboola project | `kbagent sync push` |
 | Link the current git branch to a Keboola development branch | `kbagent sync branch-link --project PROJECT` |
 | Remove the branch mapping for the current git branch | `kbagent sync branch-unlink` |
 | Show the branch mapping status for the current git branch | `kbagent sync branch-status` |

@@ -393,9 +393,23 @@ class SyncService(BaseService):
                         "pull_config_hash": old_cfg_hash,
                     }
                 else:
+                    # Compute hashes for all extracted files
+                    extra_hashes: dict[str, str] = {}
+                    if not dry_run:
+                        for fname in [
+                            "_description.md",
+                            "transform.sql",
+                            "transform.py",
+                            "code.py",
+                            "pyproject.toml",
+                        ]:
+                            fpath = config_dir / fname
+                            if fpath.exists():
+                                extra_hashes[fname] = self._file_hash(fpath)
                     cfg_metadata = {
                         "pull_hash": file_hash,
                         "pull_config_hash": pull_cfg_hash,
+                        "pull_extra_hashes": extra_hashes,
                     }
                 new_configurations.append(
                     ManifestConfiguration(
@@ -548,7 +562,7 @@ class SyncService(BaseService):
         # For locally modified files, merge code back for real comparison.
         local_configs: list[dict[str, Any]] = []
         file_unchanged: dict[str, bool] = {}
-        local_override_hashes: dict[str, str] = {}  # key -> hash to use instead of computing
+        local_override_hashes: dict[str, str] = {}
         for cfg in manifest.configurations:
             branch_path = self._find_branch_path(manifest, cfg.branch_id)
             config_dir = project_root / branch_path / cfg.path
@@ -558,22 +572,35 @@ class SyncService(BaseService):
 
             key = f"{cfg.component_id}/{cfg.id}"
 
-            # Check if file was modified locally
+            # Check if ANY file in this config dir changed since pull.
+            # Manifest stores pull_extra_hashes for extracted files.
             pull_hash = cfg.metadata.get("pull_hash", "")
             config_file = config_dir / CONFIG_FILENAME
             current_file_hash = self._file_hash(config_file) if config_file.exists() else ""
-            is_file_unchanged = bool(pull_hash and current_file_hash == pull_hash)
-            file_unchanged[key] = is_file_unchanged
+            config_unchanged = bool(pull_hash and current_file_hash == pull_hash)
 
-            if is_file_unchanged:
-                # File not touched -- use stored hash directly.
-                # Skip expensive merge_code_files roundtrip.
+            extras_unchanged = True
+            stored_extra = cfg.metadata.get("pull_extra_hashes", {})
+            for fname, stored_h in stored_extra.items():
+                fpath = config_dir / fname
+                if fpath.exists():
+                    if self._file_hash(fpath) != stored_h:
+                        extras_unchanged = False
+                        break
+                else:
+                    extras_unchanged = False
+                    break
+
+            is_unchanged = config_unchanged and extras_unchanged
+            file_unchanged[key] = is_unchanged
+
+            if is_unchanged:
+                # All files match pull state -- use stored API hash
                 stored_cfg_hash = cfg.metadata.get("pull_config_hash", "")
                 if stored_cfg_hash:
                     local_override_hashes[key] = stored_cfg_hash
-            else:
-                # File was modified -- must merge code for real comparison
-                merge_code_files(cfg.component_id, local_data, config_dir)
+            # Always merge for local_data (needed for deep_diff details)
+            merge_code_files(cfg.component_id, local_data, config_dir)
 
             local_configs.append(
                 {

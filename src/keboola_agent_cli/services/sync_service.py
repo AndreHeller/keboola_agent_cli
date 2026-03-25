@@ -195,10 +195,8 @@ class SyncService(BaseService):
         # Load or verify manifest exists
         manifest = load_manifest(project_root)
 
-        # Determine branch to pull from
-        branch_id = project.active_branch_id
-        if not branch_id and manifest.branches:
-            branch_id = manifest.branches[0].id
+        # Determine branch to pull from (git-branching aware)
+        branch_id = self._resolve_branch_id(project, manifest, project_root)
 
         # Fetch all components with configs from API
         client = self._client_factory(project.stack_url, project.token)
@@ -206,11 +204,7 @@ class SyncService(BaseService):
             components = client.list_components_with_configs(branch_id=branch_id)
 
         # Determine branch directory name
-        branch_dir_name = "main"
-        for mb in manifest.branches:
-            if mb.id == branch_id:
-                branch_dir_name = mb.path
-                break
+        branch_dir_name = self._find_branch_path(manifest, branch_id)
 
         branch_dir = project_root / branch_dir_name
 
@@ -524,9 +518,7 @@ class SyncService(BaseService):
         project = projects[alias]
         manifest = load_manifest(project_root)
 
-        branch_id = project.active_branch_id
-        if not branch_id and manifest.branches:
-            branch_id = manifest.branches[0].id
+        branch_id = self._resolve_branch_id(project, manifest, project_root)
 
         # Fetch remote state
         client = self._client_factory(project.stack_url, project.token)
@@ -577,7 +569,7 @@ class SyncService(BaseService):
 
         # Also add untracked local configs (new files)
         for added_cfg in self._find_untracked_configs(project_root, manifest):
-            branch_path = manifest.branches[0].path if manifest.branches else "main"
+            branch_path = self._find_branch_path(manifest, branch_id)
             config_dir = project_root / branch_path / added_cfg["path"]
             local_data = self._read_config_file(config_dir)
             if local_data is None:
@@ -718,9 +710,7 @@ class SyncService(BaseService):
         project = projects[alias]
         manifest = load_manifest(project_root)
 
-        branch_id = project.active_branch_id
-        if not branch_id and manifest.branches:
-            branch_id = manifest.branches[0].id
+        branch_id = self._resolve_branch_id(project, manifest, project_root)
 
         client = self._client_factory(project.stack_url, project.token)
         created = 0
@@ -729,7 +719,7 @@ class SyncService(BaseService):
         errors: list[dict[str, str]] = []
         pushed_details: list[dict[str, str]] = []
         manifest_dirty = False
-        branch_path = manifest.branches[0].path if manifest.branches else "main"
+        branch_path = self._find_branch_path(manifest, branch_id)
 
         with client:
             for change in changes:
@@ -862,7 +852,7 @@ class SyncService(BaseService):
         branch_id: int | None,
     ) -> dict[str, Any] | None:
         """Create a new config from a local _config.yml file."""
-        branch_path = manifest.branches[0].path if manifest.branches else "main"
+        branch_path = self._find_branch_path(manifest, branch_id)
         config_dir = project_root / branch_path / config_path_str
         local_data = self._read_config_file(config_dir)
         if local_data is None:
@@ -898,11 +888,11 @@ class SyncService(BaseService):
         branch_id: int | None,
     ) -> None:
         """Update an existing config from a local _config.yml file."""
-        branch_path = manifest.branches[0].path if manifest.branches else "main"
+        branch_path = self._find_branch_path(manifest, branch_id)
         config_dir = project_root / branch_path / config_path_str
         local_data = self._read_config_file(config_dir)
         if local_data is None:
-            return
+            raise FileNotFoundError(f"Config file not found: {config_dir / CONFIG_FILENAME}")
 
         # Merge code files (transform.sql, transform.py, code.py) back into config
         merge_code_files(component_id, local_data, config_dir)
@@ -1127,6 +1117,48 @@ class SyncService(BaseService):
     # Private helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_branch_id(
+        project: Any,
+        manifest: "Manifest",
+        project_root: Path,
+    ) -> int | None:
+        """Resolve the Keboola branch ID for sync operations.
+
+        Priority:
+        1. Git-branching mode: read branch-mapping.json for current git branch
+        2. ``active_branch_id`` from project config (``kbagent branch use``)
+        3. First branch in manifest (production fallback)
+
+        Raises ``ConfigError`` if git-branching is enabled but the current
+        branch is not linked (prevents accidental production writes).
+        """
+        from ..sync.branch_mapping import load_branch_mapping
+        from ..sync.git_utils import get_current_branch
+
+        if manifest.git_branching.enabled:
+            git_branch = get_current_branch(project_root)
+            if git_branch:
+                try:
+                    mapping = load_branch_mapping(project_root)
+                    entry = mapping.get(git_branch)
+                    if entry is not None:
+                        # entry.keboola_id is None for production (default branch)
+                        return entry.keboola_id
+                except FileNotFoundError:
+                    pass
+                # Branch not linked -- block operation
+                raise ConfigError(
+                    f"Git branch '{git_branch}' is not linked to a Keboola branch. "
+                    f"Run 'kbagent sync branch-link --project ALIAS' first."
+                )
+
+        # Non git-branching: use active_branch_id or manifest fallback
+        branch_id = project.active_branch_id
+        if not branch_id and manifest.branches:
+            branch_id = manifest.branches[0].id
+        return branch_id
+
     def _write_config_file(self, config_dir: Path, config_data: dict[str, Any]) -> str:
         """Write a ``_config.yml`` file and return its SHA256 hash."""
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -1157,12 +1189,20 @@ class SyncService(BaseService):
             logger.warning("Failed to parse %s", config_file)
             return None
 
-    def _find_branch_path(self, manifest: Manifest, branch_id: int) -> str:
-        """Find the branch directory name for a given branch ID."""
+    def _find_branch_path(self, manifest: Manifest, branch_id: int | None) -> str:
+        """Find the branch directory name for a given branch ID.
+
+        When ``branch_id`` is ``None`` (production / default branch),
+        return the first branch path from the manifest.
+        """
+        if branch_id is None:
+            # Production -- use default branch path
+            return manifest.branches[0].path if manifest.branches else "main"
         for branch in manifest.branches:
             if branch.id == branch_id:
                 return branch.path
-        return "main"
+        # Fallback to default branch
+        return manifest.branches[0].path if manifest.branches else "main"
 
     def _find_untracked_configs(
         self, project_root: Path, manifest: Manifest

@@ -26,11 +26,11 @@ def is_git_repo(path: Path) -> bool:
 def get_current_branch(path: Path) -> str | None:
     """Return the current git branch name, or ``None`` on failure.
 
-    Uses ``git rev-parse --abbrev-ref HEAD`` which returns the
-    symbolic branch name (e.g. ``main``, ``feature/foo``).
+    Uses ``git branch --show-current`` which works even in a freshly
+    initialized repo (no commits yet), unlike ``git rev-parse``.
     """
     result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        ["git", "branch", "--show-current"],
         cwd=path,
         capture_output=True,
         text=True,
@@ -39,8 +39,7 @@ def get_current_branch(path: Path) -> str | None:
     if result.returncode != 0:
         return None
     branch = result.stdout.strip()
-    # Detached HEAD returns "HEAD"
-    return branch if branch and branch != "HEAD" else None
+    return branch if branch else None
 
 
 def get_default_branch(path: Path) -> str:
@@ -85,5 +84,10 @@ def get_default_branch(path: Path) -> str:
     if result.returncode == 0:
         return "master"
 
-    # 4. Default
+    # 4. Use current branch name (works in fresh repos with no commits)
+    current = get_current_branch(path)
+    if current:
+        return current
+
+    # 5. Default
     return "main"

@@ -93,7 +93,7 @@ def _extract_sql_transformation(config_data: dict[str, Any], config_dir: Path) -
             code_name = code.get("name", "unnamed")
             lines.append(SQL_CODE_MARKER.format(name=code_name))
 
-            scripts = code.get("script", [])
+            scripts = code.get("script") or []
             for script in scripts:
                 lines.append(script)
             lines.append("")
@@ -200,7 +200,7 @@ def _extract_python_transformation(config_data: dict[str, Any], config_dir: Path
                 code_name = code.get("name", "unnamed")
                 lines.append(PYTHON_CODE_MARKER.format(name=code_name))
 
-                scripts = code.get("script", [])
+                scripts = code.get("script") or []
                 for script in scripts:
                     lines.append(script)
                 lines.append("")

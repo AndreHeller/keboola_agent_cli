@@ -58,7 +58,7 @@ def api_config_to_local(
     promoted are preserved under a ``_configuration_extra`` key so that
     round-tripping does not lose data.
     """
-    configuration: dict[str, Any] = config_data.get("configuration", {})
+    configuration: dict[str, Any] = config_data.get("configuration") or {}
 
     local: dict[str, Any] = {
         "version": CONFIG_YML_VERSION,
@@ -70,7 +70,7 @@ def api_config_to_local(
     if "parameters" in configuration:
         local["parameters"] = configuration["parameters"]
 
-    storage: dict[str, Any] = configuration.get("storage", {})
+    storage: dict[str, Any] = configuration.get("storage") or {}
     if "input" in storage:
         local["input"] = storage["input"]
     if "output" in storage:
@@ -146,7 +146,7 @@ def api_row_to_local(row_data: dict[str, Any], component_id: str) -> dict[str, A
 
     Follows the same promotion rules as :func:`api_config_to_local`.
     """
-    configuration: dict[str, Any] = row_data.get("configuration", {})
+    configuration: dict[str, Any] = row_data.get("configuration") or {}
 
     local: dict[str, Any] = {
         "version": CONFIG_YML_VERSION,
@@ -157,7 +157,7 @@ def api_row_to_local(row_data: dict[str, Any], component_id: str) -> dict[str, A
     if "parameters" in configuration:
         local["parameters"] = configuration["parameters"]
 
-    storage: dict[str, Any] = configuration.get("storage", {})
+    storage: dict[str, Any] = configuration.get("storage") or {}
     if "input" in storage:
         local["input"] = storage["input"]
     if "output" in storage:

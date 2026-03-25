@@ -7,9 +7,42 @@ processors) to the top level and adds a ``_keboola`` metadata block.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from ..constants import CONFIG_YML_VERSION
+
+
+def _normalize_scripts(parameters: Any) -> Any:
+    """Normalize script arrays in transformation parameters.
+
+    The Keboola API inconsistently returns code scripts as either:
+    - ``["line1", "line2", ...]`` (per-line array)
+    - ``["full\\ncode\\nwith\\nnewlines"]`` (single multiline string)
+
+    This normalizes to per-line format so that local merge (which always
+    produces per-line) and remote data compare identically.
+    """
+    if not isinstance(parameters, dict):
+        return parameters
+    params = copy.deepcopy(parameters)
+    for block in params.get("blocks", []):
+        if not isinstance(block, dict):
+            continue
+        for code in block.get("codes", []):
+            if not isinstance(code, dict):
+                continue
+            scripts = code.get("script")
+            if isinstance(scripts, list) and scripts:
+                normalized: list[str] = []
+                for s in scripts:
+                    if isinstance(s, str) and "\n" in s:
+                        normalized.extend(s.split("\n"))
+                    else:
+                        normalized.append(s)
+                code["script"] = normalized
+    return params
+
 
 # ---------------------------------------------------------------------------
 # Component type mapping
@@ -68,7 +101,7 @@ def api_config_to_local(
 
     # Promote well-known nested keys
     if "parameters" in configuration:
-        local["parameters"] = configuration["parameters"]
+        local["parameters"] = _normalize_scripts(configuration["parameters"])
 
     storage: dict[str, Any] = configuration.get("storage") or {}
     if "input" in storage:

@@ -106,6 +106,15 @@ DEFAULT_NAMING_DATA_APP: str = "app/{component_id}/{config_name}"
 CONFIG_YML_VERSION: int = MANIFEST_VERSION
 SANITIZE_NAME_MAX_LENGTH: int = 100
 
+# --- Ignored Components ---
+# Components that are always excluded from sync operations (pull/push/diff).
+# These are managed through separate APIs and have volatile internal state.
+ALWAYS_IGNORED_COMPONENTS: frozenset[str] = frozenset(
+    {
+        "keboola.sandboxes",  # Workspaces API; parameters.id is volatile
+    }
+)
+
 # --- Diff Engine ---
 DIFF_MAX_DEPTH: int = 3  # max nesting depth for deep_diff detail output
 DIFF_MAX_LINES: int = 20  # max number of diff detail lines per config change

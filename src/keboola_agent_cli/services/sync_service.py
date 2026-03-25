@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from ..constants import (
+    ALWAYS_IGNORED_COMPONENTS,
     BRANCH_MAPPING_FILENAME,
     CONFIG_FILENAME,
     KEBOOLA_DIR_NAME,
@@ -234,6 +235,8 @@ class SyncService(BaseService):
 
         for component in components:
             component_id = component.get("id", "")
+            if component_id in ALWAYS_IGNORED_COMPONENTS:
+                continue
             component_type = classify_component_type(component.get("type", "other"))
             configs = component.get("configurations", [])
 
@@ -541,6 +544,8 @@ class SyncService(BaseService):
         remote_configs: dict[str, dict[str, Any]] = {}
         for component in components:
             component_id = component.get("id", "")
+            if component_id in ALWAYS_IGNORED_COMPONENTS:
+                continue
             for cfg in component.get("configurations", []):
                 config_id = str(cfg.get("id", ""))
                 key = f"{component_id}/{config_id}"

@@ -18,6 +18,14 @@ KEBOOLA_DIR = ".keboola"
 MANIFEST_FILE = "manifest.json"
 
 
+def _safe_resolve_dir(directory: Path) -> Path:
+    """Resolve a directory path safely (handles deleted CWD)."""
+    try:
+        return directory.resolve()
+    except (OSError, ValueError):
+        return Path(str(directory)).expanduser()
+
+
 def _resolve_project_root(directory: Path, alias: str | None = None) -> Path:
     """Find the project root directory containing .keboola/manifest.json.
 
@@ -25,7 +33,7 @@ def _resolve_project_root(directory: Path, alias: str | None = None) -> Path:
     1. directory itself (explicit --directory or current dir)
     2. directory/{alias}/ (auto-detect subdirectory from --all-projects layout)
     """
-    root = directory.resolve() if directory.exists() else Path(directory).absolute()
+    root = _safe_resolve_dir(directory)
     if (root / KEBOOLA_DIR / MANIFEST_FILE).exists():
         return root
     if alias:
@@ -370,7 +378,7 @@ def sync_pull(
         raise typer.Exit(code=2)
 
     if all_projects:
-        base_dir = Path(directory).absolute()
+        base_dir = _safe_resolve_dir(directory)
         try:
             data = service.pull_all(base_dir, force=force, dry_run=dry_run)
         except ConfigError as exc:
@@ -522,7 +530,7 @@ def sync_diff(
         raise typer.Exit(code=2)
 
     if all_projects:
-        base_dir = Path(directory).absolute()
+        base_dir = _safe_resolve_dir(directory)
         try:
             data = service.diff_all(base_dir)
         except ConfigError as exc:
@@ -693,7 +701,7 @@ def sync_push(
         raise typer.Exit(code=2)
 
     if all_projects:
-        base_dir = Path(directory).absolute()
+        base_dir = _safe_resolve_dir(directory)
         try:
             data = service.push_all(base_dir, dry_run=dry_run, force=force)
         except ConfigError as exc:

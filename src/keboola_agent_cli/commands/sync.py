@@ -14,6 +14,26 @@ from ._helpers import get_formatter, get_service, map_error_to_exit_code
 
 sync_app = typer.Typer(help="(BETA) Sync project configurations with local filesystem")
 
+KEBOOLA_DIR = ".keboola"
+MANIFEST_FILE = "manifest.json"
+
+
+def _resolve_project_root(directory: Path, alias: str | None = None) -> Path:
+    """Find the project root directory containing .keboola/manifest.json.
+
+    Tries in order:
+    1. directory itself (explicit --directory or current dir)
+    2. directory/{alias}/ (auto-detect subdirectory from --all-projects layout)
+    """
+    root = directory.resolve() if directory.exists() else Path(directory).absolute()
+    if (root / KEBOOLA_DIR / MANIFEST_FILE).exists():
+        return root
+    if alias:
+        sub = root / alias
+        if (sub / KEBOOLA_DIR / MANIFEST_FILE).exists():
+            return sub
+    return root  # let caller handle the error
+
 
 def _change_label(change: dict) -> str:
     """Build a human-readable label for a config change entry."""
@@ -363,7 +383,16 @@ def sync_pull(
             _format_all_results(formatter, data, _format_pull_result, _pull_one_liner)
         return
 
-    project_root = directory.resolve()
+    project_root = _resolve_project_root(directory, project)
+
+    # Auto-init if no manifest exists (same as --all-projects behavior)
+    manifest_path = project_root / KEBOOLA_DIR / MANIFEST_FILE
+    if not manifest_path.exists():
+        try:
+            service.init_sync(project, project_root)
+        except Exception as exc:
+            formatter.error(message=str(exc), error_code="INIT_ERROR")
+            raise typer.Exit(code=1) from None
 
     try:
         result = service.pull(
@@ -506,7 +535,7 @@ def sync_diff(
             _format_all_results(formatter, data, _format_diff_result, _diff_one_liner)
         return
 
-    project_root = directory.resolve()
+    project_root = _resolve_project_root(directory, project)
 
     try:
         result = service.diff(alias=project, project_root=project_root)
@@ -677,7 +706,7 @@ def sync_push(
             _format_all_results(formatter, data, _format_push_result, _push_one_liner)
         return
 
-    project_root = directory.resolve()
+    project_root = _resolve_project_root(directory, project)
 
     try:
         result = service.push(

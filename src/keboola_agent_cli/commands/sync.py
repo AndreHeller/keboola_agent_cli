@@ -5,6 +5,7 @@ No business logic belongs here.
 """
 
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -91,13 +92,153 @@ def sync_init(
             formatter.console.print(f"  Created: {f}")
 
 
+def _format_pull_result(formatter: Any, result: dict) -> None:
+    """Format a single-project pull result for human output."""
+    is_dry = result.get("status") == "dry_run"
+    details = result.get("details", [])
+    new_cfgs = [d for d in details if d["action"] == "new"]
+    updated_cfgs = [d for d in details if d["action"] == "updated"]
+    removed_cfgs = [d for d in details if d["action"] == "removed"]
+    skipped_cfgs = [d for d in details if d["action"] == "skipped"]
+
+    has_changes = bool(new_cfgs or updated_cfgs or removed_cfgs)
+
+    if not has_changes and not skipped_cfgs:
+        formatter.console.print("[green]Already up to date.[/green] No changes from remote.")
+        return
+    elif is_dry:
+        formatter.console.print("[yellow]Dry run -- no files written:[/yellow]")
+        formatter.console.print(
+            f"  Would pull {result['configs_pulled']} configurations "
+            f"({result['rows_pulled']} rows), "
+            f"write {result['files_written']} files"
+        )
+    else:
+        formatter.success(
+            f"Pulled {result['configs_pulled']} configurations "
+            f"({result['rows_pulled']} rows) "
+            f"into {result['branch_dir']}/"
+        )
+        formatter.console.print(f"  Files written: {result['files_written']}")
+
+    if new_cfgs:
+        formatter.console.print(f"  [green]New ({len(new_cfgs)}):[/green]")
+        for d in new_cfgs:
+            formatter.console.print(f"    + {d['component_id']}/{d['config_name']}")
+    if updated_cfgs:
+        formatter.console.print(f"  [yellow]Updated ({len(updated_cfgs)}):[/yellow]")
+        for d in updated_cfgs:
+            formatter.console.print(f"    ~ {d['component_id']}/{d['config_name']}")
+    if removed_cfgs:
+        formatter.console.print(f"  [red]Removed from remote ({len(removed_cfgs)}):[/red]")
+        for d in removed_cfgs:
+            formatter.console.print(f"    - {d['path']}")
+    if skipped_cfgs:
+        formatter.console.print(
+            f"  [cyan]Skipped ({len(skipped_cfgs)}) -- locally modified:[/cyan]"
+        )
+        for d in skipped_cfgs:
+            formatter.console.print(f"    ! {d['component_id']}/{d['config_name']}")
+
+
+def _format_diff_result(formatter: Any, result: dict) -> None:
+    """Format a single-project diff result for human output."""
+    changes = result["changes"]
+    summary = result["summary"]
+    remote_only = result.get("remote_only", [])
+
+    if not changes and not remote_only:
+        formatter.console.print("[green]No differences.[/green]")
+        return
+
+    local_changes = [c for c in changes if c["change_type"] in ("added", "modified", "deleted")]
+    remote_changes = [c for c in changes if c["change_type"] == "remote_modified"]
+    conflict_changes = [c for c in changes if c["change_type"] == "conflict"]
+
+    if local_changes:
+        for change in local_changes:
+            ct = change["change_type"]
+            label = _change_label(change)
+            prefix = {"added": "+", "modified": "~", "deleted": "-"}.get(ct, "?")
+            formatter.console.print(f"  {prefix} {ct.upper()} {label}")
+        formatter.console.print(
+            f"  {summary['added']} to create, {summary['modified']} to update, "
+            f"{summary['deleted']} to delete"
+        )
+    if remote_changes:
+        for change in remote_changes:
+            formatter.console.print(f"  ~ REMOTE MODIFIED {_change_label(change)}")
+    if conflict_changes:
+        for change in conflict_changes:
+            formatter.console.print(f"  ! CONFLICT {_change_label(change)}")
+    if remote_only:
+        formatter.console.print(f"  {len(remote_only)} new remote-only config(s)")
+
+
+def _format_push_result(formatter: Any, result: dict) -> None:
+    """Format a single-project push result for human output."""
+    status = result.get("status", "")
+    if status == "no_changes":
+        formatter.console.print("  No changes to push.")
+        return
+    if status == "dry_run":
+        summary = result.get("summary", {})
+        formatter.console.print(
+            f"  Would create {summary.get('added', 0)}, "
+            f"update {summary.get('modified', 0)}, "
+            f"delete {summary.get('deleted', 0)}"
+        )
+        return
+    formatter.console.print(
+        f"  {result.get('created', 0)} created, "
+        f"{result.get('updated', 0)} updated, "
+        f"{result.get('deleted', 0)} deleted"
+    )
+
+
+def _format_all_results(
+    formatter: Any,
+    data: dict,
+    per_project_formatter: Any = None,
+) -> None:
+    """Format multi-project results for human output."""
+    summary = data["summary"]
+    projects = data["projects"]
+    skipped = data.get("skipped", [])
+
+    for alias in sorted(projects):
+        proj_result = projects[alias]
+        if "error" in proj_result:
+            formatter.console.print(
+                f"\n[bold]{alias}:[/bold] [red]ERROR: {proj_result['error']}[/red]"
+            )
+        else:
+            formatter.console.print(f"\n[bold]{alias}:[/bold]")
+            if per_project_formatter:
+                per_project_formatter(formatter, proj_result)
+
+    if skipped:
+        formatter.console.print(f"\n[dim]Skipped (no manifest): {', '.join(skipped)}[/dim]")
+
+    formatter.console.print(
+        f"\n{summary['total']} projects: "
+        f"{summary['success']} OK, {summary['failed']} failed"
+        + (f", {summary.get('skipped', 0)} skipped" if summary.get("skipped") else "")
+    )
+
+
 @sync_app.command("pull")
 def sync_pull(
     ctx: typer.Context,
-    project: str = typer.Option(
-        ...,
+    project: str | None = typer.Option(
+        None,
         "--project",
         help="Project alias to pull configurations from",
+    ),
+    all_projects: bool = typer.Option(
+        False,
+        "--all-projects",
+        help="Pull all configured projects in parallel",
     ),
     directory: Path = typer.Option(
         Path("."),
@@ -116,14 +257,41 @@ def sync_pull(
         help="Show what would be pulled without writing any files",
     ),
 ) -> None:
-    """Download all configurations from a Keboola project to local files.
+    """Download configurations from a Keboola project to local files.
 
-    Reads the manifest from .keboola/manifest.json, fetches all
-    configurations from the API, and writes them as _config.yml files
-    in the dev-friendly directory structure.
+    Use --project for a single project or --all-projects for all configured
+    projects in parallel (each in its own subdirectory).
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "sync_service")
+
+    if all_projects and project:
+        formatter.error(
+            message="Cannot use --project with --all-projects",
+            error_code="USAGE_ERROR",
+        )
+        raise typer.Exit(code=2)
+    if not all_projects and not project:
+        formatter.error(
+            message="Specify --project ALIAS or --all-projects",
+            error_code="USAGE_ERROR",
+        )
+        raise typer.Exit(code=2)
+
+    if all_projects:
+        base_dir = directory.resolve()
+        try:
+            data = service.pull_all(base_dir, force=force, dry_run=dry_run)
+        except ConfigError as exc:
+            formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+            raise typer.Exit(code=5) from None
+
+        if formatter.json_mode:
+            formatter.output(data)
+        else:
+            _format_all_results(formatter, data, _format_pull_result)
+        return
+
     project_root = directory.resolve()
 
     try:
@@ -149,51 +317,7 @@ def sync_pull(
     if formatter.json_mode:
         formatter.output(result)
     else:
-        is_dry = result.get("status") == "dry_run"
-        details = result.get("details", [])
-        new_cfgs = [d for d in details if d["action"] == "new"]
-        updated_cfgs = [d for d in details if d["action"] == "updated"]
-        removed_cfgs = [d for d in details if d["action"] == "removed"]
-        skipped_cfgs = [d for d in details if d["action"] == "skipped"]
-
-        has_changes = bool(new_cfgs or updated_cfgs or removed_cfgs)
-
-        if not has_changes and not skipped_cfgs:
-            formatter.console.print("[green]Already up to date.[/green] No changes from remote.")
-            return
-        elif is_dry:
-            formatter.console.print("[yellow]Dry run -- no files written:[/yellow]")
-            formatter.console.print(
-                f"  Would pull {result['configs_pulled']} configurations "
-                f"({result['rows_pulled']} rows), "
-                f"write {result['files_written']} files"
-            )
-        else:
-            formatter.success(
-                f"Pulled {result['configs_pulled']} configurations "
-                f"({result['rows_pulled']} rows) "
-                f"into {result['branch_dir']}/"
-            )
-            formatter.console.print(f"  Files written: {result['files_written']}")
-
-        if new_cfgs:
-            formatter.console.print(f"  [green]New ({len(new_cfgs)}):[/green]")
-            for d in new_cfgs:
-                formatter.console.print(f"    + {d['component_id']}/{d['config_name']}")
-        if updated_cfgs:
-            formatter.console.print(f"  [yellow]Updated ({len(updated_cfgs)}):[/yellow]")
-            for d in updated_cfgs:
-                formatter.console.print(f"    ~ {d['component_id']}/{d['config_name']}")
-        if removed_cfgs:
-            formatter.console.print(f"  [red]Removed from remote ({len(removed_cfgs)}):[/red]")
-            for d in removed_cfgs:
-                formatter.console.print(f"    - {d['path']}")
-        if skipped_cfgs:
-            formatter.console.print(
-                f"  [cyan]Skipped ({len(skipped_cfgs)}) -- locally modified:[/cyan]"
-            )
-            for d in skipped_cfgs:
-                formatter.console.print(f"    ! {d['component_id']}/{d['config_name']}")
+        _format_pull_result(formatter, result)
 
 
 @sync_app.command("status")
@@ -259,10 +383,15 @@ def sync_status(
 @sync_app.command("diff")
 def sync_diff(
     ctx: typer.Context,
-    project: str = typer.Option(
-        ...,
+    project: str | None = typer.Option(
+        None,
         "--project",
         help="Project alias to diff against",
+    ),
+    all_projects: bool = typer.Option(
+        False,
+        "--all-projects",
+        help="Diff all configured projects in parallel",
     ),
     directory: Path = typer.Option(
         Path("."),
@@ -273,11 +402,39 @@ def sync_diff(
 ) -> None:
     """Show detailed diff between local and remote configurations.
 
-    Fetches the current remote state and compares each local _config.yml
-    against it, showing which configs would be created, updated, or deleted.
+    Use --project for a single project or --all-projects for all configured
+    projects in parallel.
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "sync_service")
+
+    if all_projects and project:
+        formatter.error(
+            message="Cannot use --project with --all-projects",
+            error_code="USAGE_ERROR",
+        )
+        raise typer.Exit(code=2)
+    if not all_projects and not project:
+        formatter.error(
+            message="Specify --project ALIAS or --all-projects",
+            error_code="USAGE_ERROR",
+        )
+        raise typer.Exit(code=2)
+
+    if all_projects:
+        base_dir = directory.resolve()
+        try:
+            data = service.diff_all(base_dir)
+        except ConfigError as exc:
+            formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+            raise typer.Exit(code=5) from None
+
+        if formatter.json_mode:
+            formatter.output(data)
+        else:
+            _format_all_results(formatter, data, _format_diff_result)
+        return
+
     project_root = directory.resolve()
 
     try:
@@ -387,10 +544,15 @@ def sync_diff(
 @sync_app.command("push")
 def sync_push(
     ctx: typer.Context,
-    project: str = typer.Option(
-        ...,
+    project: str | None = typer.Option(
+        None,
         "--project",
         help="Project alias to push changes to",
+    ),
+    all_projects: bool = typer.Option(
+        False,
+        "--all-projects",
+        help="Push all configured projects in parallel",
     ),
     directory: Path = typer.Option(
         Path("."),
@@ -411,12 +573,39 @@ def sync_push(
 ) -> None:
     """Push local configuration changes to a Keboola project.
 
-    Compares local files against remote state and creates, updates,
-    or deletes configurations as needed. New configs get IDs assigned
-    by the API. After push, runs a pull to sync the manifest.
+    Use --project for a single project or --all-projects for all configured
+    projects in parallel.
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "sync_service")
+
+    if all_projects and project:
+        formatter.error(
+            message="Cannot use --project with --all-projects",
+            error_code="USAGE_ERROR",
+        )
+        raise typer.Exit(code=2)
+    if not all_projects and not project:
+        formatter.error(
+            message="Specify --project ALIAS or --all-projects",
+            error_code="USAGE_ERROR",
+        )
+        raise typer.Exit(code=2)
+
+    if all_projects:
+        base_dir = directory.resolve()
+        try:
+            data = service.push_all(base_dir, dry_run=dry_run, force=force)
+        except ConfigError as exc:
+            formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+            raise typer.Exit(code=5) from None
+
+        if formatter.json_mode:
+            formatter.output(data)
+        else:
+            _format_all_results(formatter, data, _format_push_result)
+        return
+
     project_root = directory.resolve()
 
     try:

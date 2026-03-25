@@ -7,6 +7,7 @@ in a dev-friendly format (YAML configs), and tracking local changes.
 import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -908,6 +909,198 @@ class SyncService(BaseService):
             branch_id=branch_id,
         )
         logger.info("Updated config %s/%s", component_id, config_id)
+
+    # ------------------------------------------------------------------
+    # bulk operations (all projects)
+    # ------------------------------------------------------------------
+
+    def pull_all(
+        self,
+        base_dir: Path,
+        force: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Pull all registered projects in parallel.
+
+        For each project, creates ``base_dir/<alias>/`` and initializes
+        if no manifest exists yet, then pulls.
+
+        Args:
+            base_dir: Parent directory; each project gets a subdirectory.
+            force: Overwrite local files without checking.
+            dry_run: Compute what would be pulled but don't write.
+
+        Returns:
+            Dict with per-project results and a summary.
+        """
+        projects = self.resolve_projects(None)
+        results: dict[str, Any] = {}
+        success_count = 0
+        failed_count = 0
+
+        def _worker(alias: str) -> None:
+            nonlocal success_count, failed_count
+            project_root = base_dir / alias
+            manifest_path = project_root / KEBOOLA_DIR_NAME / "manifest.json"
+            try:
+                if not manifest_path.exists():
+                    self.init_sync(alias, project_root)
+                result = self.pull(alias, project_root, force=force, dry_run=dry_run)
+                results[alias] = result
+                success_count += 1
+            except Exception as exc:
+                results[alias] = {"error": str(exc)}
+                failed_count += 1
+
+        max_workers = min(len(projects), self._resolve_max_workers()) if projects else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_worker, alias): alias for alias in projects}
+            for future in as_completed(futures):
+                # Exceptions are captured inside _worker; this catches truly
+                # unexpected failures (e.g. threading errors).
+                try:
+                    future.result()
+                except Exception as exc:
+                    alias = futures[future]
+                    results[alias] = {"error": str(exc)}
+                    failed_count += 1
+
+        total = len(projects)
+        return {
+            "projects": results,
+            "summary": {
+                "total": total,
+                "success": success_count,
+                "failed": failed_count,
+            },
+        }
+
+    def diff_all(self, base_dir: Path) -> dict[str, Any]:
+        """Diff all registered projects that have a local manifest.
+
+        Projects without an existing manifest are skipped.
+
+        Args:
+            base_dir: Parent directory containing per-project subdirectories.
+
+        Returns:
+            Dict with per-project diff results, a summary, and skipped list.
+        """
+        projects = self.resolve_projects(None)
+        results: dict[str, Any] = {}
+        skipped: list[str] = []
+        success_count = 0
+        failed_count = 0
+
+        # Partition into actionable vs skipped
+        actionable: list[str] = []
+        for alias in projects:
+            manifest_path = base_dir / alias / KEBOOLA_DIR_NAME / "manifest.json"
+            if manifest_path.exists():
+                actionable.append(alias)
+            else:
+                skipped.append(alias)
+
+        def _worker(alias: str) -> None:
+            nonlocal success_count, failed_count
+            project_root = base_dir / alias
+            try:
+                result = self.diff(alias, project_root)
+                results[alias] = result
+                success_count += 1
+            except Exception as exc:
+                results[alias] = {"error": str(exc)}
+                failed_count += 1
+
+        max_workers = min(len(actionable), self._resolve_max_workers()) if actionable else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_worker, alias): alias for alias in actionable}
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as exc:
+                    alias = futures[future]
+                    results[alias] = {"error": str(exc)}
+                    failed_count += 1
+
+        total = len(projects)
+        return {
+            "projects": results,
+            "summary": {
+                "total": total,
+                "success": success_count,
+                "failed": failed_count,
+                "skipped": len(skipped),
+            },
+            "skipped": skipped,
+        }
+
+    def push_all(
+        self,
+        base_dir: Path,
+        dry_run: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Push all registered projects that have a local manifest.
+
+        Projects without an existing manifest are skipped.
+
+        Args:
+            base_dir: Parent directory containing per-project subdirectories.
+            dry_run: Compute changes but don't execute them.
+            force: Allow deletions without extra confirmation.
+
+        Returns:
+            Dict with per-project push results, a summary, and skipped list.
+        """
+        projects = self.resolve_projects(None)
+        results: dict[str, Any] = {}
+        skipped: list[str] = []
+        success_count = 0
+        failed_count = 0
+
+        # Partition into actionable vs skipped
+        actionable: list[str] = []
+        for alias in projects:
+            manifest_path = base_dir / alias / KEBOOLA_DIR_NAME / "manifest.json"
+            if manifest_path.exists():
+                actionable.append(alias)
+            else:
+                skipped.append(alias)
+
+        def _worker(alias: str) -> None:
+            nonlocal success_count, failed_count
+            project_root = base_dir / alias
+            try:
+                result = self.push(alias, project_root, dry_run=dry_run, force=force)
+                results[alias] = result
+                success_count += 1
+            except Exception as exc:
+                results[alias] = {"error": str(exc)}
+                failed_count += 1
+
+        max_workers = min(len(actionable), self._resolve_max_workers()) if actionable else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_worker, alias): alias for alias in actionable}
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as exc:
+                    alias = futures[future]
+                    results[alias] = {"error": str(exc)}
+                    failed_count += 1
+
+        total = len(projects)
+        return {
+            "projects": results,
+            "summary": {
+                "total": total,
+                "success": success_count,
+                "failed": failed_count,
+                "skipped": len(skipped),
+            },
+            "skipped": skipped,
+        }
 
     # ------------------------------------------------------------------
     # branch mapping

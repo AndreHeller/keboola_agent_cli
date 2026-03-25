@@ -67,7 +67,7 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Show workspace details (password NOT included) | `kbagent workspace detail --project PROJECT --workspace-id WORKSPACE-ID` |
 | Delete a workspace | `kbagent workspace delete --project PROJECT --workspace-id WORKSPACE-ID` |
 | Reset workspace password and show the new one | `kbagent workspace password --project PROJECT --workspace-id WORKSPACE-ID` |
-| Load tables into a workspace | `kbagent workspace load --project PROJECT --workspace-id WORKSPACE-ID --tables TABLES [--preserve]` |
+| Load tables into a workspace | `kbagent workspace load --project PROJECT --workspace-id WORKSPACE-ID --tables TABLES` |
 | Execute SQL query in a workspace via Query Service | `kbagent workspace query --project PROJECT --workspace-id WORKSPACE-ID` |
 | Create a workspace from a transformation config | `kbagent workspace from-transformation --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
 | List available MCP tools from the keboola-mcp-server | `kbagent tool list` |
@@ -80,14 +80,9 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Link the current git branch to a Keboola development branch | `kbagent sync branch-link --project PROJECT` |
 | Remove the branch mapping for the current git branch | `kbagent sync branch-unlink` |
 | Show the branch mapping status for the current git branch | `kbagent sync branch-status` |
-| Initialize sync working directory for GitOps workflow | `kbagent sync init --project PROJECT [--git-branching]` |
-| Download configs from Keboola to local files (idempotent) | `kbagent sync pull --project PROJECT [--dry-run]` |
-| Show local changes since last pull | `kbagent sync status` |
-| 3-way diff local vs remote (shows conflicts, remote changes) | `kbagent sync diff --project PROJECT` |
-| Push local changes to Keboola (creates, updates, deletes) | `kbagent sync push --project PROJECT [--dry-run]` |
-| Link git branch to Keboola dev branch (auto-creates) | `kbagent sync branch-link --project PROJECT` |
-| Show git branch mapping status | `kbagent sync branch-status` |
 | Export project to Twin Format for AI consumption | `kbagent llm export` |
+| [deprecated] KBC Explorer dashboard -- use 'sync pull' instead | `kbagent explorer` |
+| Generate a tiers.yaml template from registered projects | `kbagent explorer init-tiers` |
 <!-- END AUTO-GENERATED COMMANDS -->
 
 ## Response format

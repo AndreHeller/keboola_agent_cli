@@ -40,6 +40,24 @@ SQL_BLOCK_MARKER = "/* ===== BLOCK: {name} ===== */"
 SQL_CODE_MARKER = "/* ===== CODE: {name} ===== */"
 PYTHON_BLOCK_MARKER = "# ===== BLOCK: {name} ====="
 PYTHON_CODE_MARKER = "# ===== CODE: {name} ====="
+DESCRIPTION_FILENAME = "_description.md"
+
+
+def _extract_description(config_data: dict[str, Any], config_dir: Path) -> None:
+    """Extract description field into _description.md."""
+    description = config_data.get("description", "")
+    if not description:
+        return
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / DESCRIPTION_FILENAME).write_text(description, encoding="utf-8")
+    del config_data["description"]
+
+
+def _merge_description(config_data: dict[str, Any], config_dir: Path) -> None:
+    """Read _description.md back into config_data."""
+    desc_file = config_dir / DESCRIPTION_FILENAME
+    if desc_file.exists():
+        config_data["description"] = desc_file.read_text(encoding="utf-8")
 
 
 def extract_code_files(
@@ -53,6 +71,7 @@ def extract_code_files(
     Writes code files to config_dir.
     Returns the modified config_data.
     """
+    _extract_description(config_data, config_dir)
     if component_id in SQL_TRANSFORMATION_COMPONENTS:
         return _extract_sql_transformation(config_data, config_dir)
     if component_id in PYTHON_TRANSFORMATION_COMPONENTS:
@@ -72,6 +91,7 @@ def merge_code_files(
     Reverse of extract_code_files. Called before push.
     Returns the modified config_data.
     """
+    _merge_description(config_data, config_dir)
     if component_id in SQL_TRANSFORMATION_COMPONENTS:
         return _merge_sql_transformation(config_data, config_dir)
     if component_id in PYTHON_TRANSFORMATION_COMPONENTS:

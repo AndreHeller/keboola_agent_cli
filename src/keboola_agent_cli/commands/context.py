@@ -365,11 +365,14 @@ Then explore:
     Example:
       kbagent --json workspace password --project prod --workspace-id 12345
 
-  kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--tables TABLE_ID2 ...]
+  kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--tables TABLE_ID2 ...] [--preserve]
     Load tables from storage into a workspace. Waits for async load to complete.
     Table IDs use Keboola format: in.c-bucket.table-name
+    By default, all existing tables in the workspace are dropped before loading.
+    Use --preserve to keep existing tables and only add/overwrite the specified ones.
     Example:
       kbagent --json workspace load --project prod --workspace-id 12345 --tables in.c-main.users --tables in.c-main.orders
+      kbagent --json workspace load --project prod --workspace-id 12345 --tables in.c-main.orders --preserve
 
   kbagent workspace query --project ALIAS --workspace-id ID --sql "SELECT ..." [--transactional]
   kbagent workspace query --project ALIAS --workspace-id ID --file query.sql [--transactional]
@@ -589,6 +592,8 @@ Then explore:
      kbagent --json workspace create --project prod --name "debug-ws" --ui
        # ^ UI mode, slower (~15s), visible in Keboola UI Workspaces tab
      kbagent --json workspace load --project prod --workspace-id WS_ID --tables in.c-bucket.my-table
+     kbagent --json workspace load --project prod --workspace-id WS_ID --tables in.c-bucket.another-table --preserve
+       # ^ keeps existing tables, only adds/overwrites specified ones
      kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT * FROM \"my-table\" LIMIT 10"
 
      IMPORTANT -- Snowflake quoting rules for workspace queries:

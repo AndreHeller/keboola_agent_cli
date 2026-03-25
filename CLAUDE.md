@@ -234,7 +234,7 @@ kbagent workspace list [--project NAME]
 kbagent workspace detail --project ALIAS --workspace-id ID
 kbagent workspace delete --project ALIAS --workspace-id ID
 kbagent workspace password --project ALIAS --workspace-id ID
-kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--tables ...]
+kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--tables ...] [--preserve]
 kbagent workspace query --project ALIAS --workspace-id ID --sql "SELECT ..." [--transactional]
 kbagent workspace query --project ALIAS --workspace-id ID --file query.sql
 kbagent workspace from-transformation --project ALIAS --component-id ID --config-id ID [--row-id ID]

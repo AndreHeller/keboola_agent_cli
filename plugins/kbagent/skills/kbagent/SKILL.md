@@ -64,7 +64,7 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Show workspace details (password NOT included) | `kbagent workspace detail --project PROJECT --workspace-id WORKSPACE-ID` |
 | Delete a workspace | `kbagent workspace delete --project PROJECT --workspace-id WORKSPACE-ID` |
 | Reset workspace password and show the new one | `kbagent workspace password --project PROJECT --workspace-id WORKSPACE-ID` |
-| Load tables into a workspace | `kbagent workspace load --project PROJECT --workspace-id WORKSPACE-ID --tables TABLES` |
+| Load tables into a workspace | `kbagent workspace load --project PROJECT --workspace-id WORKSPACE-ID --tables TABLES [--preserve]` |
 | Execute SQL query in a workspace via Query Service | `kbagent workspace query --project PROJECT --workspace-id WORKSPACE-ID` |
 | Create a workspace from a transformation config | `kbagent workspace from-transformation --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
 | List available MCP tools from the keboola-mcp-server | `kbagent tool list` |

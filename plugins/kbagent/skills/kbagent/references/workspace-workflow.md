@@ -54,12 +54,19 @@ Best when you want to explore data or run arbitrary queries:
 # Create empty workspace
 kbagent --json workspace create --project ALIAS --name "debug-ws"
 
-# Load specific tables
+# Load specific tables (drops existing tables first)
 kbagent --json workspace load \
   --project ALIAS \
   --workspace-id WS_ID \
   --tables in.c-bucket.table1 \
   --tables in.c-bucket.table2
+
+# Or load while keeping existing tables in the workspace
+kbagent --json workspace load \
+  --project ALIAS \
+  --workspace-id WS_ID \
+  --tables in.c-bucket.table3 \
+  --preserve
 
 # Query
 kbagent --json workspace query \

@@ -339,7 +339,9 @@ class TestPythonTransformExtraction:
             assert orig_block["name"] == rest_block["name"]
             for orig_code, rest_code in zip(orig_block["codes"], rest_block["codes"], strict=True):
                 assert orig_code["name"] == rest_code["name"]
-                assert orig_code["script"][0].strip() == rest_code["script"][0].strip()
+                orig_text = "\n".join(orig_code["script"]).strip()
+                rest_text = "\n".join(rest_code["script"]).strip()
+                assert orig_text == rest_text
 
 
 # ===================================================================

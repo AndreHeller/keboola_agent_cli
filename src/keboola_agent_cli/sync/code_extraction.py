@@ -138,7 +138,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
         if stripped.startswith("/* ===== BLOCK:") and stripped.endswith("===== */"):
             # Save previous code if any
             if current_code is not None and current_block is not None:
-                current_code["script"] = ["\n".join(current_script_lines).strip()]
+                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
                 current_block.setdefault("codes", []).append(current_code)
                 current_code = None
                 current_script_lines = []
@@ -152,7 +152,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
         if stripped.startswith("/* ===== CODE:") and stripped.endswith("===== */"):
             # Save previous code if any
             if current_code is not None and current_block is not None:
-                current_code["script"] = ["\n".join(current_script_lines).strip()]
+                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
                 current_block.setdefault("codes", []).append(current_code)
                 current_script_lines = []
 
@@ -166,7 +166,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
 
     # Don't forget the last code block
     if current_code is not None and current_block is not None:
-        current_code["script"] = ["\n".join(current_script_lines).strip()]
+        current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
         current_block.setdefault("codes", []).append(current_code)
 
     # If no markers found, treat entire content as single block/code
@@ -174,7 +174,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
         blocks = [
             {
                 "name": "Block 1",
-                "codes": [{"name": "Code 1", "script": [content.strip()]}],
+                "codes": [{"name": "Code 1", "script": content.strip().split("\n")}],
             }
         ]
 
@@ -252,7 +252,7 @@ def _parse_python_blocks(content: str) -> list[dict[str, Any]]:
 
         if stripped.startswith("# ===== BLOCK:") and stripped.endswith("====="):
             if current_code is not None and current_block is not None:
-                current_code["script"] = ["\n".join(current_script_lines).strip()]
+                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
                 current_block.setdefault("codes", []).append(current_code)
                 current_code = None
                 current_script_lines = []
@@ -264,7 +264,7 @@ def _parse_python_blocks(content: str) -> list[dict[str, Any]]:
 
         if stripped.startswith("# ===== CODE:") and stripped.endswith("====="):
             if current_code is not None and current_block is not None:
-                current_code["script"] = ["\n".join(current_script_lines).strip()]
+                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
                 current_block.setdefault("codes", []).append(current_code)
                 current_script_lines = []
 
@@ -276,14 +276,14 @@ def _parse_python_blocks(content: str) -> list[dict[str, Any]]:
             current_script_lines.append(line)
 
     if current_code is not None and current_block is not None:
-        current_code["script"] = ["\n".join(current_script_lines).strip()]
+        current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
         current_block.setdefault("codes", []).append(current_code)
 
     if not blocks and content.strip():
         blocks = [
             {
                 "name": "Block 1",
-                "codes": [{"name": "Code 1", "script": [content.strip()]}],
+                "codes": [{"name": "Code 1", "script": content.strip().split("\n")}],
             }
         ]
 

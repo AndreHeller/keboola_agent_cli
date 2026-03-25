@@ -73,10 +73,6 @@ ENV_MCP_MAX_SESSIONS: str = "KBAGENT_MCP_MAX_SESSIONS"
 
 # --- Version Check ---
 VERSION_CHECK_TIMEOUT: float = 4.0  # seconds for fetching latest version from remote
-KBC_SUBPROCESS_TIMEOUT: float = 5.0  # seconds for running kbc/mcp subprocess commands
-KBC_GITHUB_RELEASES_URL: str = (
-    "https://api.github.com/repos/keboola/keboola-as-code/releases/latest"
-)
 MCP_PYPI_URL: str = "https://pypi.org/pypi/keboola-mcp-server/json"
 
 # --- AI Service ---

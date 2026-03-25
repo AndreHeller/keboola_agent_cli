@@ -7,10 +7,10 @@ description: >
   across multiple projects, managing development branches, debugging SQL in
   temporary workspaces, bulk-onboarding organizations, syncing project configs
   as local files (GitOps), git-branching with Keboola dev branch isolation,
-  and generating explorer dashboards. Triggers: kbagent, Keboola project,
+  and syncing storage metadata and job history. Triggers: kbagent, Keboola project,
   keboola configs, keboola jobs, keboola lineage, keboola transformations,
   keboola MCP tools, keboola workspace, SQL debugging, keboola branches,
-  keboola organization, keboola explorer, keboola sync, keboola git,
+  keboola organization, keboola sync, keboola git,
   keboola gitops, sync pull, sync push, sync diff, branch-link,
   search configs, find in configurations, audit configurations.
 ---
@@ -83,9 +83,6 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Link the current git branch to a Keboola development branch | `kbagent sync branch-link --project PROJECT` |
 | Remove the branch mapping for the current git branch | `kbagent sync branch-unlink` |
 | Show the branch mapping status for the current git branch | `kbagent sync branch-status` |
-| Export project to Twin Format for AI consumption | `kbagent llm export` |
-| [deprecated] KBC Explorer dashboard -- use 'sync pull' instead | `kbagent explorer` |
-| Generate a tiers.yaml template from registered projects | `kbagent explorer init-tiers` |
 <!-- END AUTO-GENERATED COMMANDS -->
 
 ### Sync pull notable flags

@@ -212,78 +212,10 @@ Then explore:
       kbagent --json org setup --org-id 123 --url https://connection.keboola.com
       KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
 
-### Explorer Dashboard
-
-  kbagent explorer [--project NAME] [--output-dir DIR] [--job-limit N] [--tiers FILE] [--no-open]
-    Generate catalog and orchestration data files for the KBC Explorer dashboard,
-    then open the dashboard in a browser.
-    Collects configs, jobs, lineage, and flow details across all connected projects.
-    --project can be repeated to limit to specific projects.
-    --output-dir: directory for output files (default: kbc-explorer/)
-    --job-limit: max jobs per project for statistics (default: 500)
-    --tiers: YAML file mapping project aliases to tiers (L0/L1/L2)
-    --no-open: generate files without opening the browser
-    Examples:
-      kbagent --json explorer --no-open
-      kbagent explorer --project prod --project dev --no-open
-      kbagent explorer --tiers tiers.yaml
-
-  kbagent explorer init-tiers [--output FILE]
-    Generate a tiers.yaml template from registered projects.
-    Auto-detects tier from alias naming convention (-l0-, -l1-, -l2-).
-    Projects that cannot be classified are marked with TODO comments.
-    --output / -o: output path (default: tiers.yaml)
-    Example:
-      kbagent explorer init-tiers
-      kbagent explorer init-tiers -o my-tiers.yaml
-
-    The generated YAML has this structure:
-      description: "Project catalog"
-      tiers:
-        L0:
-          name: "Data Sources / Extraction"
-          description: "Raw data extraction from external systems"
-        L1:
-          name: "Processing / Transformation"
-          description: "Data processing, transformation, and modeling"
-        L2:
-          name: "Output / Delivery"
-          description: "Final data products, dashboards, and data sharing"
-      projects:
-        my-l0-extract: L0
-        my-l1-transform: L1
-        unclassified-project: L0  # TODO: assign correct tier
-
-### LLM Export (Project Context for AI)
-
-  kbagent llm export --project ALIAS [--with-samples] [--sample-limit N] [--max-samples N]
-    Export project to "Twin Format" -- an AI-optimized directory of JSON files
-    containing table schemas, transformation SQL code, internal lineage graph,
-    job statistics, and component configurations.
-    Output is written to ./${{ALIAS}}/ directory (created automatically).
-    Requires the kbc CLI binary (brew install keboola-cli).
-
-    After export, start by reading ./${{ALIAS}}/ai/AGENT_INSTRUCTIONS.md -- it explains
-    the directory structure, how to interpret each file, and recommended workflows.
-
-    The twin format includes:
-    - ai/AGENT_INSTRUCTIONS.md -- how to read and use the exported data
-    - buckets/*/metadata.json -- table schemas, columns, row counts
-    - transformations/*/metadata.json -- SQL/Python code, input/output tables
-    - indices/graph.jsonl -- internal lineage (table->transformation->table)
-    - jobs/index.json -- job execution stats
-    - components/*/ -- extractor/writer configurations
-
-    Use --with-samples to include actual data samples (CSV) from tables.
-
-    Examples:
-      kbagent llm export --project prod
-      kbagent llm export --project prod --with-samples --sample-limit 50
-
 ### Version Information
 
   kbagent version
-    Show kbagent version and check for updates of dependencies (kbc, keboola-mcp-server).
+    Show kbagent version and check for updates of keboola-mcp-server.
     Example:
       kbagent --json version
 
@@ -391,7 +323,7 @@ Then explore:
     Example:
       kbagent --json workspace from-transformation --project prod --component-id keboola.snowflake-transformation --config-id 22777254
 
-### Project Sync (GitOps Workflow)
+### Project Sync (Configs, Storage Metadata, Jobs)
 
   kbagent sync init --project ALIAS [--directory DIR] [--git-branching]
     Initialize a sync working directory for a Keboola project.
@@ -610,11 +542,11 @@ Then explore:
     If the job takes too long (>60s), the CLI returns an error.
 
 13. Project context for AI -- get a full offline snapshot of a project:
-     kbagent llm export --project prod
-     # Creates ./prod/ directory with Twin Format JSON files
-     # FIRST read ./prod/ai/AGENT_INSTRUCTIONS.md -- it explains the structure
-     # and how to interpret each file (schemas, transformations, lineage, etc.)
-     # This is much faster than querying each piece via MCP tool calls.
+     kbagent sync pull --project prod --with-samples
+     # Downloads configs, storage metadata, job history, and data samples
+     # Each config gets _jobs.jsonl with recent job status
+     # storage/ has table schemas, columns, row counts
+     # Much faster than querying each piece via MCP tool calls.
 
 14. Workspace isolation -- use per-directory config for client separation:
      kbagent init                                            # Create local .kbagent/ workspace

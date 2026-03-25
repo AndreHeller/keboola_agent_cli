@@ -1,17 +1,52 @@
-"""Configuration commands - list, detail, search, update, and delete.
+"""Configuration commands - list, detail, search, update, delete, and scaffold.
 
 Thin CLI layer: parses arguments, calls ConfigService, formats output.
 No business logic belongs here.
 """
 
+import json
+import logging
 import re
+from pathlib import Path
 
 import typer
+from rich.syntax import Syntax
 
-from ..constants import VALID_COMPONENT_TYPES
+from ..constants import KEBOOLA_DIR_NAME, MANIFEST_FILENAME, VALID_COMPONENT_TYPES
 from ..errors import ConfigError, KeboolaApiError
 from ..output import format_config_detail, format_configs_table, format_search_results
 from ._helpers import emit_project_warnings, get_formatter, get_service, map_error_to_exit_code
+
+logger = logging.getLogger(__name__)
+
+
+def _detect_branch_prefix(output_dir: Path) -> str | None:
+    """Detect kbc project branch path from .keboola/manifest.json.
+
+    When output_dir is inside a kbc project (has .keboola/manifest.json),
+    returns the default branch path (e.g. "main") so scaffold files
+    land in the correct location (main/extractor/... instead of extractor/...).
+
+    Returns None if not a kbc project or manifest is unreadable.
+    """
+    manifest_path = output_dir / KEBOOLA_DIR_NAME / MANIFEST_FILENAME
+    if not manifest_path.is_file():
+        return None
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        branches = manifest.get("branches", [])
+        if branches:
+            # Use the first (default) branch path
+            branch_path = branches[0].get("path", "")
+            if branch_path:
+                logger.debug("Detected kbc branch prefix: %s", branch_path)
+                return branch_path
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("Could not read manifest: %s", exc)
+
+    return None
+
 
 config_app = typer.Typer(help="Browse and inspect configurations")
 
@@ -314,3 +349,124 @@ def config_delete(
             f"Deleted config {result['component_id']}/{result['config_id']} "
             f"from project '{result['project_alias']}'{branch_info}"
         )
+
+
+# --- File extension to Rich Syntax lexer mapping ---
+_EXT_TO_LEXER: dict[str, str] = {
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".json": "json",
+    ".sql": "sql",
+    ".py": "python",
+    ".toml": "toml",
+    ".md": "markdown",
+    ".txt": "text",
+    ".sh": "bash",
+    ".r": "r",
+    ".js": "javascript",
+    ".ts": "typescript",
+}
+
+
+@config_app.command("new")
+def config_new(
+    ctx: typer.Context,
+    component_id: str = typer.Option(
+        ...,
+        "--component-id",
+        help="Component ID (e.g. keboola.ex-http)",
+    ),
+    name: str = typer.Option(
+        "",
+        "--name",
+        help="Configuration name (default: auto-generated from component)",
+    ),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        help="Project alias (for AI Service auth)",
+    ),
+    output_dir: str | None = typer.Option(
+        None,
+        "--output-dir",
+        help="Write scaffold files to disk instead of printing",
+    ),
+) -> None:
+    """Generate boilerplate configuration files for a Keboola component.
+
+    Produces a ready-to-edit scaffold (config YAML, SQL/Python code blocks,
+    description) that can be written to disk with --output-dir or printed
+    to stdout for inspection.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "component_service")
+
+    try:
+        scaffold = service.generate_scaffold(
+            alias=project,
+            component_id=component_id,
+            name=name or None,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        exit_code = map_error_to_exit_code(exc)
+        formatter.error(
+            message=exc.message,
+            error_code=exc.error_code,
+            project=project or "",
+            retryable=exc.retryable,
+        )
+        raise typer.Exit(code=exit_code) from None
+
+    if output_dir:
+        # Detect kbc project branch prefix (e.g. "main/")
+        branch_prefix = _detect_branch_prefix(Path(output_dir))
+        if branch_prefix:
+            scaffold_dir = branch_prefix + "/" + scaffold["directory"]
+        else:
+            scaffold_dir = scaffold["directory"]
+
+        base_path = Path(output_dir) / scaffold_dir
+        base_path.mkdir(parents=True, exist_ok=True)
+
+        for file_entry in scaffold["files"]:
+            file_path = base_path / file_entry["path"]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(file_entry["content"], encoding="utf-8")
+
+        if formatter.json_mode:
+            formatter.output(
+                {
+                    "directory": str(base_path),
+                    "files_written": [f["path"] for f in scaffold["files"]],
+                }
+            )
+        else:
+            formatter.success(f"Scaffold written to {base_path} ({len(scaffold['files'])} file(s))")
+    else:
+        # Print scaffold content
+        if formatter.json_mode:
+            formatter.output(scaffold)
+        else:
+            formatter.console.print(f"\n[bold]Scaffold for [cyan]{component_id}[/cyan][/bold]")
+            formatter.console.print(f"[dim]Directory: {scaffold['directory']}[/dim]\n")
+
+            for file_entry in scaffold["files"]:
+                file_name = file_entry["path"]
+                content = file_entry["content"]
+
+                # Determine lexer from file extension
+                suffix = Path(file_name).suffix.lower()
+                lexer = _EXT_TO_LEXER.get(suffix, "text")
+
+                formatter.console.rule(f"[bold]{file_name}[/bold]")
+                syntax = Syntax(
+                    content,
+                    lexer,
+                    theme="monokai",
+                    line_numbers=True,
+                )
+                formatter.console.print(syntax)
+                formatter.console.print()

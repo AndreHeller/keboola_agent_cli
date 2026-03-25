@@ -59,6 +59,42 @@ class TokenVerifyResponse(BaseModel):
     owner_name: str = Field(description="Project owner name")
 
 
+class ComponentDetail(BaseModel):
+    """Component detail from Keboola AI Service /docs/components/{id} endpoint."""
+
+    component_id: str = Field(alias="componentId")
+    component_name: str = Field(alias="componentName")
+    component_type: str = Field(alias="componentType")
+    component_categories: list[str] = Field(default_factory=list, alias="componentCategories")
+    component_flags: list[str] = Field(default_factory=list, alias="componentFlags")
+    description: str = Field(default="")
+    long_description: str = Field(default="", alias="longDescription")
+    documentation: str = Field(default="")
+    documentation_url: str = Field(default="", alias="documentationUrl")
+    configuration_schema: dict[str, Any] = Field(default_factory=dict, alias="configurationSchema")
+    configuration_row_schema: dict[str, Any] = Field(
+        default_factory=dict, alias="configurationRowSchema"
+    )
+    root_configuration_examples: list[dict[str, Any]] = Field(
+        default_factory=list, alias="rootConfigurationExamples"
+    )
+    row_configuration_examples: list[dict[str, Any]] = Field(
+        default_factory=list, alias="rowConfigurationExamples"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class ComponentSuggestion(BaseModel):
+    """Single result from AI Service /suggest/component endpoint."""
+
+    component_id: str = Field(alias="componentId")
+    score: float = Field(default=0.0)
+    source: str = Field(default="")
+
+    model_config = {"populate_by_name": True}
+
+
 class ErrorResponse(BaseModel):
     """Structured error response for JSON output mode."""
 

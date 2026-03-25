@@ -67,7 +67,6 @@ src/keboola_agent_cli/
     org.py              # LAYER 1: CLI commands for organization bulk onboarding
     tool.py             # LAYER 1: CLI commands for MCP tool list/call (supports --branch)
     branch.py           # LAYER 1: CLI commands for branch lifecycle (list/create/use/reset/delete/merge)
-    explorer.py         # LAYER 1: CLI commands for KBC Explorer dashboard generation
     workspace.py        # LAYER 1: CLI commands for workspace lifecycle (create/list/delete/query)
     context.py          # LAYER 1: Agent usage instructions
     doctor.py           # LAYER 1: Health check command
@@ -80,7 +79,6 @@ src/keboola_agent_cli/
     org_service.py      # LAYER 2: Organization setup orchestration
     mcp_service.py      # LAYER 2: MCP tool integration (keboola-mcp-server wrapper)
     branch_service.py   # LAYER 2: Branch lifecycle (create/use/reset/delete/merge, async job polling)
-    explorer_service.py # LAYER 2: KBC Explorer catalog/orchestration generation
     workspace_service.py # LAYER 2: Workspace lifecycle (CRUD, table load, SQL query via Query Service)
     doctor_service.py   # LAYER 2: Health check business logic
 
@@ -100,7 +98,6 @@ tests/
   test_mcp_service.py      # MCP service tests (incl. branch_id propagation)
   test_branch_service.py   # Branch service tests (lifecycle, multi-project, errors)
   test_org_service.py      # Org service tests (slugify, setup, idempotency)
-  test_explorer_service.py # Explorer service tests (tier assignment, job stats, generation)
   test_workspace_service.py # Workspace service tests (CRUD, query, from-transformation)
   test_workspace_cli.py    # Workspace CLI tests via CliRunner
   test_doctor_service.py   # Doctor service tests
@@ -223,11 +220,6 @@ kbagent branch use --project ALIAS --branch ID
 kbagent branch reset --project ALIAS
 kbagent branch delete --project ALIAS --branch ID
 kbagent branch merge --project ALIAS [--branch ID]
-
-kbagent explorer [--project NAME] [--output-dir DIR] [--job-limit N] [--tiers FILE] [--no-open]
-kbagent explorer init-tiers [--output FILE]
-
-kbagent llm export --project ALIAS [--with-samples] [--sample-limit N] [--max-samples N]
 
 kbagent workspace create --project ALIAS [--name NAME] [--backend snowflake] [--ui] [--read-only/--no-read-only]
 kbagent workspace list [--project NAME]

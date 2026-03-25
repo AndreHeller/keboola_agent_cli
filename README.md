@@ -48,7 +48,7 @@ Keboola's web UI and standard API clients work great for a single project. But w
 | `branch` | Full branch lifecycle -- create, switch, reset, delete dev branches; get merge URL |
 | `workspace` | Create workspaces, load tables, run SQL queries -- iterative SQL debugging |
 | `tool` | List and call MCP tools from keboola-mcp-server (read tools run in parallel) |
-| `sync` | **(BETA)** Sync configurations, storage metadata, job history, and data samples to local filesystem (GitOps workflow) |
+| `sync` | Sync project configurations, storage metadata, job history, and data samples to local filesystem |
 
 Every command supports `--json` for structured output and Rich formatting for human-readable output.
 

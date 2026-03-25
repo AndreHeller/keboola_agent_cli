@@ -1,7 +1,9 @@
-"""Context command - provides comprehensive usage instructions for AI agents.
+"""Context command - provides compact usage reference for AI agents.
 
 Outputs a curated text block that any AI agent (Claude, Codex, Gemini, etc.)
 can consume to understand how to use kbagent effectively.
+For detailed workflows, install the kbagent Claude Code plugin or use
+`kbagent <command> --help`.
 """
 
 import typer
@@ -14,716 +16,236 @@ AGENT_CONTEXT = f"""\
 
 ## What is kbagent?
 
-kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
-- Connect to multiple Keboola projects across different stacks
-- List and inspect configurations (extractors, writers, transformations, applications)
-- Browse job history (running, succeeded, failed jobs)
-- Check connectivity and health of project connections
-- Analyze cross-project data lineage via bucket sharing
-- Discover components and generate config scaffolds with AI-powered search
-- Sync project configurations as local files (GitOps workflow)
-- Git-branching mode: map git branches to Keboola dev branches for safe parallel development
-- 3-way diff (local vs base vs remote) with conflict detection
-- Get structured JSON output suitable for programmatic consumption
+AI-friendly CLI for managing Keboola projects. Connect to multiple projects
+across stacks, browse configs/jobs/lineage, sync configs as local files,
+create workspaces for SQL debugging, and manage dev branches -- all with
+structured JSON output for programmatic consumption.
 
 ## Quick Start
 
-### Option A: Add a single project
-
+  # Add a single project
   kbagent --json project add --alias my-project --url https://connection.keboola.com --token YOUR_TOKEN
 
-### Option B: Bulk-onboard all projects from an organization
+  # Or bulk-onboard all projects from an organization
+  KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
 
-  KBC_MANAGE_API_TOKEN=your-manage-token kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
-
-Then explore:
-
+  # Explore
   kbagent --json project list
   kbagent --json config list
 
+## Global Flags
+
+  --json / -j     JSON output (always use for programmatic parsing)
+  --verbose / -v  Verbose output
+  --no-color      Disable colors (auto-disabled in non-TTY)
+  --config-dir    Override config directory path
+
 ## All Commands
+
+Use `kbagent <command> --help` for full flag details and examples.
 
 ### Project Management
 
-  kbagent project add --alias NAME --url STACK_URL --token TOKEN
-    Add a new Keboola project connection. The token is verified against the API.
-    Token can be passed via --token, KBC_TOKEN env var, or interactive prompt.
-    Default URL: https://connection.keboola.com (or KBC_STORAGE_API_URL env var).
-    Example:
-      kbagent --json project add --alias prod --url https://connection.keboola.com --token 901-xxxxx
+  kbagent project add --alias NAME --url URL --token TOKEN
+    Add a new project connection. Token verified against API.
 
   kbagent project list
-    List all connected projects with their details (tokens are always masked).
-    Example:
-      kbagent --json project list
+    List all connected projects (tokens always masked).
 
   kbagent project remove --alias NAME
     Remove a project connection.
-    Example:
-      kbagent --json project remove --alias prod
 
-  kbagent project edit --alias NAME [--url NEW_URL] [--token NEW_TOKEN]
-    Edit an existing project connection. If token changes, it is re-verified via API.
-    Examples:
-      kbagent --json project edit --alias prod --url https://connection.north-europe.azure.keboola.com
-      kbagent --json project edit --alias prod --token new-901-xxxxx
+  kbagent project edit --alias NAME [--url URL] [--token TOKEN]
+    Edit project connection. Re-verifies token if changed.
 
   kbagent project status [--project NAME]
-    Test connectivity to projects. Shows OK/ERROR with response time.
-    Example:
-      kbagent --json project status
-      kbagent --json project status --project prod
+    Test connectivity. Shows OK/ERROR with response time.
 
 ### Component Discovery
 
-  kbagent component list [--project NAME] [--type TYPE] [--query "search text"]
-    List or search available Keboola components.
-    Without --query: lists components from connected projects via Storage API.
-    With --query: uses AI-powered semantic search to find components by description.
-    --type: extractor, writer, transformation, application
-    --query: natural language search (e.g. "snowflake extractor", "S3 file loader")
-    Examples:
-      kbagent --json component list --project prod --type extractor
-      kbagent --json component list --project prod --query "snowflake"
+  kbagent component list [--project NAME] [--type TYPE] [--query "search"]
+    List or AI-search available components. --type: extractor, writer, transformation, application.
 
   kbagent component detail --component-id ID [--project NAME]
-    Show detailed component documentation including configuration schema,
-    examples count, and documentation URL.
-    Example:
-      kbagent --json component detail --component-id keboola.ex-db-snowflake --project prod
+    Show component docs, config schema, and examples count.
 
 ### Configuration Browsing
 
   kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID]
-    List configurations from one, many, or all connected projects.
-    --project can be repeated to query multiple projects.
-    --component-type: extractor, writer, transformation, application
-    --component-id: specific component (e.g. keboola.ex-db-snowflake)
-    Output includes: last_modified, last_modified_by, last_change_description,
-    and folder (from KBC.configuration.folderName metadata -- useful for
-    distinguishing active vs archived transformations).
-    Examples:
-      kbagent --json config list
-      kbagent --json config list --project prod
-      kbagent --json config list --project prod --project dev
-      kbagent --json config list --component-type extractor
-      kbagent --json config list --component-id keboola.ex-db-snowflake
+    List configs from one/many/all projects. --project repeatable.
 
   kbagent config detail --project NAME --component-id ID --config-id ID
-    Show full detail of a specific configuration including parameters and rows.
-    Example:
-      kbagent --json config detail --project prod --component-id keboola.ex-db-snowflake --config-id 12345
+    Full config detail including parameters and rows.
 
-  kbagent config update --project NAME --component-id ID --config-id ID [--name NEW_NAME] [--description NEW_DESC] [--branch BRANCH_ID]
-    Update a configuration's name and/or description.
-    If a dev branch is active, update targets that branch. Use --branch to override.
-    At least one of --name or --description must be provided.
-    Examples:
-      kbagent --json config update --project prod --component-id keboola.python-transformation-v2 --config-id 12345 --name "New Name"
-      kbagent --json config update --project prod --component-id keboola.ex-http --config-id 67890 --name "Renamed" --description "Updated desc" --branch 456
+  kbagent config update --project NAME --component-id ID --config-id ID [--name N] [--description D] [--branch ID]
+    Update config name/description. Targets active dev branch if set.
 
-  kbagent config delete --project NAME --component-id ID --config-id ID [--branch BRANCH_ID]
-    Delete a configuration. If a dev branch is active, deletion targets that branch.
-    Use --branch to override. Deleting in a branch marks the config as removed
-    without affecting Main.
-    Example:
-      kbagent --json config delete --project prod --component-id keboola.python-transformation-v2 --config-id 12345
-      kbagent --json config delete --project prod --component-id keboola.ex-http --config-id 67890 --branch 456
+  kbagent config delete --project NAME --component-id ID --config-id ID [--branch ID]
+    Delete a configuration. Branch-aware.
 
   kbagent config new --component-id ID [--name NAME] [--project NAME] [--output-dir DIR]
-    Generate boilerplate configuration files for a Keboola component.
-    Fetches component schema and examples from AI Service to create
-    ready-to-edit _config.yml (plus transform.sql/transform.py/code.py
-    for transformations and Python apps).
-    --output-dir: write files to disk (auto-detects kbc project branch prefix).
-    Without --output-dir: prints scaffold to stdout.
-    Secret fields (#password etc.) use <YOUR_SECRET> placeholder.
-    After editing, push with 'sync push' -- secrets are auto-encrypted.
-    Examples:
-      kbagent --json config new --component-id keboola.ex-db-snowflake --project prod
-      kbagent config new --component-id keboola.snowflake-transformation --project prod --name "Clean Data"
-      kbagent config new --component-id keboola.ex-http --project prod --output-dir .
+    Generate boilerplate config from component schema. Use --output-dir to write files.
 
-  kbagent config search --query PATTERN [--project NAME] [--component-type TYPE] [--component-id ID] [--ignore-case] [--regex]
-    Search through configuration bodies (names, descriptions, parameters, rows)
-    for a string or regex pattern. Reports matching configs and WHERE in the JSON
-    tree the match was found. Runs across all connected projects in parallel.
-    Default: case-sensitive substring match.
-    -i / --ignore-case: case-insensitive matching.
-    -r / --regex: interpret query as a regular expression.
-    --project can be repeated to limit to specific projects.
-    Examples:
-      kbagent --json config search --query "password"
-      kbagent --json config search --query "marketing" --ignore-case
-      kbagent --json config search --query "marketing" -i --project prod
-      kbagent --json config search --query "\\d{{3}}-\\d+" --regex
-      kbagent --json config search --query "(password|secret|heslo)" --regex --ignore-case
+  kbagent config search --query PATTERN [--project NAME] [--component-type TYPE] [-i] [-r]
+    Search config bodies for string/regex. Reports match location in JSON tree.
 
 ### Job History
 
   kbagent job list [--project NAME] [--component-id ID] [--config-id ID] [--status STATUS] [--limit N]
-    List jobs from the Queue API across one, many, or all connected projects.
-    --project can be repeated to query multiple projects.
-    --status: processing, terminated, cancelled, success, error
-    --limit: 1-500 (default 50)
-    --config-id requires --component-id
-    Examples:
-      kbagent --json job list
-      kbagent --json job list --project prod
-      kbagent --json job list --project prod --project dev
-      kbagent --json job list --status error
-      kbagent --json job list --component-id keboola.ex-db-snowflake --limit 10
-      kbagent --json job list --component-id keboola.ex-db-snowflake --config-id 12345
+    List jobs from Queue API. --status: processing, terminated, cancelled, success, error.
 
   kbagent job detail --project NAME --job-id ID
-    Show full detail of a specific job including result message and timing.
-    Example:
-      kbagent --json job detail --project prod --job-id 148512262
+    Full job detail including result message and timing.
 
-### Storage (Buckets and Tables)
+### Storage
 
   kbagent storage buckets [--project NAME]
-    List storage buckets with sharing/linked bucket information.
-    Shows which buckets are linked from other projects, including the
-    source project ID and name. This info is NOT available via MCP tools.
-    Examples:
-      kbagent --json storage buckets
-      kbagent --json storage buckets --project prod
+    List buckets with sharing/linked info. Shows source project for linked buckets.
 
   kbagent storage bucket-detail --project NAME --bucket-id BUCKET_ID
-    Show detailed bucket info including Snowflake direct access paths.
-    For linked/shared buckets, resolves the correct Snowflake database
-    and schema from the source project. Each table includes a ready-to-use
-    fully-qualified Snowflake path with proper quoting.
-    CRITICAL for direct Snowflake access: linked buckets live in a different
-    database than the current project (e.g. sapi_1507 instead of sapi_226).
-    Example:
-      kbagent --json storage bucket-detail --project slevomat --bucket-id in.c-db
+    Bucket detail with Snowflake direct access paths. Resolves linked bucket source DB.
 
   kbagent storage tables --project NAME [--bucket-id BUCKET_ID]
     List storage tables, optionally filtered by bucket.
-    Example:
-      kbagent --json storage tables --project prod
-      kbagent --json storage tables --project prod --bucket-id in.c-main
 
 ### Data Lineage
 
   kbagent lineage [--project NAME]
-    Analyze cross-project data lineage via bucket sharing.
-    Shows which projects share buckets to other projects -- essential
-    for understanding multi-project data architectures.
-    --project can be repeated to query specific projects.
-    Examples:
-      kbagent --json lineage
-      kbagent --json lineage show
-      kbagent --json lineage show --project prod
-      kbagent --json lineage show --project prod --project dev
+    Cross-project data lineage via bucket sharing. --project repeatable.
 
 ### Organization Management
 
   kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
-    Bulk-onboard all projects from a Keboola organization.
-    Lists all projects via Manage API, creates Storage API tokens, and registers them.
-    Safe to re-run -- already registered projects are skipped.
-
-    The manage token is read from KBC_MANAGE_API_TOKEN env var or prompted
-    interactively (never passed as CLI argument for security).
-
-    Options:
-      --org-id         Required. Organization ID.
-      --url            Required. Keboola stack URL (or KBC_STORAGE_API_URL env var).
-      --dry-run        Preview what would happen without making changes.
-      --yes / -y       Skip confirmation prompt.
-      --token-description  Description prefix for created tokens (default: kbagent-cli).
-
-    Token names include owner identity resolved from the manage token:
-    "kbagent-cli [john.doe@company.com]" -- so multiple users on the same
-    project have uniquely identifiable tokens in the Keboola UI.
-
-    Examples:
-      kbagent org setup --org-id 123 --url https://connection.keboola.com --dry-run
-      kbagent --json org setup --org-id 123 --url https://connection.keboola.com
-      KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
-
-### Version Information
-
-  kbagent version
-    Show kbagent version and check for updates of keboola-mcp-server.
-    Example:
-      kbagent --json version
+    Bulk-onboard all org projects. Manage token via KBC_MANAGE_API_TOKEN env var. Idempotent.
 
 ### Development Branches
 
   kbagent branch list [--project NAME]
-    List development branches from connected projects.
-    --project can be repeated to query multiple projects.
-    Each branch shows: ID, name, whether it is the default branch, active marker, and creation date.
-    Examples:
-      kbagent --json branch list
-      kbagent --json branch list --project prod
-      kbagent --json branch list --project prod --project dev
+    List dev branches. --project repeatable.
 
-  kbagent branch create --project ALIAS --name "branch-name" [--description "..."]
-    Create a new development branch and auto-activate it.
-    Branch creation is an async operation on the Keboola API -- the CLI waits
-    for the job to complete (typically 1-3 seconds) before returning.
-    The created branch becomes the active branch for the project, so subsequent
-    tool calls will automatically use it (no need to pass --branch every time).
-    Example:
-      kbagent --json branch create --project prod --name "fix-transform-x"
+  kbagent branch create --project ALIAS --name "name" [--description "..."]
+    Create dev branch and auto-activate it. Async, CLI waits for completion.
 
   kbagent branch use --project ALIAS --branch ID
-    Set an existing development branch as active.
-    Validates the branch exists via the API before activating it.
-    Example:
-      kbagent --json branch use --project prod --branch 456
+    Set existing branch as active for subsequent commands.
 
   kbagent branch reset --project ALIAS
-    Reset the active branch back to main/production.
-    Subsequent tool calls will operate on the main branch.
-    Example:
-      kbagent --json branch reset --project prod
+    Reset to main/production branch.
 
   kbagent branch delete --project ALIAS --branch ID
-    Delete a development branch via API (async operation, CLI waits for completion).
-    If the deleted branch was active, it is automatically reset to main.
-    Example:
-      kbagent --json branch delete --project prod --branch 456
+    Delete branch (async). Auto-resets to main if it was active.
 
   kbagent branch merge --project ALIAS [--branch ID]
-    Get the KBC UI merge URL for a development branch.
-    Does NOT merge via API -- generates the URL for safe review and merge in the UI.
-    If --branch is not set, uses the active branch from config.
-    After displaying the URL, resets the active branch to main.
-    Example:
-      kbagent --json branch merge --project prod
+    Get KBC UI merge URL (does NOT merge via API). Resets active branch.
 
 ### Workspaces (SQL Debugging)
 
   kbagent workspace create --project ALIAS [--name NAME] [--backend snowflake] [--ui] [--read-only/--no-read-only]
-    Create a temporary workspace for SQL debugging. Two modes:
-    - Default (headless): fast (~1s) via Storage API. Password returned immediately.
-    - --ui flag: slower (~15s) via Queue job. Workspace visible in Keboola UI Workspaces tab.
-    Both modes return connection credentials including password.
-    --name sets a human-readable name (default: kbagent-ALIAS).
-    Examples:
-      kbagent --json workspace create --project prod --name "debug-transform"
-      kbagent --json workspace create --project prod --name "debug-ui" --ui
+    Create workspace. Default: headless (~1s). --ui: visible in KBC UI (~15s).
 
   kbagent workspace list [--project NAME]
-    List workspaces from connected projects.
-    --project can be repeated to query multiple projects.
-    Example:
-      kbagent --json workspace list --project prod
+    List workspaces. --project repeatable.
 
   kbagent workspace detail --project ALIAS --workspace-id ID
-    Show workspace connection details (password NOT included).
-    Example:
-      kbagent --json workspace detail --project prod --workspace-id 12345
+    Workspace connection details (no password).
 
   kbagent workspace delete --project ALIAS --workspace-id ID
-    Delete a workspace and its associated sandbox config.
-    Workspaces also expire automatically server-side.
-    Example:
-      kbagent --json workspace delete --project prod --workspace-id 12345
+    Delete workspace. They also expire automatically.
 
   kbagent workspace password --project ALIAS --workspace-id ID
-    Reset workspace password and return the new one.
-    Example:
-      kbagent --json workspace password --project prod --workspace-id 12345
+    Reset and return new workspace password.
 
-  kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [--tables TABLE_ID2 ...] [--preserve]
-    Load tables from storage into a workspace. Waits for async load to complete.
-    Table IDs use Keboola format: in.c-bucket.table-name
-    By default, all existing tables in the workspace are dropped before loading.
-    Use --preserve to keep existing tables and only add/overwrite the specified ones.
-    Example:
-      kbagent --json workspace load --project prod --workspace-id 12345 --tables in.c-main.users --tables in.c-main.orders
-      kbagent --json workspace load --project prod --workspace-id 12345 --tables in.c-main.orders --preserve
+  kbagent workspace load --project ALIAS --workspace-id ID --tables TABLE_ID [...] [--preserve]
+    Load storage tables into workspace. --preserve keeps existing tables.
 
-  kbagent workspace query --project ALIAS --workspace-id ID --sql "SELECT ..." [--transactional]
-  kbagent workspace query --project ALIAS --workspace-id ID --file query.sql [--transactional]
-    Execute SQL in a workspace via Query Service. Provide SQL via --sql or --file.
-    Polls until complete and returns results as CSV.
-    Uses the Storage API token for auth -- no Snowflake credentials needed.
-    Example:
-      kbagent --json workspace query --project prod --workspace-id 12345 --sql "SELECT * FROM users LIMIT 10"
+  kbagent workspace query --project ALIAS --workspace-id ID --sql "SQL" [--file F] [--transactional]
+    Execute SQL via Query Service. No Snowflake credentials needed.
 
-  kbagent workspace from-transformation --project ALIAS --component-id ID --config-id ID [--row-id ID] [--backend snowflake]
-    Create a workspace from an existing transformation config.
-    Reads the transformation, creates a config-tied workspace, and loads all input tables.
-    Returns credentials ready for SQL debugging.
-    Example:
-      kbagent --json workspace from-transformation --project prod --component-id keboola.snowflake-transformation --config-id 22777254
+  kbagent workspace from-transformation --project ALIAS --component-id ID --config-id ID [--row-id ID]
+    Create workspace from transformation config. Loads input tables automatically.
 
-### Project Sync (Configs, Storage Metadata, Jobs)
+### Project Sync
 
   kbagent sync init --project ALIAS [--directory DIR] [--git-branching]
-    Initialize a sync working directory for a Keboola project.
-    Creates .keboola/manifest.json with project metadata and naming conventions.
-    Use --git-branching to enable git-to-Keboola branch mapping.
-    Example:
-      mkdir my-project && cd my-project
-      kbagent --json sync init --project prod
-      kbagent --json sync init --project prod --git-branching
+    Initialize sync working directory. --git-branching enables git-to-Keboola branch mapping.
 
-  kbagent sync pull --project ALIAS [--directory DIR] [--force] [--dry-run]
-  kbagent sync pull --all-projects [--directory DIR] [--force] [--dry-run]
-    Download configurations from Keboola to local files.
-    --project: single project. --all-projects: all configured projects in
-    parallel, each in its own subdirectory (auto-inits if needed).
-    Idempotent: only writes files that actually changed on the remote side.
-    Protects locally modified files (skips overwrite unless --force).
-    Reports "Already up to date" when nothing changed.
-    --dry-run shows what would be pulled without writing files.
-
-    Storage & job metadata (pulled by default alongside configs):
-    - storage/buckets.json -- all buckets with metadata
-    - storage/tables/{{bucket}}/{{table}}.json -- per-table schema, columns, row count, size
-    - _jobs.jsonl next to each _config.yml -- last N jobs per config (JSONL, light records)
-    Use --no-storage or --no-jobs to skip these.
-
-    Data samples (opt-in):
-    --with-samples downloads CSV previews to storage/samples/{{bucket}}/{{table}}/sample.csv
-    --sample-limit N: max rows per sample (default 100)
-    --max-samples N: max tables to sample (default 50)
-    Tables with >30 columns are auto-trimmed to first 30 (Storage API sync export limit).
-
-    Job history:
-    --job-limit N: max recent jobs per config (default 5)
-
-    File format:
-      _config.yml      -- YAML config (name, parameters, storage)
-      _description.md  -- description as Markdown (always separate)
-      _jobs.jsonl      -- recent jobs (id, status, start/end time, duration, error)
-      transform.sql    -- SQL with block markers (Snowflake transformations)
-      transform.py     -- Python code with block markers
-      code.py          -- custom Python app code
-      pyproject.toml   -- Python dependencies
-    Example:
-      kbagent --json sync pull --project prod
-      kbagent sync pull --all-projects
-      kbagent sync pull --all-projects --with-samples --job-limit 10
-      kbagent sync pull --project prod --no-jobs --no-storage
+  kbagent sync pull --project ALIAS [--all-projects] [--force] [--dry-run] [--with-samples] [--no-storage] [--no-jobs]
+    Download configs as local files. Idempotent, protects local modifications.
 
   kbagent sync status [--directory DIR]
-    Show which local configs have been modified, added, or deleted since last pull.
-    Uses SHA256 hash comparison for reliable change detection.
-    Example:
-      kbagent --json sync status
+    Show local changes since last pull (SHA256-based).
 
-  kbagent sync diff --project ALIAS [--directory DIR]
-  kbagent sync diff --all-projects [--directory DIR]
-    3-way diff between local files, pull-time snapshot, and remote Keboola state.
-    --all-projects shows compact one-line summary per project.
-    Change types:
-      - MODIFIED: local changed, remote unchanged (safe to push)
-      - REMOTE MODIFIED: remote changed, local unchanged (run pull)
-      - CONFLICT: both sides changed since last pull
-      - ADDED: new local config not yet in remote
-      - DELETED: local file removed
-    Also detects remote-only configs (new on server, not yet pulled).
-    Encrypted values are normalized so nonce changes don't cause false diffs.
-    Example:
-      kbagent --json sync diff --project prod
-      kbagent sync diff --all-projects
+  kbagent sync diff --project ALIAS [--all-projects] [--directory DIR]
+    3-way diff: local vs pull-time snapshot vs remote. Detects conflicts.
 
-  kbagent sync push --project ALIAS [--directory DIR] [--dry-run] [--force]
-  kbagent sync push --all-projects [--directory DIR] [--dry-run] [--force]
-    Push local changes to Keboola. Creates new configs, updates modified,
-    deletes removed. New configs get IDs from API automatically.
-    --all-projects pushes all configured projects in parallel.
-    Only pushes local-side changes (modified, added, deleted).
-    Secret values (#-prefixed keys) are automatically encrypted via Encryption API before sending.
-    Skips remote_modified and conflict -- run pull first to resolve.
-    --dry-run shows what would change without applying.
-    After push, manifest is updated so subsequent pull sees "Already up to date".
-    Example:
-      kbagent --json sync push --project prod --dry-run
-      kbagent sync push --all-projects --dry-run
+  kbagent sync push --project ALIAS [--all-projects] [--dry-run] [--force]
+    Push local changes. Auto-encrypts secrets. Skips conflicts (pull first).
 
   kbagent sync branch-link --project ALIAS [--branch-id ID] [--branch-name NAME]
-    Link current git branch to a Keboola development branch.
-    Auto-creates the Keboola branch if it doesn't exist with the same name.
-    Requires --git-branching mode enabled via sync init.
-    After linking, all sync commands (pull/push/diff) automatically target
-    the linked Keboola branch -- no manual branch switching needed.
-    Example:
-      git checkout -b feature/new-etl
-      kbagent --json sync branch-link --project prod
+    Link git branch to Keboola dev branch. Auto-creates if needed.
 
   kbagent sync branch-unlink [--directory DIR]
-    Remove the branch mapping for the current git branch.
-    Does NOT delete the Keboola branch itself.
+    Remove git-to-Keboola branch mapping.
 
   kbagent sync branch-status [--directory DIR]
-    Show the current git branch mapping status.
-
-  Git-branching enforcement:
-    When git-branching is enabled, sync commands are BLOCKED on unlinked
-    git branches. This prevents accidental pushes to production from
-    feature branches. Link first with 'sync branch-link'.
-
-### Utility Commands
-
-  kbagent init [--from-global]
-    Initialize a local .kbagent/ workspace in the current directory.
-    Creates .kbagent/config.json for per-directory project isolation.
-    Use --from-global to copy existing projects from global config.
-    Automatically adds .kbagent/ to .gitignore.
-    Example:
-      kbagent init
-      kbagent init --from-global
-
-  kbagent context
-    Show this help text with usage instructions for AI agents.
-
-  kbagent doctor [--fix]
-    Run health checks: config file, permissions, connectivity, CLI version, MCP server.
-    --fix: Auto-fix issues (installs MCP server binary for faster tool call startup).
-    Examples:
-      kbagent --json doctor
-      kbagent doctor --fix
-
-## Global Flags
-
-  --json / -j     Output in JSON format (always use this for programmatic parsing)
-  --verbose / -v  Enable verbose output
-  --no-color      Disable colored output (auto-disabled in non-TTY environments)
-  --config-dir    Override config directory path (bypasses all auto-detection)
+    Show current branch mapping status.
 
 ### MCP Tools (Multi-Project)
 
   kbagent tool list [--project NAME] [--branch ID]
-    List all available MCP tools from keboola-mcp-server.
-    Use --branch to scope to a development branch (requires --project).
-    Each tool is annotated with multi_project flag:
-    - multi_project=true: Read tool, runs across ALL connected projects in parallel
-    - multi_project=false: Write tool, targets a single project
-    Example:
-      kbagent --json tool list
+    List MCP tools. multi_project=true: reads all projects. false: single project.
 
   kbagent tool call TOOL_NAME [--project NAME] [--input JSON] [--branch ID]
-    Call an MCP tool. Read tools automatically query all projects.
-    Write tools use --project or the default project.
-    Use --branch to scope the call to a development branch (requires --project).
-    Examples:
-      kbagent --json tool call list_configs
-      kbagent --json tool call list_configs --project prod
-      kbagent --json tool call list_configs --project prod --branch 123
-      kbagent --json tool call get_config --input '{{"configuration_id": "12345"}}'
-      kbagent --json tool call create_config --project prod --input '{{"component_id": "keboola.ex-db-snowflake", "name": "My Config"}}'
+    Call an MCP tool. Read tools auto-query all projects. Write tools need --project.
+
+### Utility Commands
+
+  kbagent init [--from-global]
+    Create local .kbagent/ workspace. --from-global copies existing projects.
+
+  kbagent context
+    Show this reference text.
+
+  kbagent doctor [--fix]
+    Health checks. --fix auto-installs MCP server binary.
+
+  kbagent version
+    Version info and MCP server update check.
 
 ## Tips for AI Agents
 
 1. ALWAYS use --json flag for reliable, parseable output:
      kbagent --json project list
-     kbagent --json config list
 
-2. JSON success response format:
-     {{"status": "ok", "data": ...}}
+2. JSON response format:
+     Success: {{"status": "ok", "data": ...}}
+     Error:   {{"status": "error", "error": {{"code": "...", "message": "...", "retryable": true/false}}}}
+   Check "retryable" -- if true, retry the operation.
 
-3. JSON error response format:
-     {{"status": "error", "error": {{"code": "ERROR_CODE", "message": "...", "retryable": true/false}}}}
+3. Multi-project: most read commands accept repeatable --project flag.
+   Omit --project to query ALL connected projects in parallel.
 
-4. Check the "retryable" field in errors - if true, you can retry the operation.
+4. Tokens are always masked in output (e.g. 901-...pt0k) -- expected behavior.
 
-5. Tokens are always masked in output (e.g. 901-...pt0k) - this is expected behavior.
+5. Common workflow -- explore a project:
+     kbagent --json project list
+     kbagent --json config list --project prod
+     kbagent --json config detail --project prod --component-id ID --config-id ID
+     kbagent --json job list --project prod --status error --limit 10
 
-6. Common workflow - explore a project:
-     kbagent --json project list                              # See all projects
-     kbagent --json config list --project prod                # List all configs
-     kbagent --json config list --project prod --component-type extractor  # Filter by type
-     kbagent --json config detail --project prod --component-id keboola.ex-db-snowflake --config-id 12345
-     kbagent --json job list --project prod --limit 10        # Recent jobs
-     kbagent --json job list --project prod --status error    # Failed jobs
+6. Health check and setup:
+     kbagent --json doctor           # full health check
+     kbagent doctor --fix            # auto-install MCP server
+     kbagent --json project status   # test all connections
 
-7. Common workflow - check health and optimize:
-     kbagent --json doctor                                    # Full health check
-     kbagent doctor --fix                                     # Auto-install MCP server binary (faster tool calls)
-     kbagent --json project status                            # Test all connections
+7. Environment variables:
+     KBC_TOKEN             Storage API token (fallback for --token)
+     KBC_STORAGE_API_URL   Default stack URL (fallback for --url)
+     KBC_MANAGE_API_TOKEN  Manage API token (for org setup)
+     KBAGENT_CONFIG_DIR    Override config directory
 
-8. Common workflow - explore data lineage:
-     kbagent --json lineage                                    # Cross-project data flow
-     kbagent --json lineage show --project prod                # Lineage for one project
-     kbagent --json lineage show --project prod --project dev  # Lineage for specific projects
-
-9. MCP tools workflow - interact with Keboola via MCP server:
-     kbagent --json tool list                                    # See all available tools
-     kbagent --json tool call list_configs                       # List configs from ALL projects
-     kbagent --json tool call list_configs --project prod        # List configs from one project
-     kbagent --json tool call create_config --project prod --input '{{...}}'  # Write to one project
-
-10. Environment variables (alternative to CLI arguments):
-     KBC_TOKEN             - Storage API token (fallback for --token in project add/edit)
-     KBC_STORAGE_API_URL   - Default stack URL (fallback for --url in project add, org setup)
-     KBC_MANAGE_API_TOKEN  - Manage API token (for org setup)
-     KBAGENT_CONFIG_DIR    - Override config directory path (same as --config-dir flag)
-
-11. Branch workflow -- develop on a branch without passing --branch every time:
-     kbagent --json branch create --project prod --name "fix-transform-x"
-       # ^ creates the branch AND sets it as "active" for the project
-       #   all subsequent tool calls on this project auto-use this branch
-     kbagent --json tool call list_configs --project prod     # auto-uses active branch
-     kbagent --json tool call update_sql_transformation --project prod --input '{{...}}'  # auto-uses active branch
-     kbagent --json branch merge --project prod
-       # ^ does NOT merge! Returns a URL to Keboola UI where you review and merge manually.
-       #   After displaying the URL, resets the active branch back to main.
-
-12. Branch create and delete are async operations on the Keboola API.
-    The CLI handles this transparently -- it waits for the async job to complete
-    before returning (typically 1-3 seconds). You do NOT need to poll or retry.
-    If the job takes too long (>60s), the CLI returns an error.
-
-13. Project context for AI -- get a full offline snapshot of a project:
-     kbagent sync pull --project prod --with-samples
-     # Downloads configs, storage metadata, job history, and data samples
-     # Each config gets _jobs.jsonl with recent job status
-     # storage/ has table schemas, columns, row counts
-     # Much faster than querying each piece via MCP tool calls.
-
-14. Workspace isolation -- use per-directory config for client separation:
-     kbagent init                                            # Create local .kbagent/ workspace
-     kbagent --json project add --alias prod --url ...       # Adds to LOCAL config
-     kbagent --json doctor                                   # Shows "Using local config at ..."
-
-    Config resolution order: --config-dir flag > KBAGENT_CONFIG_DIR env var
-    > .kbagent/ in CWD or parent dirs > ~/.config/keboola-agent-cli/ (global)
-
-15. Workspace workflow -- debug a failing SQL transformation iteratively:
-     # Step 1: Create workspace from the transformation (loads input tables automatically)
-     kbagent --json workspace from-transformation --project prod --component-id keboola.snowflake-transformation --config-id 22777254
-       # ^ returns workspace_id, credentials, and loaded tables
-
-     # Step 2: Run the SQL to reproduce the error
-     kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT ..."
-
-     # Step 3: Iterate on fixes (no need to run full jobs!)
-     kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT fixed_query ..."
-
-     # Step 4: Once the fix works, update the transformation config
-     kbagent --json tool call update_configuration --project prod --input '{{"component_id": "...", "configuration_id": "...", ...}}'
-
-     # Step 5: Clean up (optional -- workspaces expire automatically)
-     kbagent --json workspace delete --project prod --workspace-id WS_ID
-
-     Alternative: create a standalone workspace (not from transformation):
-     kbagent --json workspace create --project prod --name "debug-ws"
-       # ^ headless mode, fast (~1s), not visible in Keboola UI
-     kbagent --json workspace create --project prod --name "debug-ws" --ui
-       # ^ UI mode, slower (~15s), visible in Keboola UI Workspaces tab
-     kbagent --json workspace load --project prod --workspace-id WS_ID --tables in.c-bucket.my-table
-     kbagent --json workspace load --project prod --workspace-id WS_ID --tables in.c-bucket.another-table --preserve
-       # ^ keeps existing tables, only adds/overwrites specified ones
-     kbagent --json workspace query --project prod --workspace-id WS_ID --sql "SELECT * FROM \"my-table\" LIMIT 10"
-
-     IMPORTANT -- Snowflake quoting rules for workspace queries:
-     Snowflake converts unquoted identifiers to UPPERCASE. If a database,
-     schema, or table name contains lowercase letters, dots, or hyphens,
-     you MUST double-quote it. This applies to ALL identifiers:
-       WRONG: SELECT * FROM sap_9.my_schema.my_table
-              (Snowflake reads this as SAP_9.MY_SCHEMA.MY_TABLE -- not found!)
-       RIGHT: SELECT * FROM "sap_9"."my_schema"."my_table"
-     Best practice: ALWAYS double-quote database, schema, and table names
-     in workspace queries, even if they look like they don't need it.
-     Keboola workspace database/schema names are often lowercase.
-     For shared/linked buckets, use 'kbagent storage bucket-detail' to get
-     the correct fully-qualified Snowflake path (source project DB differs).
-
-16. Setting up projects -- two approaches:
-
-    a) Single project (you have a Storage API token):
-       kbagent --json project add --alias my-proj --url https://connection.keboola.com --token 901-xxxxx
-
-    b) Entire organization (you have a Manage API token):
-       KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
-       This creates Storage API tokens for ALL projects in the org and registers them automatically.
-
-17. Sync workflow -- manage configs as local files with GitOps:
-
-     # All projects at once (recommended):
-     mkdir keboola && cd keboola
-     kbagent sync pull --all-projects                 # downloads ALL projects
-     kbagent sync diff --all-projects                 # one-line status per project
-     kbagent sync push --all-projects --dry-run       # preview all changes
-
-     # Single project:
-     mkdir my-project && cd my-project
-     kbagent --json sync pull --project prod          # auto-inits if needed
-     kbagent --json sync diff --project prod
-     kbagent --json sync push --project prod
-
-     # File layout per config:
-     # _config.yml      -- YAML (name, parameters, storage)
-     # _description.md  -- description as readable Markdown
-     # _jobs.jsonl      -- recent jobs (status, timing, errors)
-     # transform.sql    -- SQL code (Snowflake transformations)
-     # transform.py     -- Python code (Python transformations)
-     # code.py          -- Python app code (custom apps)
-
-     # Storage metadata is also pulled (storage/buckets.json, storage/tables/):
-     kbagent sync pull --all-projects                 # includes storage + jobs
-     kbagent sync pull --all-projects --no-storage    # skip storage metadata
-     kbagent sync pull --all-projects --no-jobs       # skip job history
-     kbagent sync pull --all-projects --with-samples  # include CSV data samples
-
-     # Pull is idempotent: re-running pull when nothing changed reports
-     # "Already up to date" and writes zero files. Locally modified files
-     # are protected (skipped unless --force).
-
-18. Git-branching workflow -- safe parallel development:
-     # Initialize with git-branching mode
-     git init && kbagent --json sync init --project prod --git-branching
-     kbagent --json sync pull --project prod
-     git add -A && git commit -m "initial sync"
-
-     # Create feature branch and link to Keboola dev branch
-     git checkout -b feature/new-etl
-     kbagent --json sync branch-link --project prod
-     # -> Creates Keboola dev branch, saves mapping
-
-     # All sync commands now auto-target the dev branch
-     kbagent --json sync diff --project prod    # compares vs dev branch
-     kbagent --json sync push --project prod    # pushes to dev branch ONLY
-     # Production is NEVER touched from feature branches
-
-     # Diff shows change direction:
-     #   MODIFIED = local changed (safe to push)
-     #   REMOTE MODIFIED = remote changed (run pull)
-     #   CONFLICT = both sides changed (resolve manually)
-
-     # Merge back to production:
-     # 1. Merge in Keboola UI (kbagent branch merge --project prod)
-     # 2. git checkout main && git merge feature/new-etl
-     # 3. kbagent sync pull --project prod   (syncs merged state)
-
-     # Unlinked branches are blocked from sync operations
-     git checkout -b feature/random
-     kbagent sync push --project prod  # ERROR: "not linked"
-
-19. Claude Code plugin -- teach Claude how to use kbagent automatically:
-     Install the kbagent skill as a Claude Code plugin:
-       claude install-plugin https://github.com/padak/keboola_agent_cli
-     After installation, Claude Code will automatically know when and how
-     to use kbagent commands (the skill triggers on Keboola-related tasks).
-     The plugin provides a decision table mapping goals to commands and
-     references for common workflows (workspace debugging, branch lifecycle).
-
-20. Creating new configurations -- scaffold and push workflow:
-     # Step 1: Find the right component
-     kbagent --json component list --project prod --query "snowflake extractor"
-
-     # Step 2: Generate boilerplate config files on disk
-     kbagent config new --component-id keboola.ex-db-snowflake --project prod --name "My Import" --output-dir .
-       # ^ creates main/extractor/keboola.ex-db-snowflake/my-import/_config.yml
-       #   with parameters from real examples, #secrets as <YOUR_SECRET>
-
-     # Step 3: Edit the generated _config.yml -- fill in credentials, table mappings, etc.
-
-     # Step 4: Push to Keboola (secrets are auto-encrypted before sending)
-     kbagent sync push --project prod
-       # ^ encrypts #password etc. via Encryption API, creates config in Keboola,
-       #   writes back config_id and encrypted values to local file automatically
+8. Config resolution order:
+     --config-dir flag > KBAGENT_CONFIG_DIR env > .kbagent/ in CWD/parents > ~/.config/keboola-agent-cli/
 
 ## Exit Codes
 
@@ -732,7 +254,7 @@ Then explore:
   2  Usage error (invalid arguments)
   3  Authentication error (invalid or expired token)
   4  Network error (timeout, unreachable server)
-  5  Configuration error (corrupt config file, missing project alias)
+  5  Configuration error (corrupt config, missing alias)
 
 When you receive a non-zero exit code, use --json to get structured error details.
 """

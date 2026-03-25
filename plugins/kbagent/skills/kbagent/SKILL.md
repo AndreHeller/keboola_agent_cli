@@ -17,15 +17,14 @@ description: >
 
 # kbagent -- Keboola Agent CLI
 
-## First step -- always
+## How to use this skill
 
-Load full CLI documentation before doing anything else:
+This skill contains everything you need. The decision table below maps goals to commands.
+For detailed workflows, see the `references/` docs linked at the bottom.
 
-```bash
-kbagent context
-```
+For **command flags and parameters**, use `kbagent <command> --help` (e.g. `kbagent config new --help`).
 
-This prints all commands, flags, workflows, and tips. Read it fully before proceeding.
+If kbagent is not installed or you need the full standalone reference, run `kbagent context`.
 
 ## Rules
 
@@ -114,17 +113,18 @@ Check the `retryable` field -- if `true`, retry the operation.
 
 For detailed response parsing rules and common pitfalls, see [gotchas](references/gotchas.md).
 
-## Reading synced data (for agents)
+## Workflow references
 
-After `sync pull`, see [reading-synced-data](references/reading-synced-data.md) for how to parse `_jobs.jsonl`, storage metadata, table schemas, and data samples -- includes Python examples for finding failing configs, largest tables, and more.
-
-## Scaffold workflow (creating new configs)
-
-To create a new extractor, writer, transformation, or application from scratch, see [scaffold-workflow](references/scaffold-workflow.md) for the full flow: find component, generate scaffold, edit, push.
-
-## Sync & Git-branching workflow
-
-For the full GitOps workflow (sync init, pull, edit, diff, push, git-branching with Keboola dev branch isolation), see [sync-workflow](references/sync-workflow.md).
+| Workflow | Reference |
+|----------|-----------|
+| All commands cheat sheet | [commands-reference](references/commands-reference.md) |
+| Creating new configurations | [scaffold-workflow](references/scaffold-workflow.md) |
+| MCP tools (multi-project read/write) | [mcp-workflow](references/mcp-workflow.md) |
+| Workspace SQL debugging | [workspace-workflow](references/workspace-workflow.md) |
+| Dev branches | [branch-workflow](references/branch-workflow.md) |
+| Sync & Git-branching (GitOps) | [sync-workflow](references/sync-workflow.md) |
+| Reading synced data | [reading-synced-data](references/reading-synced-data.md) |
+| Response parsing gotchas | [gotchas](references/gotchas.md) |
 
 ## First-time setup
 

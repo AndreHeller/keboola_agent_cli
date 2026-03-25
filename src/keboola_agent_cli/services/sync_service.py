@@ -264,10 +264,12 @@ class SyncService(BaseService):
                 # Convert API format to local _config.yml
                 local_data = api_config_to_local(component_id, cfg, config_id)
 
-                # Compute normalized config hash BEFORE extract_code_files
-                # mutates local_data.  Used by 3-way diff to determine which
-                # side changed (local vs remote).
-                pull_cfg_hash = config_hash(local_data)
+                # Two hashes are needed:
+                # 1. api_cfg_hash: hash of API data (for remote_unchanged check)
+                # 2. pull_cfg_hash: hash after file roundtrip (stored in manifest
+                #    to match what diff computes from on-disk files)
+                api_cfg_hash = config_hash(local_data)
+                pull_cfg_hash = api_cfg_hash  # overwritten after file write
 
                 # Detect local modifications: if file hash differs from
                 # pull_hash stored in manifest, the user edited the file.
@@ -311,7 +313,7 @@ class SyncService(BaseService):
                     # Check if remote actually changed since last pull.
                     # If pull_config_hash matches, skip write (idempotent).
                     old_cfg_hash = existing_config_hashes.get(lookup_key, "")
-                    remote_unchanged = not is_new and old_cfg_hash and old_cfg_hash == pull_cfg_hash
+                    remote_unchanged = not is_new and old_cfg_hash and old_cfg_hash == api_cfg_hash
 
                     if remote_unchanged:
                         # Nothing changed -- reuse existing file hash
@@ -324,6 +326,15 @@ class SyncService(BaseService):
                         if not dry_run:
                             extract_code_files(component_id, local_data, config_dir)
                             file_hash = self._write_config_file(config_dir, local_data)
+
+                            # Compute pull_config_hash by reading files back
+                            # through the same path diff uses (YAML roundtrip
+                            # + merge_code_files).  This ensures the stored
+                            # hash exactly matches what diff will compute.
+                            roundtrip_data = self._read_config_file(config_dir)
+                            if roundtrip_data is not None:
+                                merge_code_files(component_id, roundtrip_data, config_dir)
+                                pull_cfg_hash = config_hash(roundtrip_data)
                         else:
                             file_hash = ""
 

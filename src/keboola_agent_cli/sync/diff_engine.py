@@ -99,16 +99,7 @@ def _normalize(obj: Any) -> Any:
         return normalized
 
     if isinstance(obj, list):
-        # Normalize script arrays: API may return ["full\ncode\nhere"]
-        # (single multiline string) while local merge returns per-line.
-        # Flatten any multiline strings to individual lines.
-        result_list: list[Any] = []
-        for item in obj:
-            if isinstance(item, str) and "\n" in item:
-                result_list.extend(item.split("\n"))
-            else:
-                result_list.append(_normalize(item))
-        return result_list
+        return [_normalize(item) for item in obj]
 
     if is_encrypted_value(obj):
         return ENCRYPTED_PLACEHOLDER

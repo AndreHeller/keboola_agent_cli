@@ -9,6 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+
+def _strip_trailing_empty(lines: list[str]) -> list[str]:
+    """Remove trailing empty lines but preserve leading whitespace."""
+    result = list(lines)
+    while result and result[-1].strip() == "":
+        result.pop()
+    return result
+
+
 # Component patterns that contain SQL transformations
 SQL_TRANSFORMATION_COMPONENTS: set[str] = {
     "keboola.snowflake-transformation",
@@ -138,7 +147,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
         if stripped.startswith("/* ===== BLOCK:") and stripped.endswith("===== */"):
             # Save previous code if any
             if current_code is not None and current_block is not None:
-                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
+                current_code["script"] = _strip_trailing_empty(current_script_lines)
                 current_block.setdefault("codes", []).append(current_code)
                 current_code = None
                 current_script_lines = []
@@ -152,7 +161,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
         if stripped.startswith("/* ===== CODE:") and stripped.endswith("===== */"):
             # Save previous code if any
             if current_code is not None and current_block is not None:
-                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
+                current_code["script"] = _strip_trailing_empty(current_script_lines)
                 current_block.setdefault("codes", []).append(current_code)
                 current_script_lines = []
 
@@ -166,7 +175,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
 
     # Don't forget the last code block
     if current_code is not None and current_block is not None:
-        current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
+        current_code["script"] = _strip_trailing_empty(current_script_lines)
         current_block.setdefault("codes", []).append(current_code)
 
     # If no markers found, treat entire content as single block/code
@@ -174,7 +183,7 @@ def _parse_sql_blocks(content: str) -> list[dict[str, Any]]:
         blocks = [
             {
                 "name": "Block 1",
-                "codes": [{"name": "Code 1", "script": content.strip().split("\n")}],
+                "codes": [{"name": "Code 1", "script": _strip_trailing_empty(content.split("\n"))}],
             }
         ]
 
@@ -252,7 +261,7 @@ def _parse_python_blocks(content: str) -> list[dict[str, Any]]:
 
         if stripped.startswith("# ===== BLOCK:") and stripped.endswith("====="):
             if current_code is not None and current_block is not None:
-                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
+                current_code["script"] = _strip_trailing_empty(current_script_lines)
                 current_block.setdefault("codes", []).append(current_code)
                 current_code = None
                 current_script_lines = []
@@ -264,7 +273,7 @@ def _parse_python_blocks(content: str) -> list[dict[str, Any]]:
 
         if stripped.startswith("# ===== CODE:") and stripped.endswith("====="):
             if current_code is not None and current_block is not None:
-                current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
+                current_code["script"] = _strip_trailing_empty(current_script_lines)
                 current_block.setdefault("codes", []).append(current_code)
                 current_script_lines = []
 
@@ -276,14 +285,14 @@ def _parse_python_blocks(content: str) -> list[dict[str, Any]]:
             current_script_lines.append(line)
 
     if current_code is not None and current_block is not None:
-        current_code["script"] = "\n".join(current_script_lines).strip().split("\n")
+        current_code["script"] = _strip_trailing_empty(current_script_lines)
         current_block.setdefault("codes", []).append(current_code)
 
     if not blocks and content.strip():
         blocks = [
             {
                 "name": "Block 1",
-                "codes": [{"name": "Code 1", "script": content.strip().split("\n")}],
+                "codes": [{"name": "Code 1", "script": _strip_trailing_empty(content.split("\n"))}],
             }
         ]
 

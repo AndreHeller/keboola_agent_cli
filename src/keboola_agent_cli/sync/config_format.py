@@ -40,6 +40,11 @@ def _normalize_scripts(parameters: Any) -> Any:
                         normalized.extend(s.split("\n"))
                     else:
                         normalized.append(s)
+                # Strip trailing whitespace per line (YAML roundtrip
+                # strips it) and remove trailing empty lines.
+                normalized = [line.rstrip() for line in normalized]
+                while normalized and normalized[-1] == "":
+                    normalized.pop()
                 code["script"] = normalized
     return params
 

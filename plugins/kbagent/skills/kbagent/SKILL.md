@@ -5,10 +5,13 @@ description: >
   Covers: exploring and searching configurations (extractors, writers, transformations),
   browsing job history, analyzing cross-project data lineage, calling MCP tools
   across multiple projects, managing development branches, debugging SQL in
-  temporary workspaces, bulk-onboarding organizations, and generating explorer
-  dashboards. Triggers: kbagent, Keboola project, keboola configs, keboola jobs,
-  keboola lineage, keboola transformations, keboola MCP tools, keboola workspace,
-  SQL debugging, keboola branches, keboola organization, keboola explorer,
+  temporary workspaces, bulk-onboarding organizations, syncing project configs
+  as local files (GitOps), git-branching with Keboola dev branch isolation,
+  and generating explorer dashboards. Triggers: kbagent, Keboola project,
+  keboola configs, keboola jobs, keboola lineage, keboola transformations,
+  keboola MCP tools, keboola workspace, SQL debugging, keboola branches,
+  keboola organization, keboola explorer, keboola sync, keboola git,
+  keboola gitops, sync pull, sync push, sync diff, branch-link,
   search configs, find in configurations, audit configurations.
 ---
 
@@ -77,9 +80,14 @@ This prints all commands, flags, workflows, and tips. Read it fully before proce
 | Link the current git branch to a Keboola development branch | `kbagent sync branch-link --project PROJECT` |
 | Remove the branch mapping for the current git branch | `kbagent sync branch-unlink` |
 | Show the branch mapping status for the current git branch | `kbagent sync branch-status` |
+| Initialize sync working directory for GitOps workflow | `kbagent sync init --project PROJECT [--git-branching]` |
+| Download configs from Keboola to local files (idempotent) | `kbagent sync pull --project PROJECT [--dry-run]` |
+| Show local changes since last pull | `kbagent sync status` |
+| 3-way diff local vs remote (shows conflicts, remote changes) | `kbagent sync diff --project PROJECT` |
+| Push local changes to Keboola (creates, updates, deletes) | `kbagent sync push --project PROJECT [--dry-run]` |
+| Link git branch to Keboola dev branch (auto-creates) | `kbagent sync branch-link --project PROJECT` |
+| Show git branch mapping status | `kbagent sync branch-status` |
 | Export project to Twin Format for AI consumption | `kbagent llm export` |
-| [deprecated] KBC Explorer dashboard -- use 'sync pull' instead | `kbagent explorer` |
-| Generate a tiers.yaml template from registered projects | `kbagent explorer init-tiers` |
 <!-- END AUTO-GENERATED COMMANDS -->
 
 ## Response format
@@ -99,6 +107,10 @@ All JSON responses follow one of two shapes:
 Check the `retryable` field -- if `true`, retry the operation.
 
 For detailed response parsing rules and common pitfalls, see [gotchas](references/gotchas.md).
+
+## Sync & Git-branching workflow
+
+For the full GitOps workflow (sync init, pull, edit, diff, push, git-branching with Keboola dev branch isolation), see [sync-workflow](references/sync-workflow.md).
 
 ## First-time setup
 

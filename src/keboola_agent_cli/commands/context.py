@@ -20,7 +20,9 @@ kbagent is an AI-friendly CLI for managing Keboola projects. It allows you to:
 - Browse job history (running, succeeded, failed jobs)
 - Check connectivity and health of project connections
 - Analyze cross-project data lineage via bucket sharing
-- Generate a visual explorer dashboard with catalog, orchestrations, and lineage
+- Sync project configurations as local files (GitOps workflow)
+- Git-branching mode: map git branches to Keboola dev branches for safe parallel development
+- 3-way diff (local vs base vs remote) with conflict detection
 - Get structured JSON output suitable for programmatic consumption
 
 ## Quick Start
@@ -400,13 +402,17 @@ Then explore:
       kbagent --json sync init --project prod
       kbagent --json sync init --project prod --git-branching
 
-  kbagent sync pull --project ALIAS [--directory DIR] [--force]
-    Download all configurations from Keboola to local files.
-    Creates a dev-friendly directory structure with _config.yml files.
-    SQL transformations are extracted into transform.sql with block markers.
-    Python code is extracted into transform.py/code.py + pyproject.toml.
+  kbagent sync pull --project ALIAS [--directory DIR] [--force] [--dry-run]
+    Download configurations from Keboola to local files.
+    Idempotent: only writes files that actually changed on the remote side.
+    Protects locally modified files (skips overwrite unless --force).
+    Reports "Already up to date" when nothing changed.
+    --dry-run shows what would be pulled without writing files.
+    File format: _config.yml (YAML), transform.sql (SQL with block markers),
+    transform.py/code.py (Python), pyproject.toml (dependencies).
     Example:
       kbagent --json sync pull --project prod
+      kbagent --json sync pull --project prod --dry-run
 
   kbagent sync status [--directory DIR]
     Show which local configs have been modified, added, or deleted since last pull.
@@ -415,15 +421,25 @@ Then explore:
       kbagent --json sync status
 
   kbagent sync diff --project ALIAS [--directory DIR]
-    Show detailed diff between local files and remote Keboola state.
-    Compares config content (ignoring encrypted value nonces).
+    3-way diff between local files, pull-time snapshot, and remote Keboola state.
+    Change types:
+      - MODIFIED: local changed, remote unchanged (safe to push)
+      - REMOTE MODIFIED: remote changed, local unchanged (run pull)
+      - CONFLICT: both sides changed since last pull
+      - ADDED: new local config not yet in remote
+      - DELETED: local file removed
+    Also detects remote-only configs (new on server, not yet pulled).
+    Encrypted values are normalized so nonce changes don't cause false diffs.
     Example:
       kbagent --json sync diff --project prod
 
   kbagent sync push --project ALIAS [--directory DIR] [--dry-run] [--force]
     Push local changes to Keboola. Creates new configs, updates modified,
-    deletes removed (with --force). New configs get IDs from API automatically.
+    deletes removed. New configs get IDs from API automatically.
+    Only pushes local-side changes (modified, added, deleted).
+    Skips remote_modified and conflict -- run pull first to resolve.
     --dry-run shows what would change without applying.
+    After push, manifest is updated so subsequent pull sees "Already up to date".
     Example:
       kbagent --json sync push --project prod --dry-run
       kbagent --json sync push --project prod
@@ -432,6 +448,8 @@ Then explore:
     Link current git branch to a Keboola development branch.
     Auto-creates the Keboola branch if it doesn't exist with the same name.
     Requires --git-branching mode enabled via sync init.
+    After linking, all sync commands (pull/push/diff) automatically target
+    the linked Keboola branch -- no manual branch switching needed.
     Example:
       git checkout -b feature/new-etl
       kbagent --json sync branch-link --project prod
@@ -442,6 +460,11 @@ Then explore:
 
   kbagent sync branch-status [--directory DIR]
     Show the current git branch mapping status.
+
+  Git-branching enforcement:
+    When git-branching is enabled, sync commands are BLOCKED on unlinked
+    git branches. This prevents accidental pushes to production from
+    feature branches. Link first with 'sync branch-link'.
 
 ### Utility Commands
 
@@ -634,14 +657,41 @@ Then explore:
      kbagent --json sync push --project prod --dry-run  # preview
      kbagent --json sync push --project prod         # apply
 
-     # Git-branching mode (maps git branches to Keboola dev branches):
-     kbagent --json sync init --project prod --git-branching
-     git checkout -b feature/new-etl
-     kbagent --json sync branch-link --project prod  # creates Keboola dev branch
-     kbagent --json sync pull --project prod
-     # ... edit, push, then merge via PR + Keboola UI
+     # Pull is idempotent: re-running pull when nothing changed reports
+     # "Already up to date" and writes zero files. Locally modified files
+     # are protected (skipped unless --force).
 
-18. Claude Code plugin -- teach Claude how to use kbagent automatically:
+18. Git-branching workflow -- safe parallel development:
+     # Initialize with git-branching mode
+     git init && kbagent --json sync init --project prod --git-branching
+     kbagent --json sync pull --project prod
+     git add -A && git commit -m "initial sync"
+
+     # Create feature branch and link to Keboola dev branch
+     git checkout -b feature/new-etl
+     kbagent --json sync branch-link --project prod
+     # -> Creates Keboola dev branch, saves mapping
+
+     # All sync commands now auto-target the dev branch
+     kbagent --json sync diff --project prod    # compares vs dev branch
+     kbagent --json sync push --project prod    # pushes to dev branch ONLY
+     # Production is NEVER touched from feature branches
+
+     # Diff shows change direction:
+     #   MODIFIED = local changed (safe to push)
+     #   REMOTE MODIFIED = remote changed (run pull)
+     #   CONFLICT = both sides changed (resolve manually)
+
+     # Merge back to production:
+     # 1. Merge in Keboola UI (kbagent branch merge --project prod)
+     # 2. git checkout main && git merge feature/new-etl
+     # 3. kbagent sync pull --project prod   (syncs merged state)
+
+     # Unlinked branches are blocked from sync operations
+     git checkout -b feature/random
+     kbagent sync push --project prod  # ERROR: "not linked"
+
+19. Claude Code plugin -- teach Claude how to use kbagent automatically:
      Install the kbagent skill as a Claude Code plugin:
        claude install-plugin https://github.com/padak/keboola_agent_cli
      After installation, Claude Code will automatically know when and how

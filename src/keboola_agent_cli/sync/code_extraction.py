@@ -104,7 +104,10 @@ def _extract_sql_transformation(config_data: dict[str, Any], config_dir: Path) -
 
             scripts = code.get("script") or []
             for script in scripts:
-                lines.append(script)
+                if isinstance(script, str) and "\n" in script:
+                    lines.extend(script.split("\n"))
+                else:
+                    lines.append(script)
             lines.append("")
 
     sql_content = "\n".join(lines).rstrip() + "\n"
@@ -211,7 +214,10 @@ def _extract_python_transformation(config_data: dict[str, Any], config_dir: Path
 
                 scripts = code.get("script") or []
                 for script in scripts:
-                    lines.append(script)
+                    if isinstance(script, str) and "\n" in script:
+                        lines.extend(script.split("\n"))
+                    else:
+                        lines.append(script)
                 lines.append("")
 
         py_content = "\n".join(lines).rstrip() + "\n"

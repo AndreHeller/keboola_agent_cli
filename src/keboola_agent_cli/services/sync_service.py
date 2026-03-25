@@ -267,12 +267,11 @@ class SyncService(BaseService):
                 # Convert API format to local _config.yml
                 local_data = api_config_to_local(component_id, cfg, config_id)
 
-                # Two hashes are needed:
-                # 1. api_cfg_hash: hash of API data (for remote_unchanged check)
-                # 2. pull_cfg_hash: hash after file roundtrip (stored in manifest
-                #    to match what diff computes from on-disk files)
+                # Hash of API-converted data.  Stored as pull_config_hash so
+                # diff can compare it directly with fresh remote data without
+                # a lossy file roundtrip.
                 api_cfg_hash = config_hash(local_data)
-                pull_cfg_hash = api_cfg_hash  # overwritten after file write
+                pull_cfg_hash = api_cfg_hash
 
                 # Detect local modifications: if file hash differs from
                 # pull_hash stored in manifest, the user edited the file.
@@ -329,15 +328,6 @@ class SyncService(BaseService):
                         if not dry_run:
                             extract_code_files(component_id, local_data, config_dir)
                             file_hash = self._write_config_file(config_dir, local_data)
-
-                            # Compute pull_config_hash by reading files back
-                            # through the same path diff uses (YAML roundtrip
-                            # + merge_code_files).  This ensures the stored
-                            # hash exactly matches what diff will compute.
-                            roundtrip_data = self._read_config_file(config_dir)
-                            if roundtrip_data is not None:
-                                merge_code_files(component_id, roundtrip_data, config_dir)
-                                pull_cfg_hash = config_hash(roundtrip_data)
                         else:
                             file_hash = ""
 
@@ -552,21 +542,39 @@ class SyncService(BaseService):
                 # Convert remote to local format for apples-to-apples comparison
                 remote_configs[key] = api_config_to_local(component_id, cfg, config_id)
 
-        # Build local configs list from manifest
-        # Merge code files (transform.sql, code.py, etc.) back into config
-        # data so comparison with remote is apples-to-apples.
-        # Also track which configs have unchanged files (for 3-way fallback).
+        # Build local configs list from manifest.
+        # For files unchanged since pull, use the stored pull_config_hash
+        # directly (avoids lossy code extraction roundtrip).
+        # For locally modified files, merge code back for real comparison.
         local_configs: list[dict[str, Any]] = []
-        file_unchanged: dict[str, bool] = {}  # key -> True if file matches pull_hash
+        file_unchanged: dict[str, bool] = {}
+        local_override_hashes: dict[str, str] = {}  # key -> hash to use instead of computing
         for cfg in manifest.configurations:
             branch_path = self._find_branch_path(manifest, cfg.branch_id)
             config_dir = project_root / branch_path / cfg.path
             local_data = self._read_config_file(config_dir)
             if local_data is None:
                 continue
-            merge_code_files(cfg.component_id, local_data, config_dir)
 
             key = f"{cfg.component_id}/{cfg.id}"
+
+            # Check if file was modified locally
+            pull_hash = cfg.metadata.get("pull_hash", "")
+            config_file = config_dir / CONFIG_FILENAME
+            current_file_hash = self._file_hash(config_file) if config_file.exists() else ""
+            is_file_unchanged = bool(pull_hash and current_file_hash == pull_hash)
+            file_unchanged[key] = is_file_unchanged
+
+            if is_file_unchanged:
+                # File not touched -- use stored hash directly.
+                # Skip expensive merge_code_files roundtrip.
+                stored_cfg_hash = cfg.metadata.get("pull_config_hash", "")
+                if stored_cfg_hash:
+                    local_override_hashes[key] = stored_cfg_hash
+            else:
+                # File was modified -- must merge code for real comparison
+                merge_code_files(cfg.component_id, local_data, config_dir)
+
             local_configs.append(
                 {
                     "component_id": cfg.component_id,
@@ -576,13 +584,6 @@ class SyncService(BaseService):
                     "data": local_data,
                 }
             )
-
-            # Track whether the file was changed locally (for fallback 3-way)
-            pull_hash = cfg.metadata.get("pull_hash", "")
-            if pull_hash:
-                config_file = config_dir / CONFIG_FILENAME
-                current_hash = self._file_hash(config_file) if config_file.exists() else ""
-                file_unchanged[key] = current_hash == pull_hash
 
         # Also add untracked local configs (new files)
         for added_cfg in self._find_untracked_configs(project_root, manifest):
@@ -624,7 +625,11 @@ class SyncService(BaseService):
                         break
 
         changeset = compute_changeset(
-            local_configs, remote_configs, tracked_keys, base_hashes or None
+            local_configs,
+            remote_configs,
+            tracked_keys,
+            base_hashes or None,
+            local_override_hashes or None,
         )
 
         added = [c for c in changeset if c.change_type == "added"]

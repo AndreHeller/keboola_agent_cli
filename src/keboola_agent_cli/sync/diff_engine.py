@@ -283,6 +283,7 @@ def compute_changeset(
     remote_configs: dict[str, dict[str, Any]],
     tracked_keys: set[str] | None = None,
     base_hashes: dict[str, str] | None = None,
+    local_override_hashes: dict[str, str] | None = None,
 ) -> list[ConfigChange]:
     """3-way diff: compare local vs base (pull_hash) vs remote.
 
@@ -303,6 +304,10 @@ def compute_changeset(
 
             When ``None``, falls back to 2-way diff (any difference →
             ``"modified"``).
+        local_override_hashes: Optional dict of ``"{component_id}/{config_id}"``
+            -> hash to use for local side instead of computing from data.
+            Used when local files haven't changed since pull to avoid lossy
+            code-merge roundtrip.
 
     Returns:
         List of :class:`ConfigChange` objects.
@@ -339,7 +344,9 @@ def compute_changeset(
         seen_remote_keys.add(remote_key)
         remote_data: dict[str, Any] = remote_configs[remote_key]
 
-        local_h = config_hash(local_data)
+        # Use override hash if available (avoids lossy code roundtrip)
+        override_h = (local_override_hashes or {}).get(remote_key)
+        local_h = override_h if override_h else config_hash(local_data)
         remote_h = config_hash(remote_data)
 
         if local_h == remote_h:

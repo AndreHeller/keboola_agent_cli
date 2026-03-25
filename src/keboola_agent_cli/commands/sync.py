@@ -230,17 +230,17 @@ def _diff_one_liner(result: dict) -> str:
         return "[green]in sync[/green]"
     parts = []
     if add:
-        parts.append(f"[green]+{add}[/green]")
+        parts.append(f"[green]{add} to create[/green]")
     if mod:
-        parts.append(f"[yellow]~{mod}[/yellow]")
+        parts.append(f"[yellow]{mod} to push[/yellow]")
     if dlt:
-        parts.append(f"[red]-{dlt}[/red]")
+        parts.append(f"[red]{dlt} to delete[/red]")
     if rmod:
-        parts.append(f"[cyan]~{rmod} remote[/cyan]")
+        parts.append(f"[cyan]{rmod} to pull[/cyan]")
     if conf:
-        parts.append(f"[red]!{conf} conflict[/red]")
+        parts.append(f"[red]{conf} conflicts[/red]")
     if ro:
-        parts.append(f"[cyan]+{ro} remote-only[/cyan]")
+        parts.append(f"[cyan]{ro} new remote[/cyan]")
     return ", ".join(parts)
 
 

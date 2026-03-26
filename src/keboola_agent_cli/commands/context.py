@@ -116,7 +116,12 @@ Use `kbagent <command> --help` for full flag details and examples.
 ### Organization Management
 
   kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
-    Bulk-onboard all org projects. Manage token via KBC_MANAGE_API_TOKEN env var. Idempotent.
+    Bulk-onboard all org projects. Requires org-admin manage token. Idempotent.
+
+  kbagent org setup --project-ids 901,9621,10539 --url URL [--dry-run] [--yes]
+    Non-admin mode: onboard specific projects by ID. Works with Personal Access Token (PAT).
+    Use --org-id OR --project-ids (at least one required).
+    Token via KBC_MANAGE_API_TOKEN env var or interactive prompt.
 
 ### Development Branches
 

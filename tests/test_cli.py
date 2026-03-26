@@ -3951,20 +3951,85 @@ class TestOrgSetupBasic:
         assert output["status"] == "error"
         assert output["error"]["code"] == "INVALID_TOKEN"
 
-    def test_missing_org_id_exit_2(self) -> None:
-        """org setup without --org-id exits with code 2."""
-        result = runner.invoke(
-            app,
-            [
-                "--json",
-                "org",
-                "setup",
-                "--url",
-                "https://connection.keboola.com",
-            ],
-        )
+    def test_missing_org_id_and_project_ids_exit_2(self) -> None:
+        """org setup without --org-id and --project-ids exits with code 2."""
+        with patch(
+            "keboola_agent_cli.commands.org._resolve_manage_token",
+            return_value="manage-token-123456789012345678",
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "org",
+                    "setup",
+                    "--url",
+                    "https://connection.keboola.com",
+                    "--yes",
+                ],
+            )
 
-        assert result.exit_code == 2
+        assert result.exit_code == 2, f"Exit code {result.exit_code}: {result.output}"
+
+    def test_project_ids_json_output(self, tmp_path: Path) -> None:
+        """org setup --project-ids with --json outputs structured success."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        result_data = {
+            "organization_id": 438,
+            "stack_url": "https://connection.keboola.com",
+            "projects_found": 2,
+            "projects_added": [
+                {
+                    "project_id": 901,
+                    "project_name": "Padak",
+                    "alias": "padak",
+                    "action": "would_add",
+                },
+                {
+                    "project_id": 9621,
+                    "project_name": "Padak - BQ/GCS",
+                    "alias": "padak-bq-gcs",
+                    "action": "would_add",
+                },
+            ],
+            "projects_skipped": [],
+            "projects_failed": [],
+            "dry_run": True,
+        }
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.org._resolve_manage_token",
+                return_value="pat-token-123456789012345678901",
+            ),
+        ):
+            MockStore.return_value = store
+            MockOrgService.return_value = self._make_org_service_mock(result_data)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "org",
+                    "setup",
+                    "--project-ids",
+                    "901,9621",
+                    "--url",
+                    "https://connection.keboola.com",
+                    "--dry-run",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["projects_found"] == 2
+        assert output["data"]["organization_id"] == 438
 
 
 class TestVerboseFlag:

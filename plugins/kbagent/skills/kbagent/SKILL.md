@@ -43,7 +43,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Remove a Keboola project connection | `kbagent project remove --project ALIAS` |
 | Edit an existing Keboola project connection | `kbagent project edit --project ALIAS` |
 | Test connectivity to connected Keboola projects | `kbagent project status` |
-| Set up all projects from a Keboola organization | `kbagent org setup --org-id ORG-ID --url URL` |
+| Set up projects and register them in the kbagent config | `kbagent org setup --url URL` |
 | List available components from connected projects | `kbagent component list` |
 | Show detailed information about a specific component | `kbagent component detail --component-id COMPONENT-ID` |
 | List configurations from connected projects | `kbagent config list` |
@@ -142,6 +142,9 @@ Then add projects:
 # Single project
 kbagent --json project add --project prod --url https://connection.keboola.com --token YOUR_TOKEN
 
-# Or bulk-onboard from organization
+# Or bulk-onboard from organization (org admin)
 KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
+
+# Or onboard specific projects (any project member, uses Personal Access Token)
+KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --project-ids 901,9621,10539 --url https://connection.keboola.com --yes
 ```

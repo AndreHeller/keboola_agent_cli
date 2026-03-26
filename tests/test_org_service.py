@@ -493,6 +493,174 @@ class TestExistingProjectIdNone:
         assert len(result["projects_skipped"]) == 0
 
 
+class TestSetupWithProjectIds:
+    """Tests for OrgService.setup_organization() with explicit project_ids (non-admin mode)."""
+
+    def test_dry_run_with_project_ids(self, tmp_path: Path) -> None:
+        """Dry run fetches each project individually and returns preview."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        manage_mock = MagicMock()
+        manage_mock.get_project.side_effect = [
+            {"id": 901, "name": "Padak", "organization": {"id": 438}},
+            {"id": 9621, "name": "Padak - BQ/GCS", "organization": {"id": 438}},
+        ]
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=lambda url, token: manage_mock,
+            storage_client_factory=_make_storage_client(),
+        )
+
+        result = service.setup_organization(
+            stack_url="https://connection.keboola.com",
+            manage_token="pat-token-123456789012345678901",
+            project_ids=[901, 9621],
+            dry_run=True,
+        )
+
+        assert result["dry_run"] is True
+        assert result["projects_found"] == 2
+        assert result["organization_id"] == 438
+        assert len(result["projects_added"]) == 2
+        assert result["projects_added"][0]["alias"] == "padak"
+        assert result["projects_added"][1]["alias"] == "padak-bq-gcs"
+
+        # get_project called for each ID, NOT list_organization_projects
+        assert manage_mock.get_project.call_count == 2
+        manage_mock.list_organization_projects.assert_not_called()
+
+    def test_add_projects_by_ids(self, tmp_path: Path) -> None:
+        """Successfully adds projects using explicit project IDs."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        manage_mock = MagicMock()
+        manage_mock.get_project.return_value = {
+            "id": 901,
+            "name": "Padak",
+            "organization": {"id": 438},
+        }
+        manage_mock.create_project_token.return_value = {
+            "id": "tok-1",
+            "token": "901-99999-generatedToken1234567890ab",
+            "description": "kbagent-cli",
+        }
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=lambda url, token: manage_mock,
+            storage_client_factory=_make_storage_client(project_name="Padak", project_id=901),
+        )
+
+        result = service.setup_organization(
+            stack_url="https://connection.keboola.com",
+            manage_token="pat-token-123456789012345678901",
+            project_ids=[901],
+        )
+
+        assert len(result["projects_added"]) == 1
+        assert result["projects_added"][0]["action"] == "added"
+        assert result["projects_added"][0]["alias"] == "padak"
+        assert result["organization_id"] == 438
+
+        config = store.load()
+        assert "padak" in config.projects
+
+    def test_inaccessible_project_in_fetch(self, tmp_path: Path) -> None:
+        """Projects the user can't access are reported as failed."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        manage_mock = MagicMock()
+        manage_mock.get_project.side_effect = [
+            {"id": 901, "name": "Padak", "organization": {"id": 438}},
+            KeboolaApiError(
+                message="Access denied to project 999",
+                status_code=403,
+                error_code="ACCESS_DENIED",
+            ),
+        ]
+        manage_mock.create_project_token.return_value = {
+            "id": "tok-1",
+            "token": "901-99999-generatedToken1234567890ab",
+            "description": "kbagent-cli",
+        }
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=lambda url, token: manage_mock,
+            storage_client_factory=_make_storage_client(project_name="Padak", project_id=901),
+        )
+
+        result = service.setup_organization(
+            stack_url="https://connection.keboola.com",
+            manage_token="pat-token-123456789012345678901",
+            project_ids=[901, 999],
+        )
+
+        assert len(result["projects_added"]) == 1
+        assert len(result["projects_failed"]) == 1
+        assert result["projects_failed"][0]["project_id"] == 999
+        assert "Access denied" in result["projects_failed"][0]["error"]
+
+    def test_no_org_id_no_project_ids_raises(self, tmp_path: Path) -> None:
+        """Raises ValueError when neither org_id nor project_ids is provided."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=_make_manage_client([]),
+            storage_client_factory=_make_storage_client(),
+        )
+
+        import pytest as pt
+
+        with pt.raises(ValueError, match="Either org_id or project_ids"):
+            service.setup_organization(
+                stack_url="https://connection.keboola.com",
+                manage_token="pat-token-123456789012345678901",
+            )
+
+    def test_org_id_derived_from_first_project(self, tmp_path: Path) -> None:
+        """When no org_id given, it is derived from the first fetched project."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        manage_mock = MagicMock()
+        manage_mock.get_project.return_value = {
+            "id": 901,
+            "name": "Padak",
+            "organization": {"id": 438},
+        }
+        manage_mock.create_project_token.return_value = {
+            "id": "tok-1",
+            "token": "901-99999-generatedToken1234567890ab",
+            "description": "kbagent-cli",
+        }
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=lambda url, token: manage_mock,
+            storage_client_factory=_make_storage_client(project_name="Padak", project_id=901),
+        )
+
+        result = service.setup_organization(
+            stack_url="https://connection.keboola.com",
+            manage_token="pat-token-123456789012345678901",
+            project_ids=[901],
+        )
+
+        assert result["organization_id"] == 438
+
+
 class TestUniqueAlias:
     """Tests for OrgService._unique_alias() static method."""
 

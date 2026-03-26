@@ -48,9 +48,20 @@ def _resolve_manage_token() -> str:
     raise typer.Exit(code=2)
 
 
+def _parse_project_ids(value: str | None) -> list[int] | None:
+    """Parse comma-separated project IDs string into a list of ints."""
+    if not value:
+        return None
+    try:
+        return [int(pid.strip()) for pid in value.split(",") if pid.strip()]
+    except ValueError as exc:
+        msg = f"Invalid project ID (must be integers): {exc}"
+        raise typer.BadParameter(msg) from exc
+
+
 def _format_setup_result(console: Console, data: dict) -> None:
     """Render org setup results as Rich tables with summary."""
-    org_id = data.get("organization_id", "")
+    org_id = data.get("organization_id")
     stack_url = data.get("stack_url", "")
     dry_run = data.get("dry_run", False)
     projects_found = data.get("projects_found", 0)
@@ -63,9 +74,9 @@ def _format_setup_result(console: Console, data: dict) -> None:
     expiry_label = (
         f", token expiration: [bold]{token_expires_in}s[/bold]" if token_expires_in else ""
     )
+    org_label = f"Organization [bold]{org_id}[/bold] on " if org_id else ""
     console.print(
-        f"\n{mode_label}Organization [bold]{org_id}[/bold] on {stack_url} "
-        f"-- {projects_found} project(s) found{expiry_label}\n"
+        f"\n{mode_label}{org_label}{stack_url} -- {projects_found} project(s) found{expiry_label}\n"
     )
 
     # Added / would-add table
@@ -131,7 +142,16 @@ def _format_setup_result(console: Console, data: dict) -> None:
 @org_app.command("setup")
 def org_setup(
     ctx: typer.Context,
-    org_id: int = typer.Option(..., "--org-id", help="Organization ID"),
+    org_id: int | None = typer.Option(
+        None,
+        "--org-id",
+        help="Organization ID (requires org-admin manage token)",
+    ),
+    project_ids_raw: str | None = typer.Option(
+        None,
+        "--project-ids",
+        help="Comma-separated project IDs (works with Personal Access Token)",
+    ),
     url: str = typer.Option(
         ...,
         "--url",
@@ -161,40 +181,55 @@ def org_setup(
         help="Token lifetime in seconds (e.g. 3600 for 1 hour). If not set, tokens never expire.",
     ),
 ) -> None:
-    """Set up all projects from a Keboola organization.
+    """Set up projects and register them in the kbagent config.
 
-    Lists all projects in the org, creates Storage API tokens, and registers
-    them in the kbagent config. Safe to re-run -- already registered projects
-    are skipped.
+    Two modes:
 
-    The manage token is read from KBC_MANAGE_API_TOKEN env var or prompted
+    \b
+    1. Org admin:    --org-id 123          (lists all projects in the org)
+    2. Project member: --project-ids 1,2,3 (fetches specific projects)
+
+    Creates Storage API tokens and registers projects. Safe to re-run --
+    already registered projects are skipped.
+
+    The token is read from KBC_MANAGE_API_TOKEN env var or prompted
     interactively (never passed as a CLI argument for security).
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "org_service")
 
+    # Validate: need at least one of --org-id or --project-ids
+    project_ids = _parse_project_ids(project_ids_raw)
+    if not org_id and not project_ids:
+        formatter.error(
+            message="Provide --org-id (org admin) or --project-ids (project member)",
+            error_code="usage_error",
+        )
+        raise typer.Exit(code=2)
+
     manage_token = _resolve_manage_token()
+
+    # Build kwargs shared by preview and real call
+    setup_kwargs: dict = {
+        "stack_url": url,
+        "manage_token": manage_token,
+        "org_id": org_id,
+        "token_description": token_description,
+        "token_expires_in": token_expires_in,
+        "project_ids": project_ids,
+    }
 
     # Interactive safety: show preview first, then confirm
     interactive = not formatter.json_mode and not yes and not dry_run
     if interactive:
-        # Do a dry-run preview first
         try:
-            preview = service.setup_organization(
-                stack_url=url,
-                manage_token=manage_token,
-                org_id=org_id,
-                token_description=token_description,
-                dry_run=True,
-                token_expires_in=token_expires_in,
-            )
+            preview = service.setup_organization(**setup_kwargs, dry_run=True)
         except KeboolaApiError as exc:
             _handle_api_error(formatter, exc)
             return
 
         _format_setup_result(formatter.console, preview)
 
-        # Count projects that would be added
         would_add = len(preview.get("projects_added", []))
         if would_add == 0:
             formatter.console.print("\nNo new projects to add.")
@@ -206,14 +241,7 @@ def org_setup(
 
     # Execute the actual setup
     try:
-        result = service.setup_organization(
-            stack_url=url,
-            manage_token=manage_token,
-            org_id=org_id,
-            token_description=token_description,
-            dry_run=dry_run,
-            token_expires_in=token_expires_in,
-        )
+        result = service.setup_organization(**setup_kwargs, dry_run=dry_run)
     except KeboolaApiError as exc:
         _handle_api_error(formatter, exc)
         return

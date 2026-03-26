@@ -218,6 +218,7 @@ kbagent job detail --project NAME --job-id ID
 kbagent lineage show [--project NAME]   # also works as just: kbagent lineage
 
 kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
+kbagent org setup --project-ids 1,2,3 --url URL [--dry-run] [--yes] [--token-description PREFIX]
 
 kbagent tool list [--project NAME] [--branch ID]
 kbagent tool call TOOL_NAME [--project NAME] [--input JSON] [--branch ID]

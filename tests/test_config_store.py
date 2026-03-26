@@ -602,6 +602,48 @@ class TestDirectoryPermissions:
         assert mode == 0o700, f"Expected 0o700, got {oct(mode)}"
 
 
+class TestGitignoreProtection:
+    """Tests for automatic .gitignore creation inside config directory."""
+
+    def test_gitignore_created_on_save(self, tmp_path: Path) -> None:
+        """Saving config creates .gitignore in the config directory."""
+        config_dir = tmp_path / "new_config"
+        store = ConfigStore(config_dir=config_dir)
+        store.save(AppConfig())
+
+        gitignore = config_dir / ".gitignore"
+        assert gitignore.exists()
+        content = gitignore.read_text(encoding="utf-8")
+        assert "*" in content
+
+    def test_gitignore_created_on_add_project(self, tmp_path: Path) -> None:
+        """Adding a project also creates .gitignore."""
+        config_dir = tmp_path / "proj_config"
+        store = ConfigStore(config_dir=config_dir)
+        store.add_project(
+            "test",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-abcdef-12345678",
+            ),
+        )
+
+        gitignore = config_dir / ".gitignore"
+        assert gitignore.exists()
+
+    def test_gitignore_not_overwritten(self, tmp_path: Path) -> None:
+        """Existing .gitignore is not overwritten."""
+        config_dir = tmp_path / "existing_config"
+        config_dir.mkdir(parents=True)
+        gitignore = config_dir / ".gitignore"
+        gitignore.write_text("custom content\n", encoding="utf-8")
+
+        store = ConfigStore(config_dir=config_dir)
+        store.save(AppConfig())
+
+        assert gitignore.read_text(encoding="utf-8") == "custom content\n"
+
+
 class TestConfigPath:
     """Tests for config_path property."""
 

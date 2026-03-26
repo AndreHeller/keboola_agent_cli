@@ -73,29 +73,50 @@ class OrgService:
         self,
         stack_url: str,
         manage_token: str,
-        org_id: int,
+        org_id: int | None = None,
         token_description: str = DEFAULT_TOKEN_DESCRIPTION,
         dry_run: bool = False,
         token_expires_in: int | None = None,
+        project_ids: list[int] | None = None,
     ) -> dict[str, Any]:
-        """Set up all projects from a Keboola organization.
+        """Set up projects and register them in the config store.
 
-        Lists all projects in the organization, creates Storage API tokens
-        for new ones, verifies them, and registers them in the config store.
+        Two modes of operation:
+        - **Org admin mode** (org_id): lists all projects in the organization
+          via Manage API. Requires an org-admin manage token.
+        - **Project member mode** (project_ids): fetches each project
+          individually. Works with a Personal Access Token (PAT) for any
+          project the user is a member of.
 
         Args:
             stack_url: Keboola stack URL.
-            manage_token: Manage API token.
-            org_id: Organization ID.
+            manage_token: Manage API token or Personal Access Token.
+            org_id: Organization ID (org admin mode).
             token_description: Description prefix for created tokens.
             dry_run: If True, only preview what would happen without making changes.
+            token_expires_in: Token lifetime in seconds. None means no expiration.
+            project_ids: Explicit project IDs (project member mode).
 
         Returns:
             Dict with setup results including added, skipped, and failed projects.
+
+        Raises:
+            ValueError: If neither org_id nor project_ids is provided.
         """
+        if not org_id and not project_ids:
+            msg = "Either org_id or project_ids must be provided"
+            raise ValueError(msg)
+
         manage_client = self._manage_client_factory(stack_url, manage_token)
         try:
-            projects = manage_client.list_organization_projects(org_id)
+            if project_ids:
+                projects, fetch_failed = self._fetch_projects_by_ids(manage_client, project_ids)
+                # Derive org_id from the first successfully fetched project
+                if not org_id and projects:
+                    org_id = projects[0].get("organization", {}).get("id")
+            else:
+                projects = manage_client.list_organization_projects(org_id)
+                fetch_failed = []
 
             # Resolve token owner identity for unique token naming
             owner_name = ""
@@ -119,7 +140,7 @@ class OrgService:
 
         added: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
-        failed: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = list(fetch_failed)
 
         for project in projects:
             project_id = project.get("id", 0)
@@ -203,6 +224,46 @@ class OrgService:
             "dry_run": dry_run,
             "token_expires_in": token_expires_in,
         }
+
+    @staticmethod
+    def _fetch_projects_by_ids(
+        manage_client: ManageClient,
+        project_ids: list[int],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Fetch project details for explicit project IDs.
+
+        Uses GET /manage/projects/{id} which works with Personal Access
+        Tokens for projects where the token owner is a member.
+
+        Returns:
+            Tuple of (projects, failed) where projects is a list of project
+            dicts and failed is a list of error dicts for inaccessible projects.
+        """
+        projects: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for pid in project_ids:
+            try:
+                project = manage_client.get_project(pid)
+                projects.append(project)
+            except KeboolaApiError as exc:
+                failed.append(
+                    {
+                        "project_id": pid,
+                        "project_name": f"project-{pid}",
+                        "alias": f"project-{pid}",
+                        "error": str(exc),
+                    }
+                )
+            except Exception as exc:
+                failed.append(
+                    {
+                        "project_id": pid,
+                        "project_name": f"project-{pid}",
+                        "alias": f"project-{pid}",
+                        "error": str(exc),
+                    }
+                )
+        return projects, failed
 
     def _setup_single_project(
         self,

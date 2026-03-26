@@ -216,6 +216,7 @@ class TestCreateProjectToken:
             can_read_all_file_uploads=False,
             can_read_all_project_events=False,
             can_manage_dev_branches=False,
+            can_manage_tokens=False,
         )
 
         request = httpx_mock.get_request()
@@ -227,6 +228,28 @@ class TestCreateProjectToken:
         assert body["canReadAllFileUploads"] is False
         assert body["canReadAllProjectEvents"] is False
         assert body["canManageDevBranches"] is False
+        assert body["canManageTokens"] is False
+        client.close()
+
+    def test_can_manage_tokens_default_true(self, httpx_mock) -> None:
+        """By default canManageTokens is True (needed for Scheduler/Orchestrator)."""
+        httpx_mock.add_response(
+            url=f"{STACK_URL}/manage/projects/100/tokens",
+            json=TOKEN_RESPONSE,
+            status_code=201,
+        )
+
+        client = ManageClient(stack_url=STACK_URL, manage_token=MANAGE_TOKEN)
+        client.create_project_token(
+            project_id=100,
+            description="kbagent-cli",
+        )
+
+        request = httpx_mock.get_request()
+        import json
+
+        body = json.loads(request.content)
+        assert body["canManageTokens"] is True
         client.close()
 
     def test_expires_in_included_in_payload(self, httpx_mock) -> None:
@@ -270,6 +293,57 @@ class TestCreateProjectToken:
 
         body = json.loads(request.content)
         assert "expiresIn" not in body
+        client.close()
+
+
+class TestGetProject:
+    """Tests for get_project()."""
+
+    def test_success(self, httpx_mock) -> None:
+        """Returns project dict for accessible project."""
+        httpx_mock.add_response(
+            url=f"{STACK_URL}/manage/projects/901",
+            json={"id": 901, "name": "Padak", "organization": {"id": 438}},
+            status_code=200,
+        )
+
+        client = ManageClient(stack_url=STACK_URL, manage_token=MANAGE_TOKEN)
+        result = client.get_project(901)
+
+        assert result["id"] == 901
+        assert result["name"] == "Padak"
+        assert result["organization"]["id"] == 438
+        client.close()
+
+    def test_403_not_member(self, httpx_mock) -> None:
+        """Raises KeboolaApiError when user is not a project member."""
+        httpx_mock.add_response(
+            url=f"{STACK_URL}/manage/projects/999",
+            json={"error": "Access denied to project 999"},
+            status_code=403,
+        )
+
+        client = ManageClient(stack_url=STACK_URL, manage_token=MANAGE_TOKEN)
+        with pytest.raises(KeboolaApiError) as exc_info:
+            client.get_project(999)
+
+        assert exc_info.value.error_code == "ACCESS_DENIED"
+        assert exc_info.value.status_code == 403
+        client.close()
+
+    def test_404_not_found(self, httpx_mock) -> None:
+        """Raises KeboolaApiError when project does not exist."""
+        httpx_mock.add_response(
+            url=f"{STACK_URL}/manage/projects/999999",
+            json={"error": "Project not found"},
+            status_code=404,
+        )
+
+        client = ManageClient(stack_url=STACK_URL, manage_token=MANAGE_TOKEN)
+        with pytest.raises(KeboolaApiError) as exc_info:
+            client.get_project(999999)
+
+        assert exc_info.value.error_code == "NOT_FOUND"
         client.close()
 
 

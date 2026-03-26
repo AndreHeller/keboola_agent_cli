@@ -58,6 +58,24 @@ class ManageClient(BaseHttpClient):
         response = self._do_request("GET", "/manage/tokens/verify")
         return response.json()
 
+    def get_project(self, project_id: int) -> dict[str, Any]:
+        """Get project details by ID.
+
+        Works with Personal Access Tokens (PAT) for projects where the
+        token owner is a member -- does NOT require organization admin.
+
+        Args:
+            project_id: The project ID.
+
+        Returns:
+            Project dict with at least 'id', 'name', and 'organization' fields.
+
+        Raises:
+            KeboolaApiError: On API errors (e.g. 403 if not a member).
+        """
+        response = self._do_request("GET", f"/manage/projects/{project_id}")
+        return response.json()
+
     def list_organization_projects(self, org_id: int) -> list[dict[str, Any]]:
         """List all projects in an organization.
 
@@ -81,6 +99,7 @@ class ManageClient(BaseHttpClient):
         can_read_all_file_uploads: bool = True,
         can_read_all_project_events: bool = True,
         can_manage_dev_branches: bool = True,
+        can_manage_tokens: bool = True,
         expires_in: int | None = None,
     ) -> dict[str, Any]:
         """Create a new Storage API token for a project.
@@ -92,6 +111,8 @@ class ManageClient(BaseHttpClient):
             can_read_all_file_uploads: Whether the token can read all file uploads.
             can_read_all_project_events: Whether the token can read all project events.
             can_manage_dev_branches: Whether the token can manage development branches.
+            can_manage_tokens: Whether the token can create/manage other tokens.
+                Required for Scheduler (Orchestrator) to create run tokens.
             expires_in: Token lifetime in seconds. None means the token never expires.
 
         Returns:
@@ -106,6 +127,7 @@ class ManageClient(BaseHttpClient):
             "canReadAllFileUploads": can_read_all_file_uploads,
             "canReadAllProjectEvents": can_read_all_project_events,
             "canManageDevBranches": can_manage_dev_branches,
+            "canManageTokens": can_manage_tokens,
         }
         if expires_in is not None:
             payload["expiresIn"] = expires_in

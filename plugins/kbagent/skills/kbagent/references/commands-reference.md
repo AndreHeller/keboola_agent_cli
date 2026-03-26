@@ -10,7 +10,8 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `project status [--project NAME]` -- test connectivity and response time
 
 ## Organization
-- `org setup --org-id ID --url URL [--dry-run] [--yes]` -- bulk-onboard all projects from an org (needs `KBC_MANAGE_API_TOKEN`)
+- `org setup --org-id ID --url URL [--dry-run] [--yes]` -- bulk-onboard all projects from an org (org admin, needs `KBC_MANAGE_API_TOKEN`)
+- `org setup --project-ids 1,2,3 --url URL [--dry-run] [--yes]` -- onboard specific projects by ID (any project member, works with Personal Access Token via `KBC_MANAGE_API_TOKEN`)
 
 ## Component Discovery
 - `component list [--project NAME] [--type TYPE] [--query "text"]` -- list/search components (AI-powered with `--query`)

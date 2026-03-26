@@ -24,7 +24,7 @@ structured JSON output for programmatic consumption.
 ## Quick Start
 
   # Add a single project
-  kbagent --json project add --alias my-project --url https://connection.keboola.com --token YOUR_TOKEN
+  kbagent --json project add --project my-project --url https://connection.keboola.com --token YOUR_TOKEN
 
   # Or bulk-onboard all projects from an organization
   KBC_MANAGE_API_TOKEN=xxx kbagent --json org setup --org-id 123 --url https://connection.keboola.com --yes
@@ -46,16 +46,16 @@ Use `kbagent <command> --help` for full flag details and examples.
 
 ### Project Management
 
-  kbagent project add --alias NAME --url URL --token TOKEN
+  kbagent project add --project NAME --url URL --token TOKEN
     Add a new project connection. Token verified against API.
 
   kbagent project list
     List all connected projects (tokens always masked).
 
-  kbagent project remove --alias NAME
+  kbagent project remove --project NAME
     Remove a project connection.
 
-  kbagent project edit --alias NAME [--url URL] [--token TOKEN]
+  kbagent project edit --project NAME [--url URL] [--token TOKEN]
     Edit project connection. Re-verifies token if changed.
 
   kbagent project status [--project NAME]

@@ -120,7 +120,7 @@ def _resolve_token(token: str | None) -> str:
 @project_app.command("add")
 def project_add(
     ctx: typer.Context,
-    alias: str = typer.Option(..., help="Human-friendly name for this project"),
+    alias: str = typer.Option(..., "--project", help="Human-friendly name for this project"),
     url: str = typer.Option(
         DEFAULT_STACK_URL,
         help="Keboola stack URL",
@@ -179,7 +179,7 @@ def project_list(ctx: typer.Context) -> None:
 @project_app.command("remove")
 def project_remove(
     ctx: typer.Context,
-    alias: str = typer.Option(..., help="Alias of the project to remove"),
+    alias: str = typer.Option(..., "--project", help="Alias of the project to remove"),
 ) -> None:
     """Remove a Keboola project connection."""
     formatter = get_formatter(ctx)
@@ -198,7 +198,7 @@ def project_remove(
 @project_app.command("edit")
 def project_edit(
     ctx: typer.Context,
-    alias: str = typer.Option(..., help="Alias of the project to edit"),
+    alias: str = typer.Option(..., "--project", help="Alias of the project to edit"),
     url: str | None = typer.Option(None, help="New Keboola stack URL"),
     token: str | None = typer.Option(
         None,

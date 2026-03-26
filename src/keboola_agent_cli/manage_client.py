@@ -79,6 +79,8 @@ class ManageClient(BaseHttpClient):
         description: str,
         can_manage_buckets: bool = True,
         can_read_all_file_uploads: bool = True,
+        can_read_all_project_events: bool = True,
+        can_manage_dev_branches: bool = True,
         expires_in: int | None = None,
     ) -> dict[str, Any]:
         """Create a new Storage API token for a project.
@@ -88,6 +90,8 @@ class ManageClient(BaseHttpClient):
             description: Token description.
             can_manage_buckets: Whether the token can manage buckets.
             can_read_all_file_uploads: Whether the token can read all file uploads.
+            can_read_all_project_events: Whether the token can read all project events.
+            can_manage_dev_branches: Whether the token can manage development branches.
             expires_in: Token lifetime in seconds. None means the token never expires.
 
         Returns:
@@ -100,6 +104,8 @@ class ManageClient(BaseHttpClient):
             "description": description,
             "canManageBuckets": can_manage_buckets,
             "canReadAllFileUploads": can_read_all_file_uploads,
+            "canReadAllProjectEvents": can_read_all_project_events,
+            "canManageDevBranches": can_manage_dev_branches,
         }
         if expires_in is not None:
             payload["expiresIn"] = expires_in

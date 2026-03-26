@@ -202,10 +202,10 @@ Note: `SKILL.md` instructs Claude to run `kbagent context` as its first step, wh
 ```
 # Global options: --json, --verbose, --no-color, --config-dir
 
-kbagent project add --alias NAME --url URL --token TOKEN
+kbagent project add --project NAME --url URL --token TOKEN
 kbagent project list
-kbagent project remove --alias NAME
-kbagent project edit --alias NAME [--url URL] [--token TOKEN]
+kbagent project remove --project NAME
+kbagent project edit --project NAME [--url URL] [--token TOKEN]
 kbagent project status [--project NAME]
 
 kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID]

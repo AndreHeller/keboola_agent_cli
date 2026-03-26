@@ -3,10 +3,10 @@
 All commands support `--json` for structured output. Multi-project flags (`--project`) can be repeated.
 
 ## Project Management
-- `project add --alias NAME --url URL --token TOKEN` -- connect a project (token verified via API)
+- `project add --project NAME --url URL --token TOKEN` -- connect a project (token verified via API)
 - `project list` -- list all connected projects (tokens masked)
-- `project remove --alias NAME` -- disconnect a project
-- `project edit --alias NAME [--url URL] [--token TOKEN]` -- update connection details
+- `project remove --project NAME` -- disconnect a project
+- `project edit --project NAME [--url URL] [--token TOKEN]` -- update connection details
 - `project status [--project NAME]` -- test connectivity and response time
 
 ## Organization

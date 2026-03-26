@@ -214,6 +214,8 @@ class TestCreateProjectToken:
             description="custom-desc",
             can_manage_buckets=False,
             can_read_all_file_uploads=False,
+            can_read_all_project_events=False,
+            can_manage_dev_branches=False,
         )
 
         request = httpx_mock.get_request()
@@ -223,8 +225,9 @@ class TestCreateProjectToken:
         assert body["description"] == "custom-desc"
         assert body["canManageBuckets"] is False
         assert body["canReadAllFileUploads"] is False
+        assert body["canReadAllProjectEvents"] is False
+        assert body["canManageDevBranches"] is False
         client.close()
-
 
     def test_expires_in_included_in_payload(self, httpx_mock) -> None:
         """When expires_in is set, expiresIn is sent in the request payload."""

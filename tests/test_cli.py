@@ -53,7 +53,7 @@ class TestProjectAdd:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "prod",
                     "--url",
                     "https://connection.keboola.com",
@@ -94,7 +94,7 @@ class TestProjectAdd:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                     "--url",
                     "https://connection.keboola.com",
@@ -138,7 +138,7 @@ class TestProjectAdd:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "bad",
                 ],
             )
@@ -181,7 +181,7 @@ class TestProjectAdd:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "timeout",
                 ],
             )
@@ -238,7 +238,7 @@ class TestProjectList:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                     "--url",
                     "https://connection.keboola.com",
@@ -280,7 +280,7 @@ class TestProjectList:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "prod",
                     "--url",
                     "https://connection.keboola.com",
@@ -340,7 +340,7 @@ class TestProjectRemove:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -351,7 +351,7 @@ class TestProjectRemove:
                     "--json",
                     "project",
                     "remove",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -380,7 +380,7 @@ class TestProjectRemove:
                     "--json",
                     "project",
                     "remove",
-                    "--alias",
+                    "--project",
                     "nonexistent",
                 ],
             )
@@ -419,7 +419,7 @@ class TestProjectStatus:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "prod",
                 ],
             )
@@ -459,7 +459,7 @@ class TestProjectStatus:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -498,7 +498,7 @@ class TestProjectEdit:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                     "--url",
                     "https://old.keboola.com",
@@ -511,7 +511,7 @@ class TestProjectEdit:
                     "--json",
                     "project",
                     "edit",
-                    "--alias",
+                    "--project",
                     "test",
                     "--url",
                     "https://new.keboola.com",
@@ -548,7 +548,7 @@ class TestProjectEdit:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -559,7 +559,7 @@ class TestProjectEdit:
                     "--json",
                     "project",
                     "edit",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -2304,7 +2304,7 @@ class TestExitCodes:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "bad",
                 ],
             )
@@ -2345,7 +2345,7 @@ class TestExitCodes:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "unreachable",
                 ],
             )
@@ -2373,7 +2373,7 @@ class TestExitCodes:
                     "--json",
                     "project",
                     "remove",
-                    "--alias",
+                    "--project",
                     "nonexistent",
                 ],
             )
@@ -2560,7 +2560,7 @@ class TestHelp:
         result = runner.invoke(app, ["project", "add", "--help"])
         assert result.exit_code == 0
         output = self._strip_ansi(result.output)
-        assert "--alias" in output
+        assert "--project" in output
         assert "--url" in output
         assert "--token" in output
 
@@ -2633,7 +2633,7 @@ class TestMissingRequiredArgs:
     """Tests for missing required arguments."""
 
     def test_project_add_missing_alias(self, tmp_path: Path) -> None:
-        """project add without --alias shows error."""
+        """project add without --project shows error."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
 
@@ -2675,7 +2675,7 @@ class TestMissingRequiredArgs:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -2683,7 +2683,7 @@ class TestMissingRequiredArgs:
         assert result.exit_code != 0
 
     def test_project_remove_missing_alias(self, tmp_path: Path) -> None:
-        """project remove without --alias shows error."""
+        """project remove without --project shows error."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
 
@@ -2766,7 +2766,7 @@ class TestProjectEditTokenReverify:
                 [
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "test",
                 ],
             )
@@ -2778,7 +2778,7 @@ class TestProjectEditTokenReverify:
                     "--json",
                     "project",
                     "edit",
-                    "--alias",
+                    "--project",
                     "test",
                     "--token",
                     "new-test-token-456",
@@ -2819,7 +2819,7 @@ class TestProjectAddTokenSecurity:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "envtest",
                     "--url",
                     "https://connection.keboola.com",
@@ -2865,7 +2865,7 @@ class TestProjectAddTokenSecurity:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "prompttest",
                     "--url",
                     "https://connection.keboola.com",
@@ -2903,7 +2903,7 @@ class TestProjectAddTokenSecurity:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "insecure",
                     "--url",
                     "http://connection.keboola.com",
@@ -2938,7 +2938,7 @@ class TestProjectAddTokenSecurity:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "fileurl",
                     "--url",
                     "file:///etc/passwd",
@@ -2973,7 +2973,7 @@ class TestProjectAddTokenSecurity:
                     "--json",
                     "project",
                     "add",
-                    "--alias",
+                    "--project",
                     "secure",
                     "--url",
                     "https://connection.keboola.com",

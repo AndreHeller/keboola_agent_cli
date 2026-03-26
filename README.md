@@ -98,12 +98,12 @@ By default kbagent uses a single global config. For teams working with multiple 
 # Create a workspace for ACME client
 mkdir -p ~/clients/acme && cd ~/clients/acme
 kbagent init                    # creates .kbagent/config.json
-kbagent project add --alias acme-prod --url https://connection.keboola.com --token ...
+kbagent project add --project acme-prod --url https://connection.keboola.com --token ...
 
 # Create a workspace for BigCorp client
 mkdir -p ~/clients/bigcorp && cd ~/clients/bigcorp
 kbagent init                    # separate .kbagent/config.json
-kbagent project add --alias bigcorp-main --url https://connection.eu-central-1.keboola.com --token ...
+kbagent project add --project bigcorp-main --url https://connection.eu-central-1.keboola.com --token ...
 ```
 
 Now when you `cd ~/clients/acme` and run `kbagent project list`, you only see ACME's projects. Each client directory can have its own `CLAUDE.md` with project-specific instructions.

@@ -57,6 +57,10 @@ class TokenVerifyResponse(BaseModel):
     project_id: int | None = Field(default=None, description="Keboola project numeric ID")
     project_name: str = Field(description="Keboola project name")
     owner_name: str = Field(description="Project owner name")
+    default_backend: str = Field(
+        default="snowflake",
+        description="Project default backend (snowflake, bigquery, etc.)",
+    )
 
 
 class ComponentDetail(BaseModel):

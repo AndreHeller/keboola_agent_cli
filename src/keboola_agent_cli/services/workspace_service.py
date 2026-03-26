@@ -51,11 +51,39 @@ class WorkspaceService(BaseService):
         finally:
             client.close()
 
+    def _fetch_sandbox_config_names(
+        self, client: Any, branch_id: int | None = None
+    ) -> dict[str, str]:
+        """Fetch sandbox configuration names for workspace name resolution.
+
+        The workspace API returns internal names (WORKSPACE_xxxxx). The user-given
+        name lives on the keboola.sandboxes configuration. This method fetches those
+        configs and builds a config_id -> name mapping.
+
+        Returns:
+            Dict mapping config_id (str) to config name.
+        """
+        try:
+            configs = client.list_component_configs("keboola.sandboxes", branch_id=branch_id)
+            return {str(cfg.get("id", "")): cfg.get("name", "") for cfg in configs}
+        except Exception:
+            # Non-critical: fall back to internal workspace names
+            return {}
+
+    def _detect_backend(self, client: Any) -> str:
+        """Detect the project's default backend via token verification.
+
+        Returns:
+            Backend string (e.g. 'snowflake', 'bigquery').
+        """
+        token_info = client.verify_token()
+        return token_info.default_backend
+
     def create_workspace(
         self,
         alias: str,
         name: str = "",
-        backend: str = "snowflake",
+        backend: str | None = None,
         read_only: bool = True,
         ui_mode: bool = False,
     ) -> dict[str, Any]:
@@ -71,7 +99,7 @@ class WorkspaceService(BaseService):
         Args:
             alias: Project alias.
             name: Human-readable name for the workspace.
-            backend: Workspace backend (snowflake, bigquery, etc.).
+            backend: Workspace backend. Auto-detected from project if None.
             read_only: Whether the workspace has read-only storage access.
             ui_mode: If True, create via Queue job (visible in Keboola UI).
 
@@ -85,6 +113,7 @@ class WorkspaceService(BaseService):
 
         client = self._client_factory(project.stack_url, project.token)
         try:
+            effective_backend = backend or self._detect_backend(client)
             # Step 1: Create keboola.sandboxes config (in the correct branch)
             sandbox_config = client.create_sandbox_config(
                 name=effective_name,
@@ -99,7 +128,7 @@ class WorkspaceService(BaseService):
                     alias,
                     effective_name,
                     config_id,
-                    backend,
+                    effective_backend,
                 )
             else:
                 return self._create_workspace_direct(
@@ -108,7 +137,7 @@ class WorkspaceService(BaseService):
                     effective_name,
                     config_id,
                     branch_id,
-                    backend,
+                    effective_backend,
                     read_only,
                 )
         finally:
@@ -246,21 +275,26 @@ class WorkspaceService(BaseService):
             try:
                 branch_id = self._resolve_branch_id(alias, project)
                 raw_workspaces = client.list_workspaces(branch_id=branch_id)
+
+                # Fetch sandbox configs to resolve user-given names
+                config_names = self._fetch_sandbox_config_names(client, branch_id)
+
                 workspaces: list[dict[str, Any]] = []
                 for ws in raw_workspaces:
                     connection = ws.get("connection", {})
+                    config_id = ws.get("configurationId") or ""
                     workspaces.append(
                         {
                             "project_alias": alias,
                             "id": ws.get("id"),
-                            "name": ws.get("name", ""),
+                            "name": config_names.get(str(config_id), ws.get("name", "")),
                             "backend": connection.get("backend", ""),
                             "host": connection.get("host", ""),
                             "schema": connection.get("schema", ""),
                             "user": connection.get("user", ""),
                             "created": ws.get("created", ""),
                             "component_id": ws.get("component") or "",
-                            "config_id": ws.get("configurationId") or "",
+                            "config_id": config_id,
                         }
                     )
                 return (alias, workspaces, True)
@@ -542,7 +576,7 @@ class WorkspaceService(BaseService):
         component_id: str,
         config_id: str,
         row_id: str | None = None,
-        backend: str = "snowflake",
+        backend: str | None = None,
         preserve: bool = False,
     ) -> dict[str, Any]:
         """Create a workspace from a transformation config.
@@ -555,7 +589,7 @@ class WorkspaceService(BaseService):
             component_id: Transformation component ID (e.g. keboola.snowflake-transformation).
             config_id: Configuration ID.
             row_id: Optional row ID for row-based transformations.
-            backend: Workspace backend.
+            backend: Workspace backend. Auto-detected from project if None.
             preserve: If True, keep existing tables in the workspace during load.
 
         Returns:
@@ -567,6 +601,8 @@ class WorkspaceService(BaseService):
 
         client = self._client_factory(project.stack_url, project.token)
         try:
+            effective_backend = backend or self._detect_backend(client)
+
             # Read the transformation config
             config_data = client.get_config_detail(component_id, config_id)
 
@@ -602,7 +638,7 @@ class WorkspaceService(BaseService):
                 branch_id=branch_id,
                 component_id=component_id,
                 config_id=config_id,
-                backend=backend,
+                backend=effective_backend,
             )
 
             workspace_id = ws_data.get("id")

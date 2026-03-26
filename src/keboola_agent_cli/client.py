@@ -176,12 +176,14 @@ class KeboolaClient(BaseHttpClient):
         response = self._request("GET", "/v2/storage/tokens/verify")
         data = response.json()
 
+        owner = data.get("owner", {})
         return TokenVerifyResponse(
             token_id=str(data.get("id", "")),
             token_description=data.get("description", ""),
-            project_id=data.get("owner", {}).get("id"),
-            project_name=data.get("owner", {}).get("name", ""),
-            owner_name=data.get("owner", {}).get("name", ""),
+            project_id=owner.get("id"),
+            project_name=owner.get("name", ""),
+            owner_name=owner.get("name", ""),
+            default_backend=owner.get("defaultBackend", "snowflake"),
         )
 
     def list_components(self, component_type: str | None = None) -> list[dict[str, Any]]:
@@ -219,6 +221,27 @@ class KeboolaClient(BaseHttpClient):
             "GET",
             f"{prefix}/components",
             params={"include": "configuration,rows"},
+        )
+        return resp.json()
+
+    def list_component_configs(
+        self,
+        component_id: str,
+        branch_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all configurations for a specific component.
+
+        Args:
+            component_id: Component identifier (e.g. 'keboola.sandboxes').
+            branch_id: If set, target a specific dev branch.
+
+        Returns:
+            List of configuration dicts (id, name, description, etc.).
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        resp = self._request(
+            "GET",
+            f"{prefix}/components/{quote(component_id, safe='')}/configs",
         )
         return resp.json()
 

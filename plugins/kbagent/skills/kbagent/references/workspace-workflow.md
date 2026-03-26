@@ -123,6 +123,8 @@ fully-qualified Snowflake paths (e.g. `"sapi_1507"."in.c-shared-data"."my-table"
 
 ## Key details
 
+- **Backend auto-detection**: workspace backend (snowflake, bigquery, etc.) is auto-detected from the project. No need to pass `--backend` unless you want to override it.
+- **Workspace names**: `workspace list` shows user-given names (from `--name`), not internal IDs.
 - **Password**: only returned on creation (headless) or after `workspace password` (reset)
 - **Expiration**: workspaces expire server-side automatically
 - **Quoting**: Snowflake converts unquoted identifiers to UPPERCASE. Always double-quote database, schema, and table names -- Keboola names are typically lowercase (e.g. `"sapi_901"."in.c-main"."users"`)

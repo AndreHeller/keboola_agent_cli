@@ -145,8 +145,8 @@ Use `kbagent <command> --help` for full flag details and examples.
 
 ### Workspaces (SQL Debugging)
 
-  kbagent workspace create --project ALIAS [--name NAME] [--backend snowflake] [--ui] [--read-only/--no-read-only]
-    Create workspace. Default: headless (~1s). --ui: visible in KBC UI (~15s).
+  kbagent workspace create --project ALIAS [--name NAME] [--backend TYPE] [--ui] [--read-only/--no-read-only]
+    Create workspace. Backend auto-detected from project (or override with --backend). Default: headless (~1s). --ui: visible in KBC UI (~15s).
 
   kbagent workspace list [--project NAME]
     List workspaces. --project repeatable.

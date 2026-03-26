@@ -230,7 +230,7 @@ kbagent branch reset --project ALIAS
 kbagent branch delete --project ALIAS --branch ID
 kbagent branch merge --project ALIAS [--branch ID]
 
-kbagent workspace create --project ALIAS [--name NAME] [--backend snowflake] [--ui] [--read-only/--no-read-only]
+kbagent workspace create --project ALIAS [--name NAME] [--backend TYPE] [--ui] [--read-only/--no-read-only]
 kbagent workspace list [--project NAME]
 kbagent workspace detail --project ALIAS --workspace-id ID
 kbagent workspace delete --project ALIAS --workspace-id ID

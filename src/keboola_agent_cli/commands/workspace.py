@@ -28,10 +28,10 @@ def workspace_create(
         "--name",
         help="Name for the workspace (shown in Keboola UI)",
     ),
-    backend: str = typer.Option(
-        "snowflake",
+    backend: str | None = typer.Option(
+        None,
         "--backend",
-        help="Workspace backend (snowflake, bigquery, etc.)",
+        help="Workspace backend (auto-detected from project if omitted)",
     ),
     read_only: bool = typer.Option(
         True,
@@ -388,10 +388,10 @@ def workspace_from_transformation(
         "--row-id",
         help="Optional row ID for row-based transformations",
     ),
-    backend: str = typer.Option(
-        "snowflake",
+    backend: str | None = typer.Option(
+        None,
         "--backend",
-        help="Workspace backend",
+        help="Workspace backend (auto-detected from project if omitted)",
     ),
 ) -> None:
     """Create a workspace from a transformation config.

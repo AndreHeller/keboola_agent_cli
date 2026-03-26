@@ -13,8 +13,26 @@ import pytest
 from helpers import setup_single_project, setup_two_projects
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
-from keboola_agent_cli.models import ProjectConfig
+from keboola_agent_cli.models import ProjectConfig, TokenVerifyResponse
 from keboola_agent_cli.services.workspace_service import WorkspaceService
+
+SAMPLE_TOKEN_VERIFY = TokenVerifyResponse(
+    token_id="12345",
+    token_description="Test Token",
+    project_id=258,
+    project_name="Production",
+    owner_name="Production",
+    default_backend="snowflake",
+)
+
+SAMPLE_TOKEN_VERIFY_BIGQUERY = TokenVerifyResponse(
+    token_id="12345",
+    token_description="Test Token",
+    project_id=258,
+    project_name="Production",
+    owner_name="Production",
+    default_backend="bigquery",
+)
 
 SAMPLE_WORKSPACE = {
     "id": 42,
@@ -200,6 +218,132 @@ class TestCreateWorkspace:
         )
 
 
+class TestAutoDetectBackend:
+    """Tests for automatic backend detection when --backend is omitted."""
+
+    def test_create_workspace_auto_detects_snowflake(self, tmp_config_dir: Path) -> None:
+        """create_workspace auto-detects snowflake backend from project."""
+        mock_client = MagicMock()
+        mock_client.verify_token.return_value = SAMPLE_TOKEN_VERIFY
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.create_sandbox_config.return_value = {"id": "cfg-1", "name": "ws"}
+        mock_client.create_config_workspace.return_value = SAMPLE_WORKSPACE
+
+        store = setup_single_project(tmp_config_dir)
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.create_workspace(alias="prod", name="ws")
+
+        assert result["backend"] == "snowflake"
+        mock_client.verify_token.assert_called_once()
+        mock_client.create_config_workspace.assert_called_once_with(
+            branch_id=123,
+            component_id="keboola.sandboxes",
+            config_id="cfg-1",
+            backend="snowflake",
+        )
+
+    def test_create_workspace_auto_detects_bigquery(self, tmp_config_dir: Path) -> None:
+        """create_workspace auto-detects bigquery backend from project."""
+        mock_client = MagicMock()
+        mock_client.verify_token.return_value = SAMPLE_TOKEN_VERIFY_BIGQUERY
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.create_sandbox_config.return_value = {"id": "cfg-1", "name": "ws"}
+        bq_workspace = {
+            "id": 42,
+            "connection": {
+                "backend": "bigquery",
+                "schema": "WORKSPACE_42",
+            },
+        }
+        mock_client.create_config_workspace.return_value = bq_workspace
+
+        store = setup_single_project(tmp_config_dir)
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.create_workspace(alias="prod", name="ws")
+
+        assert result["backend"] == "bigquery"
+        mock_client.verify_token.assert_called_once()
+        mock_client.create_config_workspace.assert_called_once_with(
+            branch_id=123,
+            component_id="keboola.sandboxes",
+            config_id="cfg-1",
+            backend="bigquery",
+        )
+
+    def test_explicit_backend_skips_auto_detect(self, tmp_config_dir: Path) -> None:
+        """When --backend is passed explicitly, verify_token is NOT called."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.create_sandbox_config.return_value = {"id": "cfg-1", "name": "ws"}
+        mock_client.create_config_workspace.return_value = SAMPLE_WORKSPACE
+
+        store = setup_single_project(tmp_config_dir)
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.create_workspace(alias="prod", name="ws", backend="snowflake")
+
+        assert result["backend"] == "snowflake"
+        mock_client.verify_token.assert_not_called()
+
+    def test_from_transformation_auto_detects_bigquery(self, tmp_config_dir: Path) -> None:
+        """create_from_transformation auto-detects bigquery backend."""
+        mock_client = MagicMock()
+        mock_client.verify_token.return_value = SAMPLE_TOKEN_VERIFY_BIGQUERY
+        mock_client.list_dev_branches.return_value = SAMPLE_BRANCHES
+        mock_client.get_config_detail.return_value = {
+            "id": "456",
+            "configuration": {
+                "storage": {
+                    "input": {
+                        "tables": [
+                            {"source": "in.c-main.orders", "destination": "orders"},
+                        ],
+                    },
+                },
+            },
+        }
+        mock_client.create_config_workspace.return_value = {
+            "id": 55,
+            "connection": {
+                "backend": "bigquery",
+                "schema": "WORKSPACE_55",
+                "password": "secret",
+            },
+        }
+        mock_client.load_workspace_tables.return_value = {"id": 888, "status": "success"}
+
+        store = setup_single_project(tmp_config_dir)
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.create_from_transformation(
+            alias="prod",
+            component_id="keboola.snowflake-transformation",
+            config_id="456",
+        )
+
+        assert result["backend"] == "bigquery"
+        mock_client.create_config_workspace.assert_called_once_with(
+            branch_id=100,
+            component_id="keboola.snowflake-transformation",
+            config_id="456",
+            backend="bigquery",
+        )
+
+
 class TestListWorkspacesSingleProject:
     """Tests for WorkspaceService.list_workspaces() with a single project."""
 
@@ -246,6 +390,80 @@ class TestListWorkspacesSingleProject:
 
         result = svc.list_workspaces(aliases=["prod"])
         assert result["workspaces"] == []
+        assert result["errors"] == []
+
+
+class TestListWorkspacesNameResolution:
+    """Tests for workspace name resolution from sandbox configs."""
+
+    def test_list_workspaces_resolves_user_given_names(self, tmp_config_dir: Path) -> None:
+        """list_workspaces shows user-given name from sandbox config, not internal name."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.list_workspaces.return_value = [
+            {
+                "id": 42,
+                "name": "WORKSPACE_42",
+                "connection": {"backend": "snowflake", "schema": "WORKSPACE_42"},
+                "created": "2025-09-10T14:00:00Z",
+                "component": "keboola.sandboxes",
+                "configurationId": "cfg-100",
+            },
+            {
+                "id": 99,
+                "name": "WORKSPACE_99",
+                "connection": {"backend": "snowflake", "schema": "WORKSPACE_99"},
+                "created": "2025-09-11T08:30:00Z",
+                "component": None,
+                "configurationId": None,
+            },
+        ]
+        mock_client.list_component_configs.return_value = [
+            {"id": "cfg-100", "name": "my-debug-workspace"},
+            {"id": "cfg-200", "name": "another-workspace"},
+        ]
+
+        store = setup_single_project(tmp_config_dir)
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.list_workspaces(aliases=["prod"])
+        workspaces = result["workspaces"]
+
+        # Workspace with configurationId gets the user-given name
+        assert workspaces[0]["name"] == "my-debug-workspace"
+        # Workspace without configurationId falls back to internal name
+        assert workspaces[1]["name"] == "WORKSPACE_99"
+
+    def test_list_workspaces_falls_back_on_config_fetch_error(self, tmp_config_dir: Path) -> None:
+        """list_workspaces shows internal name when sandbox config fetch fails."""
+        mock_client = MagicMock()
+        mock_client.list_dev_branches.return_value = [{"id": 123, "isDefault": True}]
+        mock_client.list_workspaces.return_value = [
+            {
+                "id": 42,
+                "name": "WORKSPACE_42",
+                "connection": {"backend": "snowflake", "schema": "WORKSPACE_42"},
+                "created": "2025-09-10T14:00:00Z",
+                "component": "keboola.sandboxes",
+                "configurationId": "cfg-100",
+            },
+        ]
+        mock_client.list_component_configs.side_effect = KeboolaApiError(
+            message="Forbidden", error_code="ACCESS_DENIED", status_code=403
+        )
+
+        store = setup_single_project(tmp_config_dir)
+        svc = WorkspaceService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = svc.list_workspaces(aliases=["prod"])
+        # Falls back to internal name gracefully
+        assert result["workspaces"][0]["name"] == "WORKSPACE_42"
         assert result["errors"] == []
 
 
@@ -810,6 +1028,7 @@ class TestCreateFromTransformation:
     def test_create_from_transformation_success(self, tmp_config_dir: Path) -> None:
         """create_from_transformation reads config, creates workspace, loads tables."""
         mock_client = MagicMock()
+        mock_client.verify_token.return_value = SAMPLE_TOKEN_VERIFY
         mock_client.list_dev_branches.return_value = SAMPLE_BRANCHES
         mock_client.get_config_detail.return_value = {
             "id": "456",

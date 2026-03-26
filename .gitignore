@@ -42,8 +42,9 @@ htmlcov/
 # Explorer (deprecated -- use 'llm export' instead)
 kbc-explorer/
 
-# Docs (plans, reports, PDFs - local only)
-docs/
+# Docs (local-only subdirectories)
+docs/done/
+docs/AGENT-REPORTS/
 
 # OS
 .DS_Store

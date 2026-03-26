@@ -14,6 +14,8 @@ Keboola's web UI and standard API clients work great for a single project. But w
 - **Manage dev branches** -- create, switch, delete branches with persistent active branch state
 - **Debug SQL interactively** -- create workspaces, load tables, run SQL queries without full job runs
 
+See [real-world use cases](docs/use-cases.md) for end-to-end examples with AI agents.
+
 ## What it can do
 
 **Setup & Info**

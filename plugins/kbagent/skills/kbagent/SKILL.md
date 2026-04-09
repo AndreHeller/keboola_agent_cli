@@ -44,6 +44,11 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Goal | Command |
 |------|---------|
 | Update kbagent to the latest version | `kbagent update` |
+| List all operations with their risk category and current allowed/denied status | `kbagent permissions list` |
+| Show the current active permission policy | `kbagent permissions show` |
+| Set the permission policy (firewall rules) | `kbagent permissions set --mode MODE` |
+| Remove all permission restrictions | `kbagent permissions reset` |
+| Check if a specific operation is allowed | `kbagent permissions check <OPERATION>` |
 | Add a new Keboola project connection | `kbagent project add --project ALIAS` |
 | List all connected Keboola projects | `kbagent project list` |
 | Remove a Keboola project connection | `kbagent project remove --project ALIAS` |
@@ -63,6 +68,8 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | List storage buckets with sharing/linked bucket information | `kbagent storage buckets` |
 | Show detailed bucket info including Snowflake direct access paths | `kbagent storage bucket-detail --project PROJECT --bucket-id BUCKET-ID` |
 | List storage tables from a project | `kbagent storage tables --project PROJECT` |
+| Delete one or more storage tables | `kbagent storage delete-table --project PROJECT --table-id TABLE-ID` |
+| Delete one or more storage buckets | `kbagent storage delete-bucket --project PROJECT --bucket-id BUCKET-ID` |
 | List shared buckets available for linking | `kbagent sharing list` |
 | Enable sharing on a bucket | `kbagent sharing share --project PROJECT --bucket-id BUCKET-ID --type SHARING-TYPE` |
 | Disable sharing on a bucket | `kbagent sharing unshare --project PROJECT --bucket-id BUCKET-ID` |

@@ -116,6 +116,12 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent storage tables --project NAME [--bucket-id BUCKET_ID]
     List storage tables, optionally filtered by bucket.
 
+  kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes]
+    Delete one or more tables. Batch: repeat --table-id. --dry-run to preview.
+
+  kbagent storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes]
+    Delete one or more buckets. --force cascade-deletes tables. Linked/shared buckets protected.
+
 ### Sharing (Cross-Project)
 
   kbagent sharing list [--project NAME]
@@ -250,6 +256,22 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent update
     Self-update kbagent to latest version (via uv tool install --upgrade).
 
+  kbagent permissions list [--category read|write|destructive|admin]
+    List all operations with risk categories and current allowed/denied status.
+
+  kbagent permissions show
+    Show current active permission policy.
+
+  kbagent permissions set --mode allow|deny [--allow PATTERN ...] [--deny PATTERN ...]
+    Set firewall-style permission policy. Patterns: exact (branch.delete),
+    glob (sync.*), category (cli:write, tool:read).
+
+  kbagent permissions reset
+    Remove all restrictions.
+
+  kbagent permissions check OPERATION
+    Check if operation is allowed. Exit 0=allowed, 6=denied.
+
 ## Tips for AI Agents
 
 1. ALWAYS use --json flag for reliable, parseable output:
@@ -284,6 +306,7 @@ Use `kbagent <command> --help` for full flag details and examples.
      KBC_MASTER_TOKEN         Master token for sharing ops (global fallback)
      KBC_MASTER_TOKEN_*       Per-project master token (e.g. KBC_MASTER_TOKEN_PROD)
      KBAGENT_CONFIG_DIR       Override config directory
+     KBAGENT_MAX_PARALLEL_WORKERS  Max concurrent threads for multi-project ops (default 10, max 100)
 
 8. Config resolution order:
      --config-dir flag > KBAGENT_CONFIG_DIR env > .kbagent/ in CWD/parents > ~/.config/keboola-agent-cli/
@@ -303,6 +326,7 @@ Use `kbagent <command> --help` for full flag details and examples.
   3  Authentication error (invalid or expired token)
   4  Network error (timeout, unreachable server)
   5  Configuration error (corrupt config, missing alias)
+  6  Permission denied (operation blocked by policy)
 
 When you receive a non-zero exit code, use --json to get structured error details.
 

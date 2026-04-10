@@ -39,14 +39,27 @@ kbagent project add --project prod --url https://connection.keboola.com --token 
 
 ## For AI agents (Claude Code, Codex, Gemini)
 
-Install the Claude Code plugin and the agent learns all commands automatically:
+Install the Claude Code plugin and the agent learns all commands automatically.
 
-```bash
+> **Important:** `/plugin` commands are Claude Code **terminal** slash commands.
+> They only work when Claude Code is running as an **interactive CLI in a terminal**
+> (`claude` command in your shell). They do **not** work in:
+> - a regular bash/shell prompt
+> - the VS Code extension chat panel
+> - the Claude desktop app chat window
+>
+> If you are using Claude Code via VS Code or the desktop app, skip to the
+> `kbagent context` fallback below.
+
+Start Claude Code in your terminal (`claude`), then type into its prompt:
+
+```
 /plugin marketplace add padak/keboola_agent_cli
 /plugin install kbagent@keboola-agent-cli
 ```
 
-Or just tell any agent to run `kbagent context` -- it prints a complete reference.
+Or just tell any agent to run `kbagent context` -- it prints a complete reference and
+works regardless of how Claude Code is launched.
 
 ### What you can ask
 

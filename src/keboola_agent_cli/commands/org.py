@@ -239,11 +239,12 @@ def org_setup(
         _format_setup_result(formatter.console, preview)
 
         would_add = len(preview.get("projects_added", []))
-        if would_add == 0:
+        would_skip = len(preview.get("projects_skipped", []))
+        if would_add == 0 and not (refresh and would_skip > 0):
             formatter.console.print("\nNo new projects to add.")
             return
 
-        if not typer.confirm(f"\nProceed to add {would_add} project(s)?"):
+        if would_add > 0 and not typer.confirm(f"\nProceed to add {would_add} project(s)?"):
             formatter.console.print("Aborted.")
             raise typer.Exit(code=0)
 

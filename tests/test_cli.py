@@ -4026,7 +4026,7 @@ class TestOrgSetupBasic:
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-123456789012345678",
             ),
         ):
@@ -4090,7 +4090,7 @@ class TestOrgSetupBasic:
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-123456789012345678",
             ),
         ):
@@ -4152,7 +4152,7 @@ class TestOrgSetupBasic:
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-123456789012345678",
             ),
         ):
@@ -4196,7 +4196,7 @@ class TestOrgSetupBasic:
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-123456789012345678",
             ),
         ):
@@ -4225,7 +4225,7 @@ class TestOrgSetupBasic:
     def test_missing_org_id_and_project_ids_exit_2(self) -> None:
         """org setup without --org-id and --project-ids exits with code 2."""
         with patch(
-            "keboola_agent_cli.commands.org._resolve_manage_token",
+            "keboola_agent_cli.commands.org.resolve_manage_token",
             return_value="manage-token-123456789012345678",
         ):
             result = runner.invoke(
@@ -4275,7 +4275,7 @@ class TestOrgSetupBasic:
             patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="pat-token-123456789012345678901",
             ),
         ):
@@ -4657,7 +4657,7 @@ class TestOrgSetup:
             patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-abcdef",
             ),
         ):
@@ -4739,7 +4739,7 @@ class TestOrgSetup:
             patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-abcdef",
             ),
         ):
@@ -4780,7 +4780,7 @@ class TestOrgSetup:
             patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-abcdef",
             ),
         ):
@@ -4827,7 +4827,7 @@ class TestOrgSetup:
             patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
             patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
             patch(
-                "keboola_agent_cli.commands.org._resolve_manage_token",
+                "keboola_agent_cli.commands.org.resolve_manage_token",
                 return_value="manage-token-abcdef",
             ),
         ):
@@ -5120,43 +5120,46 @@ class TestBranchRequiresProject:
 
 
 class TestResolveManageToken:
-    """Tests for _resolve_manage_token() in org.py."""
+    """Tests for resolve_manage_token() in _helpers.py."""
 
     def test_token_from_env(self) -> None:
-        """_resolve_manage_token returns token from KBC_MANAGE_API_TOKEN env var."""
-        from keboola_agent_cli.commands.org import _resolve_manage_token
+        """resolve_manage_token returns token from KBC_MANAGE_API_TOKEN env var."""
+        from keboola_agent_cli.commands._helpers import resolve_manage_token
 
         with patch.dict(os.environ, {"KBC_MANAGE_API_TOKEN": "env-manage-token"}):
-            token = _resolve_manage_token()
+            token = resolve_manage_token()
 
         assert token == "env-manage-token"
 
     def test_token_from_prompt(self) -> None:
-        """_resolve_manage_token prompts interactively when env var is not set."""
+        """resolve_manage_token prompts interactively when env var is not set."""
         import sys
 
-        from keboola_agent_cli.commands.org import _resolve_manage_token
+        from keboola_agent_cli.commands._helpers import resolve_manage_token
 
         with (
             patch.dict(os.environ, {}, clear=False),
-            patch("keboola_agent_cli.commands.org.typer.prompt", return_value="prompted-token"),
+            patch(
+                "keboola_agent_cli.commands._helpers.typer.prompt",
+                return_value="prompted-token",
+            ),
             patch.object(sys, "stdin") as mock_stdin,
         ):
             # Ensure KBC_MANAGE_API_TOKEN is not set
             os.environ.pop("KBC_MANAGE_API_TOKEN", None)
             mock_stdin.isatty.return_value = True
 
-            token = _resolve_manage_token()
+            token = resolve_manage_token()
 
         assert token == "prompted-token"
 
     def test_non_tty_error(self) -> None:
-        """_resolve_manage_token raises Exit when not TTY and no env var."""
+        """resolve_manage_token raises Exit when not TTY and no env var."""
         import sys
 
         import typer
 
-        from keboola_agent_cli.commands.org import _resolve_manage_token
+        from keboola_agent_cli.commands._helpers import resolve_manage_token
 
         with (
             patch.dict(os.environ, {}, clear=False),
@@ -5167,7 +5170,7 @@ class TestResolveManageToken:
             os.environ.pop("KBC_MANAGE_API_TOKEN", None)
             mock_stdin.isatty.return_value = False
 
-            _resolve_manage_token()
+            resolve_manage_token()
 
         assert exc_info.value.exit_code == 2
 
@@ -5758,3 +5761,422 @@ class TestInit:
         local_store = ConfigStore(config_dir=tmp_path / ".kbagent")
         local_config = local_store.load()
         assert "prod" in local_config.projects
+
+
+# ---------------------------------------------------------------------------
+# project refresh tests
+# ---------------------------------------------------------------------------
+
+SAMPLE_REFRESH_RESULT = {
+    "projects_refreshed": [
+        {
+            "alias": "prod",
+            "project_id": 258,
+            "project_name": "Production",
+            "token": "258-***refreshed",
+        },
+    ],
+    "projects_valid": [
+        {
+            "alias": "dev",
+            "project_id": 7012,
+            "project_name": "Development",
+        },
+    ],
+    "projects_skipped": [],
+    "projects_failed": [],
+    "dry_run": False,
+}
+
+SAMPLE_REFRESH_DRY_RUN_RESULT = {
+    "projects_refreshed": [
+        {
+            "alias": "prod",
+            "project_id": 258,
+            "project_name": "Production",
+        },
+    ],
+    "projects_valid": [
+        {
+            "alias": "dev",
+            "project_id": 7012,
+            "project_name": "Development",
+        },
+    ],
+    "projects_skipped": [],
+    "projects_failed": [],
+    "dry_run": True,
+}
+
+
+class TestProjectRefresh:
+    """Tests for `kbagent project refresh` command."""
+
+    def test_project_refresh_json_success(self, tmp_path: Path) -> None:
+        """project refresh --all --json --yes returns structured JSON with refreshed projects."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.project.resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
+        ):
+            MockStore.return_value = store
+
+            mock_service = MagicMock()
+            mock_service.refresh_tokens.return_value = SAMPLE_REFRESH_RESULT
+            MockOrgService.return_value = mock_service
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--all",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert len(output["data"]["projects_refreshed"]) == 1
+        assert output["data"]["projects_refreshed"][0]["alias"] == "prod"
+        assert output["data"]["projects_refreshed"][0]["project_id"] == 258
+        assert output["data"]["dry_run"] is False
+
+    def test_project_refresh_requires_project_or_all(self, tmp_path: Path) -> None:
+        """project refresh without --project or --all returns usage error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService"),
+        ):
+            MockStore.return_value = store
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 2, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "--project" in output["error"]["message"] or "--all" in output["error"]["message"]
+
+    def test_project_refresh_both_project_and_all(self, tmp_path: Path) -> None:
+        """project refresh with both --project and --all returns usage error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService"),
+        ):
+            MockStore.return_value = store
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--project",
+                    "prod",
+                    "--all",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 2, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "not both" in output["error"]["message"]
+
+    def test_project_refresh_dry_run(self, tmp_path: Path) -> None:
+        """project refresh --all --dry-run --json shows preview without changes."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.project.resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
+        ):
+            MockStore.return_value = store
+
+            mock_service = MagicMock()
+            mock_service.refresh_tokens.return_value = SAMPLE_REFRESH_DRY_RUN_RESULT
+            MockOrgService.return_value = mock_service
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--all",
+                    "--dry-run",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["dry_run"] is True
+        assert len(output["data"]["projects_refreshed"]) == 1
+        assert output["data"]["projects_refreshed"][0]["alias"] == "prod"
+
+    def test_project_refresh_single_project(self, tmp_path: Path) -> None:
+        """project refresh --project prod --json --yes refreshes a specific project."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        single_result = {
+            "projects_refreshed": [
+                {
+                    "alias": "prod",
+                    "project_id": 258,
+                    "project_name": "Production",
+                    "token": "258-***refreshed",
+                },
+            ],
+            "projects_valid": [],
+            "projects_skipped": [],
+            "projects_failed": [],
+            "dry_run": False,
+        }
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.project.resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
+        ):
+            MockStore.return_value = store
+
+            mock_service = MagicMock()
+            mock_service.refresh_tokens.return_value = single_result
+            MockOrgService.return_value = mock_service
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--project",
+                    "prod",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert len(output["data"]["projects_refreshed"]) == 1
+        assert output["data"]["projects_refreshed"][0]["alias"] == "prod"
+
+        # Verify service was called with aliases=["prod"]
+        mock_service.refresh_tokens.assert_called_once()
+        call_kwargs = mock_service.refresh_tokens.call_args[1]
+        assert call_kwargs["aliases"] == ["prod"]
+
+    def test_project_refresh_api_error(self, tmp_path: Path) -> None:
+        """project refresh with API error returns appropriate exit code."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.project.resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
+        ):
+            MockStore.return_value = store
+
+            mock_service = MagicMock()
+            mock_service.refresh_tokens.side_effect = KeboolaApiError(
+                message="Invalid manage token",
+                status_code=401,
+                error_code="INVALID_TOKEN",
+                retryable=False,
+            )
+            MockOrgService.return_value = mock_service
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--all",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 3
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert output["error"]["code"] == "INVALID_TOKEN"
+
+    def test_project_refresh_force_flag(self, tmp_path: Path) -> None:
+        """project refresh --all --force passes force=True to service."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.project.resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
+        ):
+            MockStore.return_value = store
+
+            mock_service = MagicMock()
+            mock_service.refresh_tokens.return_value = SAMPLE_REFRESH_RESULT
+            MockOrgService.return_value = mock_service
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "project",
+                    "refresh",
+                    "--all",
+                    "--force",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+
+        # Verify force=True was passed to service
+        mock_service.refresh_tokens.assert_called_once()
+        call_kwargs = mock_service.refresh_tokens.call_args[1]
+        assert call_kwargs["force"] is True
+
+    def test_org_setup_refresh_flag(self, tmp_path: Path) -> None:
+        """org setup --refresh calls refresh_tokens for skipped projects after setup."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "existing-project": {
+                    "token": "200-oldtoken",
+                    "project_id": 200,
+                    "project_name": "Existing Project",
+                },
+            },
+        )
+
+        setup_result = {
+            "organization_id": 42,
+            "stack_url": "https://connection.keboola.com",
+            "projects_found": 2,
+            "projects_added": [
+                {
+                    "project_id": 100,
+                    "project_name": "New Project",
+                    "alias": "new-project",
+                    "token": "100-***",
+                    "action": "added",
+                },
+            ],
+            "projects_skipped": [
+                {
+                    "project_id": 200,
+                    "project_name": "Existing Project",
+                    "reason": "Already registered in config",
+                },
+            ],
+            "projects_failed": [],
+            "dry_run": False,
+        }
+
+        refresh_result = {
+            "projects_refreshed": [
+                {
+                    "alias": "existing-project",
+                    "project_id": 200,
+                    "project_name": "Existing Project",
+                    "token": "200-***refreshed",
+                },
+            ],
+            "projects_valid": [],
+            "projects_skipped": [],
+            "projects_failed": [],
+            "dry_run": False,
+        }
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.OrgService") as MockOrgService,
+            patch(
+                "keboola_agent_cli.commands.org.resolve_manage_token",
+                return_value="manage-token-123456789012345678",
+            ),
+        ):
+            MockStore.return_value = store
+
+            mock_service = MagicMock()
+            mock_service.setup_organization.return_value = setup_result
+            mock_service.refresh_tokens.return_value = refresh_result
+            MockOrgService.return_value = mock_service
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "org",
+                    "setup",
+                    "--org-id",
+                    "42",
+                    "--url",
+                    "https://connection.keboola.com",
+                    "--refresh",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+
+        # Both setup and refresh should have been called
+        mock_service.setup_organization.assert_called_once()
+        mock_service.refresh_tokens.assert_called_once()
+
+        # The final result should contain projects_refreshed from the refresh call
+        assert len(output["data"]["projects_refreshed"]) == 1
+        assert output["data"]["projects_refreshed"][0]["alias"] == "existing-project"

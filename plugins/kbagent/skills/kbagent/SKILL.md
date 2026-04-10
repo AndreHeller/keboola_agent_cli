@@ -54,6 +54,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Remove a Keboola project connection | `kbagent project remove --project ALIAS` |
 | Edit an existing Keboola project connection | `kbagent project edit --project ALIAS` |
 | Test connectivity to connected Keboola projects | `kbagent project status` |
+| Refresh expired or invalid Storage API tokens | `kbagent project refresh` |
 | Set up projects and register them in the kbagent config | `kbagent org setup --url URL` |
 | List available components from connected projects | `kbagent component list` |
 | Show detailed information about a specific component | `kbagent component detail --component-id COMPONENT-ID` |

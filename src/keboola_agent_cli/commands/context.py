@@ -69,6 +69,10 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent project status [--project NAME]
     Test connectivity. Shows OK/ERROR with response time.
 
+  kbagent project refresh --project ALIAS [--dry-run] [--force] [--yes] [--token-description ...] [--token-expires-in N]
+  kbagent project refresh --all [--dry-run] [--force] [--yes] [--token-description ...] [--token-expires-in N]
+    Refresh project tokens via Manage API. --all refreshes all projects. --force replaces non-expiring tokens.
+
 ### Component Discovery
 
   kbagent component list [--project NAME] [--type TYPE] [--query "search"]

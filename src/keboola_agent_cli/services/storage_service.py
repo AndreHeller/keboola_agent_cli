@@ -4,13 +4,34 @@ Provides direct access to Storage API data including sharing/linked bucket
 metadata that MCP tools strip from responses.
 """
 
+import csv
 import logging
+from pathlib import Path
 from typing import Any
 
+from ..constants import VALID_COLUMN_TYPES
 from ..models import ProjectConfig
 from .base import BaseService
 
 logger = logging.getLogger(__name__)
+
+
+def _read_csv_header(file_path: str, delimiter: str = ",") -> list[str]:
+    """Return column names from the first row of a CSV file.
+
+    Strips leading/trailing whitespace and skips empty fields. Handles
+    UTF-8 BOM automatically (utf-8-sig encoding).
+
+    Raises:
+        ValueError: If the first row is empty or contains no non-empty fields.
+    """
+    with open(file_path, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.reader(fh, delimiter=delimiter)
+        header = next(reader, [])
+    columns = [col.strip() for col in header if col.strip()]
+    if not columns:
+        raise ValueError("CSV file has no column headers in the first row.")
+    return columns
 
 
 class StorageService(BaseService):
@@ -189,6 +210,191 @@ class StorageService(BaseService):
         ]
 
         return {"tables": tables, "project_alias": alias}
+
+    # ------------------------------------------------------------------
+    # Write operations
+    # ------------------------------------------------------------------
+
+    def create_bucket(
+        self,
+        alias: str,
+        stage: str,
+        name: str,
+        description: str | None = None,
+        backend: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new storage bucket.
+
+        Args:
+            stage: Bucket stage — must be "in" or "out".
+
+        Returns:
+            Dict with created bucket details.
+
+        Raises:
+            ValueError: If stage is not "in" or "out".
+        """
+        stage = stage.lower()
+        if stage not in ("in", "out"):
+            raise ValueError(f"Invalid stage '{stage}'. Must be 'in' or 'out'.")
+
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            bucket = client.create_bucket(
+                stage=stage, name=name, description=description, backend=backend
+            )
+        finally:
+            client.close()
+
+        return {
+            "project_alias": alias,
+            "id": bucket.get("id", ""),
+            "display_name": bucket.get("displayName", bucket.get("name", "")),
+            "stage": bucket.get("stage", ""),
+            "backend": bucket.get("backend", ""),
+            "description": bucket.get("description", ""),
+        }
+
+    def create_table(
+        self,
+        alias: str,
+        bucket_id: str,
+        name: str,
+        columns: list[str],
+        primary_key: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new table with typed columns.
+
+        Args:
+            columns: List of "name:TYPE" strings (e.g. ["id:INTEGER", "name:STRING"]).
+
+        Returns:
+            Dict with created table details.
+        """
+        parsed_columns = []
+        for col_spec in columns:
+            if ":" in col_spec:
+                col_name, col_type = col_spec.split(":", 1)
+                col_type = col_type.upper()
+            else:
+                col_name, col_type = col_spec, "STRING"
+            if col_type not in VALID_COLUMN_TYPES:
+                raise ValueError(
+                    f"Invalid column type '{col_type}' for column '{col_name}'. "
+                    f"Valid types: {', '.join(sorted(VALID_COLUMN_TYPES))}"
+                )
+            parsed_columns.append({"name": col_name, "definition": {"type": col_type}})
+
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            results = client.create_table(
+                bucket_id=bucket_id,
+                name=name,
+                columns=parsed_columns,
+                primary_key=primary_key,
+            )
+        finally:
+            client.close()
+
+        return {
+            "project_alias": alias,
+            "table_id": results.get("id", f"{bucket_id}.{name}"),
+            "name": name,
+            "bucket_id": bucket_id,
+            "primary_key": primary_key or [],
+            "columns": [c["name"] for c in parsed_columns],
+        }
+
+    def upload_table(
+        self,
+        alias: str,
+        table_id: str,
+        file_path: str,
+        incremental: bool = False,
+        delimiter: str = ",",
+        enclosure: str = '"',
+        auto_create: bool = True,
+    ) -> dict[str, Any]:
+        """Upload a CSV file into a storage table.
+
+        When auto_create is True (default), auto-creates the bucket and/or
+        table if they don't exist. Columns are inferred as STRING from the CSV
+        header row. Pass auto_create=False to require the table to exist.
+
+        Returns:
+            Dict with import results plus auto_created_bucket / auto_created_table flags.
+        """
+        from ..errors import KeboolaApiError
+
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        file_size_bytes = Path(file_path).stat().st_size
+
+        auto_created_bucket = False
+        auto_created_table = False
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            if auto_create:
+                parts = table_id.split(".")
+                if len(parts) == 3:
+                    stage, bucket_slug, table_name = parts
+                    bucket_id = f"{stage}.{bucket_slug}"
+                    bucket_name = bucket_slug[2:] if bucket_slug.startswith("c-") else bucket_slug
+
+                    # Ensure bucket exists
+                    try:
+                        client.get_bucket_detail(bucket_id)
+                    except KeboolaApiError as exc:
+                        if exc.status_code == 404:
+                            client.create_bucket(stage=stage, name=bucket_name)
+                            auto_created_bucket = True
+                            logger.info("Auto-created bucket %s", bucket_id)
+                        else:
+                            raise
+
+                    # Ensure table exists
+                    existing = client.list_tables(bucket_id=bucket_id)
+                    if not any(t.get("name") == table_name for t in existing):
+                        columns = _read_csv_header(file_path, delimiter=delimiter)
+                        client.create_table(
+                            bucket_id=bucket_id,
+                            name=table_name,
+                            columns=[
+                                {"name": col, "definition": {"type": "STRING"}} for col in columns
+                            ],
+                            primary_key=None,
+                        )
+                        auto_created_table = True
+                        logger.info("Auto-created table %s (%d columns)", table_id, len(columns))
+
+            results = client.upload_table(
+                table_id=table_id,
+                file_path=file_path,
+                incremental=incremental,
+                delimiter=delimiter,
+                enclosure=enclosure,
+            )
+        finally:
+            client.close()
+
+        return {
+            "project_alias": alias,
+            "table_id": table_id,
+            "incremental": incremental,
+            "file_size_bytes": file_size_bytes,
+            "imported_rows": results.get("importedRowsCount"),
+            "warnings": results.get("warnings", []),
+            "auto_created_bucket": auto_created_bucket,
+            "auto_created_table": auto_created_table,
+        }
 
     # ------------------------------------------------------------------
     # Delete operations

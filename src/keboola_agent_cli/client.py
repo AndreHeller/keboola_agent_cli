@@ -10,6 +10,7 @@ Inherits shared retry/error logic from BaseHttpClient.
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -21,6 +22,8 @@ from .constants import (
     DEFAULT_JOB_LIMIT,
     DEFAULT_JOBS_PER_CONFIG,
     DEFAULT_TIMEOUT,
+    FILE_UPLOAD_TIMEOUT,
+    IMPORT_JOB_MAX_WAIT,
     QUERY_JOB_MAX_WAIT,
     QUERY_JOB_POLL_INTERVAL,
     STORAGE_JOB_MAX_WAIT,
@@ -481,14 +484,16 @@ class KeboolaClient(BaseHttpClient):
             f"{prefix}/components/{quote(component_id)}/configs/{quote(config_id)}/rows/{quote(row_id)}",
         )
 
-    def _wait_for_storage_job(self, job: dict[str, Any]) -> dict[str, Any]:
+    def _wait_for_storage_job(
+        self,
+        job: dict[str, Any],
+        max_wait: float = STORAGE_JOB_MAX_WAIT,
+    ) -> dict[str, Any]:
         """Poll a Storage API job until it reaches a terminal state.
-
-        Branch create/delete are async operations that return a job object.
-        This method polls until the job completes or fails.
 
         Args:
             job: Initial job response from POST/DELETE.
+            max_wait: Maximum seconds to wait (default: STORAGE_JOB_MAX_WAIT).
 
         Returns:
             Completed job dict (with results on success).
@@ -500,7 +505,7 @@ class KeboolaClient(BaseHttpClient):
         if job.get("status") in ("success", "error"):
             return job
 
-        deadline = time.monotonic() + STORAGE_JOB_MAX_WAIT
+        deadline = time.monotonic() + max_wait
         while time.monotonic() < deadline:
             time.sleep(STORAGE_JOB_POLL_INTERVAL)
             response = self._request("GET", f"/v2/storage/jobs/{job_id}")
@@ -517,7 +522,7 @@ class KeboolaClient(BaseHttpClient):
                     retryable=False,
                 )
         raise KeboolaApiError(
-            message=f"Storage job {job_id} did not complete within {STORAGE_JOB_MAX_WAIT}s",
+            message=f"Storage job {job_id} did not complete within {max_wait}s",
             status_code=504,
             error_code="STORAGE_JOB_TIMEOUT",
             retryable=True,
@@ -805,6 +810,229 @@ class KeboolaClient(BaseHttpClient):
             params["force"] = "true"
         response = self._request("DELETE", f"/v2/storage/buckets/{safe_id}", params=params)
         return self._wait_for_storage_job(response.json())
+
+    def create_bucket(
+        self,
+        stage: str,
+        name: str,
+        description: str | None = None,
+        backend: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new storage bucket (sync).
+
+        Args:
+            stage: Bucket stage — "in" or "out".
+            name: Bucket name slug (e.g. "my-bucket").
+            description: Optional description.
+            backend: Optional backend type (e.g. "snowflake", "bigquery").
+
+        Returns:
+            New bucket dict from the API.
+        """
+        body: dict[str, str] = {"stage": stage, "name": name}
+        if description is not None:
+            body["description"] = description
+        if backend is not None:
+            body["backend"] = backend
+        response = self._request("POST", "/v2/storage/buckets", json=body)
+        return response.json()
+
+    def create_table(
+        self,
+        bucket_id: str,
+        name: str,
+        columns: list[dict[str, Any]],
+        primary_key: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new table with typed columns (async, waits for completion).
+
+        Args:
+            bucket_id: Target bucket ID (e.g. "in.c-my-bucket").
+            name: Table name.
+            columns: List of column dicts with "name" and "definition.type" keys,
+                     e.g. [{"name": "id", "definition": {"type": "INTEGER"}}].
+            primary_key: Optional list of column names for the primary key.
+
+        Returns:
+            Completed storage job results dict.
+        """
+        safe_id = quote(bucket_id, safe="")
+        body: dict[str, Any] = {
+            "name": name,
+            "primaryKeysNames": primary_key or [],
+            "columns": columns,
+        }
+        response = self._request(
+            "POST", f"/v2/storage/buckets/{safe_id}/tables-definition", json=body
+        )
+        job = self._wait_for_storage_job(response.json())
+        return job.get("results", {})
+
+    def prepare_file_upload(
+        self,
+        name: str,
+        size_bytes: int,
+    ) -> dict[str, Any]:
+        """Register a file with the Storage API and get a presigned upload URL.
+
+        Step 1 of the async table upload flow.
+
+        Args:
+            name: Filename (e.g. "data.csv").
+            size_bytes: File size in bytes.
+
+        Returns:
+            File resource dict including 'id' (fileId), 'url', 'uploadParams',
+            and 'gcsUploadParams' (present on GCP stacks; contains bearer token
+            and GCS bucket/key for direct PUT upload).
+        """
+        # Only send the two required fields. Omit optional booleans (isPermanent,
+        # isPublic) so Python's False doesn't serialize to the string "False" in
+        # form-data — which some backends treat as truthy, potentially making
+        # files permanent or publicly accessible.
+        body: dict[str, Any] = {"name": name, "sizeBytes": size_bytes}
+        response = self._request("POST", "/v2/storage/files/prepare", data=body)
+        return response.json()
+
+    def _upload_to_cloud(
+        self,
+        upload_info: dict[str, Any],
+        file_path: str,
+    ) -> None:
+        """Upload a file to cloud storage using credentials from files/prepare.
+
+        Three upload paths based on what the API returns:
+
+        GCP stack (``gcsUploadParams`` present):
+            PUT to ``https://storage.googleapis.com/{bucket}/{key}`` with an
+            OAuth2 ``Authorization: Bearer`` header. The ``url`` field in the
+            response is a download URL and is NOT used for upload.
+
+        S3 stack (``uploadParams`` non-empty):
+            Multipart form POST to ``url``. All ``uploadParams`` fields are
+            included as form fields first; the file field is appended last
+            (S3 policy requires the file to be the final part).
+
+        ABS/other signed URL (``uploadParams`` empty/null):
+            Raw PUT of the file bytes directly to ``url``.
+
+        Args:
+            upload_info: Full response dict from prepare_file_upload().
+            file_path: Local path to the file.
+        """
+        p = Path(file_path)
+
+        gcs_params = upload_info.get("gcsUploadParams")
+        if gcs_params:
+            # GCP: PUT via GCS JSON API with short-lived OAuth2 bearer token
+            bucket = gcs_params["bucket"]
+            key = gcs_params["key"]
+            access_token = gcs_params["access_token"]
+            upload_url = f"https://storage.googleapis.com/{bucket}/{key}"
+            with p.open("rb") as fh, httpx.Client(timeout=FILE_UPLOAD_TIMEOUT) as http:
+                response = http.put(
+                    upload_url,
+                    content=fh,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            success_codes = (200,)
+        else:
+            url = upload_info["url"]
+            upload_params = upload_info.get("uploadParams") or {}
+            with httpx.Client(timeout=FILE_UPLOAD_TIMEOUT) as http:
+                if upload_params:
+                    # S3 presigned POST: multipart form — uploadParams first, file last
+                    form_fields: list[tuple[str, Any]] = [
+                        (k, (None, str(v))) for k, v in upload_params.items()
+                    ]
+                    with p.open("rb") as fh:
+                        form_fields.append(("file", (p.name, fh, "application/octet-stream")))
+                        response = http.post(url, files=form_fields)
+                    success_codes = (200, 204)
+                else:
+                    # ABS or other signed URL: raw PUT
+                    with p.open("rb") as fh:
+                        response = http.put(url, content=fh)
+                    success_codes = (200,)
+
+        if response.status_code not in success_codes:
+            raise KeboolaApiError(
+                message=f"Cloud storage upload failed (HTTP {response.status_code})",
+                status_code=response.status_code,
+                error_code="UPLOAD_FAILED",
+                retryable=False,
+            )
+
+    def import_table_async(
+        self,
+        table_id: str,
+        file_id: int,
+        incremental: bool = False,
+        delimiter: str = ",",
+        enclosure: str = '"',
+    ) -> dict[str, Any]:
+        """Trigger async import of a pre-uploaded file into a table (step 3).
+
+        Polls until the import job completes (up to IMPORT_JOB_MAX_WAIT seconds).
+
+        Args:
+            table_id: Target table ID (e.g. "in.c-my-bucket.my-table").
+            file_id: File ID returned by prepare_file_upload().
+            incremental: If True, append rows; if False, full load.
+            delimiter: CSV column delimiter.
+            enclosure: CSV value enclosure character.
+
+        Returns:
+            Completed import job dict.
+        """
+        safe_id = quote(table_id, safe="")
+        body: dict[str, str] = {
+            "dataFileId": str(file_id),
+            "incremental": "1" if incremental else "0",
+            "delimiter": delimiter,
+            "enclosure": enclosure,
+        }
+        response = self._request("POST", f"/v2/storage/tables/{safe_id}/import-async", data=body)
+        return self._wait_for_storage_job(response.json(), max_wait=IMPORT_JOB_MAX_WAIT)
+
+    def upload_table(
+        self,
+        table_id: str,
+        file_path: str,
+        incremental: bool = False,
+        delimiter: str = ",",
+        enclosure: str = '"',
+    ) -> dict[str, Any]:
+        """Upload a CSV file into an existing table (async, waits for completion).
+
+        Uses the file-first async flow to support files up to 5 GB:
+        1. Register file with Storage API → get presigned cloud upload URL
+        2. Upload file bytes directly to cloud storage (GCP bearer token, S3 presigned POST, or signed URL PUT)
+        3. Trigger import-async job → poll until complete
+
+        Args:
+            table_id: Target table ID (e.g. "in.c-my-bucket.my-table").
+            file_path: Local path to the CSV file.
+            incremental: If True, append rows; if False (default), full load.
+            delimiter: CSV column delimiter (default ",").
+            enclosure: CSV value enclosure character (default '"').
+
+        Returns:
+            Import results dict with importedRowsCount, warnings, etc.
+        """
+        p = Path(file_path)
+        size_bytes = p.stat().st_size
+        upload_info = self.prepare_file_upload(name=p.name, size_bytes=size_bytes)
+        file_id = upload_info["id"]
+        self._upload_to_cloud(upload_info, file_path)
+        job = self.import_table_async(
+            table_id=table_id,
+            file_id=file_id,
+            incremental=incremental,
+            delimiter=delimiter,
+            enclosure=enclosure,
+        )
+        return job.get("results", {})
 
     def delete_table(self, table_id: str) -> dict[str, Any]:
         """Delete a storage table (async, waits for completion).

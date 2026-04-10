@@ -4,6 +4,8 @@ Provides direct Storage API access including sharing/linked bucket metadata
 that is not available via MCP tools.
 """
 
+from pathlib import Path
+
 import typer
 
 from ..errors import ConfigError, KeboolaApiError
@@ -159,6 +161,228 @@ def storage_bucket_detail(
                 formatter.console.print(
                     f"  ... and {len(result['tables']) - 50} more (use --json for full list)"
                 )
+
+
+@storage_app.command("create-bucket")
+def storage_create_bucket(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    stage: str = typer.Option(
+        ...,
+        "--stage",
+        help="Bucket stage: 'in' or 'out'",
+    ),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="Bucket name slug (e.g. 'my-bucket')",
+    ),
+    description: str | None = typer.Option(
+        None,
+        "--description",
+        help="Optional bucket description",
+    ),
+    backend: str | None = typer.Option(
+        None,
+        "--backend",
+        help="Optional backend type (e.g. 'snowflake', 'bigquery')",
+    ),
+) -> None:
+    """Create a new storage bucket."""
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    try:
+        result = service.create_bucket(
+            alias=project, stage=stage, name=name, description=description, backend=backend
+        )
+    except ValueError as exc:
+        formatter.error(message=str(exc), error_code="INVALID_ARGUMENT")
+        raise typer.Exit(code=2) from None
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        formatter.console.print(f"[bold green]Created bucket:[/bold green] {result['id']}")
+        formatter.console.print(f"  Stage: {result['stage']}")
+        formatter.console.print(f"  Backend: {result['backend']}")
+        if result["description"]:
+            formatter.console.print(f"  Description: {result['description']}")
+
+
+@storage_app.command("create-table")
+def storage_create_table(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    bucket_id: str = typer.Option(
+        ...,
+        "--bucket-id",
+        help="Target bucket ID (e.g. 'in.c-my-bucket')",
+    ),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="Table name",
+    ),
+    column: list[str] = typer.Option(
+        ...,
+        "--column",
+        help="Column definition as 'name:TYPE' (e.g. 'id:INTEGER'). Can be repeated. Types: STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP",
+    ),
+    primary_key: list[str] | None = typer.Option(
+        None,
+        "--primary-key",
+        help="Primary key column name. Can be repeated.",
+    ),
+) -> None:
+    """Create a new storage table with typed columns.
+
+    Column types: STRING, INTEGER, NUMERIC, FLOAT, BOOLEAN, DATE, TIMESTAMP.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    try:
+        result = service.create_table(
+            alias=project,
+            bucket_id=bucket_id,
+            name=name,
+            columns=column,
+            primary_key=primary_key,
+        )
+    except ValueError as exc:
+        formatter.error(message=str(exc), error_code="INVALID_ARGUMENT")
+        raise typer.Exit(code=2) from None
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        formatter.console.print(f"[bold green]Created table:[/bold green] {result['table_id']}")
+        if result["primary_key"]:
+            formatter.console.print(f"  Primary key: {', '.join(result['primary_key'])}")
+        formatter.console.print(f"  Columns: {', '.join(result['columns'])}")
+
+
+@storage_app.command("upload-table")
+def storage_upload_table(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    table_id: str = typer.Option(
+        ...,
+        "--table-id",
+        help="Target table ID (e.g. 'in.c-my-bucket.my-table')",
+    ),
+    file: str = typer.Option(
+        ...,
+        "--file",
+        help="Path to the CSV file to upload",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Append rows instead of full load (default: full load)",
+    ),
+    delimiter: str = typer.Option(
+        ",",
+        "--delimiter",
+        help="CSV column delimiter (default: ',')",
+    ),
+    enclosure: str = typer.Option(
+        '"',
+        "--enclosure",
+        help="CSV value enclosure character (default: '\"')'",
+    ),
+    auto_create: bool = typer.Option(
+        True,
+        "--auto-create/--no-auto-create",
+        help="Auto-create bucket and table if they don't exist (default: on). "
+        "Columns are inferred as STRING from the CSV header row.",
+    ),
+) -> None:
+    """Upload a CSV file into a storage table.
+
+    Auto-creates the bucket and table if they don't exist (columns inferred as
+    STRING from the CSV header). Use --no-auto-create to require the table to
+    already exist.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    p = Path(file)
+    if not p.is_file():
+        formatter.error(message=f"File not found: {file}", error_code="FILE_NOT_FOUND")
+        raise typer.Exit(code=2) from None
+
+    if not formatter.json_mode:
+        size_mb = p.stat().st_size / (1024 * 1024)
+        formatter.console.print(
+            f"Uploading [bold]{p.name}[/bold] ({size_mb:.2f} MB) to [cyan]{table_id}[/cyan]..."
+        )
+
+    try:
+        result = service.upload_table(
+            alias=project,
+            table_id=table_id,
+            file_path=file,
+            incremental=incremental,
+            delimiter=delimiter,
+            enclosure=enclosure,
+            auto_create=auto_create,
+        )
+    except ValueError as exc:
+        formatter.error(message=str(exc), error_code="INVALID_ARGUMENT")
+        raise typer.Exit(code=2) from None
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        parts = result["table_id"].split(".")
+        bucket_id = ".".join(parts[:2]) if len(parts) == 3 else ""
+        if result.get("auto_created_bucket") and bucket_id:
+            formatter.console.print(f"[dim]Created bucket: {bucket_id}[/dim]")
+        if result.get("auto_created_table"):
+            formatter.console.print(f"[dim]Created table: {result['table_id']}[/dim]")
+        load_type = "incremental" if result["incremental"] else "full"
+        size_mb = result.get("file_size_bytes", 0) / (1024 * 1024)
+        formatter.console.print(
+            f"[bold green]Uploaded:[/bold green] {result['table_id']} "
+            f"({load_type} load, {size_mb:.2f} MB)"
+        )
+        if result["imported_rows"] is not None:
+            formatter.console.print(f"  Rows imported: {result['imported_rows']}")
+        if result["warnings"]:
+            for w in result["warnings"]:
+                formatter.console.print(f"  [yellow]Warning:[/yellow] {w}")
 
 
 @storage_app.command("tables")

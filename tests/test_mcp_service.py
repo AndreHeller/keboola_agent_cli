@@ -186,14 +186,14 @@ class TestDetectMcpServerCommand:
         mock_which.side_effect = which_side_effect
         mock_run.return_value = MagicMock(returncode=1)
         result = detect_mcp_server_command()
-        assert result == ["uvx", "--prerelease=allow", "keboola_mcp_server"]
+        assert result == ["uvx", "keboola_mcp_server"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_uvx_fallback(self, mock_which: MagicMock) -> None:
         """When only uvx is available, returns uvx WITHOUT @latest."""
         mock_which.side_effect = lambda cmd: "/usr/local/bin/uvx" if cmd == "uvx" else None
         result = detect_mcp_server_command()
-        assert result == ["uvx", "--prerelease=allow", "keboola_mcp_server"]
+        assert result == ["uvx", "keboola_mcp_server"]
 
     @patch("keboola_agent_cli.services.mcp_service.shutil.which")
     def test_nothing_available(self, mock_which: MagicMock) -> None:

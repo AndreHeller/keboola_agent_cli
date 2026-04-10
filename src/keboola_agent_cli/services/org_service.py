@@ -225,6 +225,248 @@ class OrgService:
             "token_expires_in": token_expires_in,
         }
 
+    def refresh_tokens(
+        self,
+        manage_token: str,
+        aliases: list[str] | None = None,
+        token_description: str = DEFAULT_TOKEN_DESCRIPTION,
+        dry_run: bool = False,
+        token_expires_in: int | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Refresh storage API tokens for registered projects.
+
+        Checks each project's token validity and creates new tokens for
+        projects with expired or invalid tokens. Already-valid tokens are
+        skipped unless ``force=True``.
+
+        Args:
+            manage_token: Manage API token (for creating new storage tokens).
+            aliases: Optional list of project aliases to refresh. If None, all
+                projects are checked.
+            token_description: Description prefix for newly created tokens.
+            dry_run: If True, only preview what would happen without making changes.
+            token_expires_in: Token lifetime in seconds. None means no expiration.
+            force: If True, refresh all tokens even if they are still valid.
+
+        Returns:
+            Dict with refresh results including refreshed, valid, skipped,
+            and failed projects.
+        """
+        config = self._config_store.load()
+
+        # Determine which projects to check
+        projects_to_check: list[tuple[str, ProjectConfig]] = []
+        failed: list[dict[str, Any]] = []
+
+        if aliases:
+            for alias in aliases:
+                if alias not in config.projects:
+                    failed.append(
+                        {
+                            "alias": alias,
+                            "project_name": "",
+                            "error": f"Project '{alias}' not found in config",
+                        }
+                    )
+                else:
+                    projects_to_check.append((alias, config.projects[alias]))
+        else:
+            projects_to_check = list(config.projects.items())
+
+        if not projects_to_check:
+            return {
+                "dry_run": dry_run,
+                "projects_checked": 0,
+                "projects_refreshed": [],
+                "projects_valid": [],
+                "projects_skipped": [],
+                "projects_failed": failed,
+                "token_expires_in": token_expires_in,
+            }
+
+        # Resolve manage token owner identity for unique token naming
+        owner_name = ""
+        manage_client = self._manage_client_factory(
+            projects_to_check[0][1].stack_url,
+            manage_token,
+        )
+        try:
+            token_info = manage_client.verify_token()
+            user_info = token_info.get("user", {})
+            owner_name = user_info.get("email") or user_info.get("name", "")
+        except Exception:
+            logger.debug("Could not resolve manage token owner identity")
+        finally:
+            manage_client.close()
+
+        projects_refreshed: list[dict[str, Any]] = []
+        projects_valid: list[dict[str, Any]] = []
+        projects_skipped: list[dict[str, Any]] = []
+
+        for alias, project in projects_to_check:
+            # Skip projects without project_id (cannot create tokens via Manage API)
+            if project.project_id is None:
+                projects_skipped.append(
+                    {
+                        "alias": alias,
+                        "project_name": project.project_name,
+                        "reason": "Cannot refresh: project_id is missing",
+                    }
+                )
+                continue
+
+            # Check current token validity
+            token_valid = False
+            try:
+                client = self._storage_client_factory(project.stack_url, project.token)
+                try:
+                    client.verify_token()
+                    token_valid = True
+                except KeboolaApiError as exc:
+                    if exc.error_code == "INVALID_TOKEN":
+                        token_valid = False
+                    else:
+                        raise
+                finally:
+                    client.close()
+            except KeboolaApiError:
+                token_valid = False
+            except Exception as exc:
+                failed.append(
+                    {
+                        "alias": alias,
+                        "project_name": project.project_name,
+                        "error": f"Error checking token: {exc}",
+                    }
+                )
+                continue
+
+            # Valid token and not forcing refresh
+            if token_valid and not force:
+                projects_valid.append(
+                    {
+                        "alias": alias,
+                        "project_id": project.project_id,
+                        "project_name": project.project_name,
+                    }
+                )
+                continue
+
+            # Token needs refresh (or force=True)
+            if dry_run:
+                projects_refreshed.append(
+                    {
+                        "alias": alias,
+                        "project_id": project.project_id,
+                        "project_name": project.project_name,
+                        "token": "***",
+                        "action": "would_refresh",
+                    }
+                )
+                continue
+
+            try:
+                new_token = self._refresh_single_project(
+                    manage_token=manage_token,
+                    alias=alias,
+                    project=project,
+                    token_description=token_description,
+                    owner_name=owner_name,
+                    token_expires_in=token_expires_in,
+                )
+                projects_refreshed.append(
+                    {
+                        "alias": alias,
+                        "project_id": project.project_id,
+                        "project_name": project.project_name,
+                        "token": mask_token(new_token),
+                        "action": "refreshed",
+                    }
+                )
+            except Exception as exc:
+                failed.append(
+                    {
+                        "alias": alias,
+                        "project_name": project.project_name,
+                        "error": str(exc),
+                    }
+                )
+
+        total_count = len(projects_to_check)
+
+        return {
+            "dry_run": dry_run,
+            "projects_checked": total_count,
+            "projects_refreshed": projects_refreshed,
+            "projects_valid": projects_valid,
+            "projects_skipped": projects_skipped,
+            "projects_failed": failed,
+            "token_expires_in": token_expires_in,
+        }
+
+    def _refresh_single_project(
+        self,
+        manage_token: str,
+        alias: str,
+        project: ProjectConfig,
+        token_description: str,
+        owner_name: str = "",
+        token_expires_in: int | None = None,
+    ) -> str:
+        """Create a new token for an existing project and update the config.
+
+        Args:
+            manage_token: Manage API token (for creating the storage token).
+            alias: The project alias in the config store.
+            project: The existing project configuration.
+            token_description: Description prefix for the created token.
+            owner_name: Email/name of the manage token owner (for unique identification).
+            token_expires_in: Token lifetime in seconds. None means no expiration.
+
+        Returns:
+            The new storage API token string.
+        """
+        description = f"{token_description} [{owner_name}]" if owner_name else token_description
+
+        logger.info(
+            "Refreshing token for project %d (%s) alias '%s' with description '%s'",
+            project.project_id,
+            project.project_name,
+            alias,
+            description,
+        )
+
+        # Create a new Storage API token via Manage API
+        manage_client = self._manage_client_factory(project.stack_url, manage_token)
+        try:
+            token_data = manage_client.create_project_token(
+                project_id=project.project_id,
+                description=description,
+                expires_in=token_expires_in,
+            )
+        finally:
+            manage_client.close()
+
+        storage_token = token_data["token"]
+
+        # Verify the new token to get project info
+        storage_client = self._storage_client_factory(project.stack_url, storage_token)
+        try:
+            token_info = storage_client.verify_token()
+        finally:
+            storage_client.close()
+
+        # Update the project in config
+        self._config_store.edit_project(
+            alias,
+            token=storage_token,
+            project_name=token_info.project_name,
+            project_id=token_info.project_id,
+        )
+
+        return storage_token
+
     @staticmethod
     def _fetch_projects_by_ids(
         manage_client: ManageClient,

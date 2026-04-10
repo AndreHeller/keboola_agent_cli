@@ -223,6 +223,8 @@ kbagent project list
 kbagent project remove --project NAME
 kbagent project edit --project NAME [--url URL] [--token TOKEN]
 kbagent project status [--project NAME]
+kbagent project refresh --project ALIAS [--dry-run] [--force] [--yes] [--token-description DESC] [--token-expires-in N]
+kbagent project refresh --all [--dry-run] [--force] [--yes] [--token-description DESC] [--token-expires-in N]
 
 kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID] [--branch ID]
 kbagent config detail --project NAME --component-id ID --config-id ID [--branch ID]
@@ -245,8 +247,8 @@ kbagent sharing unshare --project ALIAS --bucket-id ID
 kbagent sharing link --project ALIAS --source-project-id ID --bucket-id ID [--name NAME]
 kbagent sharing unlink --project ALIAS --bucket-id ID
 
-kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
-kbagent org setup --project-ids 1,2,3 --url URL [--dry-run] [--yes] [--token-description PREFIX]
+kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]
+kbagent org setup --project-ids 1,2,3 --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]
 
 kbagent tool list [--project NAME] [--branch ID]
 kbagent tool call TOOL_NAME [--project NAME] [--input JSON|@file|-] [--branch ID]

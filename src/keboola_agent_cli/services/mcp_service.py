@@ -118,8 +118,10 @@ def detect_mcp_server_command() -> list[str] | None:
         if result.returncode == 0:
             return ["python", "-m", "keboola_mcp_server"]
     # 3. uvx WITHOUT @latest (uses cached version: ~1s cached / ~4.5s uncached)
+    # No --prerelease=allow: pre-releases can pull broken dependency chains
+    # (e.g. FastMCP 2.14.5 with broken fakeredis). Stable releases only.
     if shutil.which("uvx"):
-        return ["uvx", "--prerelease=allow", "keboola_mcp_server"]
+        return ["uvx", "keboola_mcp_server"]
     return None
 
 
@@ -159,7 +161,7 @@ def ensure_mcp_installed() -> dict[str, Any]:
     if shutil.which("uv"):
         try:
             result = subprocess.run(
-                ["uv", "tool", "install", "--prerelease=allow", "keboola-mcp-server"],
+                ["uv", "tool", "install", "keboola-mcp-server"],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -186,7 +188,7 @@ def ensure_mcp_installed() -> dict[str, Any]:
         return {
             "method": "uvx_fallback",
             "installed": False,
-            "message": "Using uvx (slower). Run 'uv tool install --prerelease=allow keboola-mcp-server' for faster startup",
+            "message": "Using uvx (slower). Run 'uv tool install keboola-mcp-server' for faster startup",
         }
 
     return {
@@ -1472,9 +1474,7 @@ class McpService(BaseService):
         message = f"MCP server available via: {' '.join(command)} ({transport_info})"
         if is_uvx_fallback:
             status = "warn"
-            message += (
-                ". For faster startup, run: uv tool install --prerelease=allow keboola-mcp-server"
-            )
+            message += ". For faster startup, run: uv tool install keboola-mcp-server"
 
         return {
             "check": "mcp_server",

@@ -675,3 +675,525 @@ class TestUniqueAlias:
 
     def test_gap_in_sequence(self) -> None:
         assert OrgService._unique_alias("prod", {"prod", "prod-2", "prod-3"}) == "prod-4"
+
+
+class TestRefreshTokens:
+    """Tests for OrgService.refresh_tokens()."""
+
+    @staticmethod
+    def _setup_store(tmp_path: Path, projects: dict[str, dict]) -> ConfigStore:
+        """Create a ConfigStore with the given projects pre-registered.
+
+        Args:
+            tmp_path: Temporary directory for config files.
+            projects: Mapping of alias -> project kwargs for ProjectConfig.
+
+        Returns:
+            ConfigStore with all projects added.
+        """
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = ConfigStore(config_dir=config_dir)
+        for alias, kwargs in projects.items():
+            store.add_project(alias, ProjectConfig(**kwargs))
+        return store
+
+    @staticmethod
+    def _make_manage_mock(
+        token_response: dict | None = None,
+        verify_response: dict | None = None,
+    ) -> MagicMock:
+        """Create a mock ManageClient for refresh operations.
+
+        Args:
+            token_response: Response from create_project_token.
+            verify_response: Response from verify_token (manage token identity).
+
+        Returns:
+            MagicMock configured as ManageClient.
+        """
+        mock = MagicMock()
+        mock.create_project_token.return_value = token_response or {
+            "id": "tok-new",
+            "token": "901-99999-newGeneratedTokenValue12345",
+            "description": "kbagent-cli",
+        }
+        mock.verify_token.return_value = verify_response or {
+            "user": {"email": "admin@test.com", "name": "Admin"},
+        }
+        return mock
+
+    def test_refresh_single_invalid_token(self, tmp_path: Path) -> None:
+        """An invalid token is detected and refreshed with a new one."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "prod": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-old-expiredTokenValue123456789",
+                    "project_name": "Prod",
+                    "project_id": 100,
+                },
+            },
+        )
+
+        # Storage client: first call (old token check) fails, second call (new token verify) succeeds
+        mock_storage = MagicMock()
+        mock_storage.verify_token.side_effect = [
+            KeboolaApiError(
+                message="Invalid token",
+                status_code=401,
+                error_code="INVALID_TOKEN",
+            ),
+            TokenVerifyResponse(
+                token_id="new-123",
+                token_description="kbagent-cli",
+                project_id=100,
+                project_name="Prod",
+                owner_name="Prod",
+            ),
+        ]
+
+        def storage_factory(url: str, token: str) -> MagicMock:
+            return mock_storage
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+        )
+
+        assert result["projects_checked"] == 1
+        assert len(result["projects_refreshed"]) == 1
+        assert result["projects_refreshed"][0]["alias"] == "prod"
+        assert result["projects_refreshed"][0]["action"] == "refreshed"
+        assert result["projects_refreshed"][0]["project_id"] == 100
+        assert len(result["projects_valid"]) == 0
+        assert len(result["projects_failed"]) == 0
+
+        # Config should be updated with the new token
+        config = store.load()
+        assert config.projects["prod"].token == "901-99999-newGeneratedTokenValue12345"
+
+    def test_refresh_all_only_invalid(self, tmp_path: Path) -> None:
+        """With two projects, only the one with an invalid token is refreshed."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "prod": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-prod-validTokenValue1234567890",
+                    "project_name": "Prod",
+                    "project_id": 100,
+                },
+                "dev": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-dev-expiredTokenValue123456789",
+                    "project_name": "Dev",
+                    "project_id": 200,
+                },
+            },
+        )
+
+        # We need per-project storage mocks since each project gets its own client
+        call_count = {"n": 0}
+
+        def storage_factory(url, token):
+            call_count["n"] += 1
+            mock = MagicMock()
+            if "prod-valid" in token:
+                # Prod: valid token
+                mock.verify_token.return_value = TokenVerifyResponse(
+                    token_id="prod-tok",
+                    token_description="kbagent-cli",
+                    project_id=100,
+                    project_name="Prod",
+                    owner_name="Prod",
+                )
+            elif "dev-expired" in token:
+                # Dev: invalid old token
+                mock.verify_token.side_effect = KeboolaApiError(
+                    message="Invalid token",
+                    status_code=401,
+                    error_code="INVALID_TOKEN",
+                )
+            else:
+                # New token verification (after refresh)
+                mock.verify_token.return_value = TokenVerifyResponse(
+                    token_id="new-dev-tok",
+                    token_description="kbagent-cli",
+                    project_id=200,
+                    project_name="Dev",
+                    owner_name="Dev",
+                )
+            return mock
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+        )
+
+        assert result["projects_checked"] == 2
+        assert len(result["projects_valid"]) == 1
+        assert result["projects_valid"][0]["alias"] == "prod"
+        assert len(result["projects_refreshed"]) == 1
+        assert result["projects_refreshed"][0]["alias"] == "dev"
+        assert result["projects_refreshed"][0]["action"] == "refreshed"
+        assert len(result["projects_failed"]) == 0
+
+    def test_refresh_dry_run(self, tmp_path: Path) -> None:
+        """Dry run reports what would be refreshed without making changes."""
+        old_token = "901-old-expiredTokenValue123456789"
+        store = self._setup_store(
+            tmp_path,
+            {
+                "prod": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": old_token,
+                    "project_name": "Prod",
+                    "project_id": 100,
+                },
+            },
+        )
+
+        mock_storage = MagicMock()
+        mock_storage.verify_token.side_effect = KeboolaApiError(
+            message="Invalid token",
+            status_code=401,
+            error_code="INVALID_TOKEN",
+        )
+
+        def storage_factory(url: str, token: str) -> MagicMock:
+            return mock_storage
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+            dry_run=True,
+        )
+
+        assert result["dry_run"] is True
+        assert len(result["projects_refreshed"]) == 1
+        assert result["projects_refreshed"][0]["action"] == "would_refresh"
+        assert result["projects_refreshed"][0]["token"] == "***"
+
+        # Config should NOT be updated
+        config = store.load()
+        assert config.projects["prod"].token == old_token
+
+        # create_project_token should NOT have been called
+        manage_mock.create_project_token.assert_not_called()
+
+    def test_refresh_force_valid_token(self, tmp_path: Path) -> None:
+        """force=True refreshes even valid tokens."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "prod": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-prod-validTokenValue1234567890",
+                    "project_name": "Prod",
+                    "project_id": 100,
+                },
+            },
+        )
+
+        # Storage: first call (check) succeeds, second call (verify new) also succeeds
+        call_count = {"n": 0}
+
+        def storage_factory(url, token):
+            call_count["n"] += 1
+            mock = MagicMock()
+            mock.verify_token.return_value = TokenVerifyResponse(
+                token_id=f"tok-{call_count['n']}",
+                token_description="kbagent-cli",
+                project_id=100,
+                project_name="Prod",
+                owner_name="Prod",
+            )
+            return mock
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+            force=True,
+        )
+
+        assert result["projects_checked"] == 1
+        assert len(result["projects_refreshed"]) == 1
+        assert result["projects_refreshed"][0]["alias"] == "prod"
+        assert result["projects_refreshed"][0]["action"] == "refreshed"
+        assert len(result["projects_valid"]) == 0
+
+        # create_project_token should have been called despite valid token
+        manage_mock.create_project_token.assert_called_once()
+
+        # Config should be updated with the new token
+        config = store.load()
+        assert config.projects["prod"].token == "901-99999-newGeneratedTokenValue12345"
+
+    def test_refresh_skip_no_project_id(self, tmp_path: Path) -> None:
+        """Projects without project_id are skipped with explanation."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "legacy": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-legacy-tokenValue12345678901",
+                    "project_name": "Legacy",
+                    # project_id defaults to None
+                },
+            },
+        )
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        mock_storage = MagicMock()
+
+        def storage_factory(url: str, token: str) -> MagicMock:
+            return mock_storage
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+        )
+
+        assert result["projects_checked"] == 1
+        assert len(result["projects_skipped"]) == 1
+        assert result["projects_skipped"][0]["alias"] == "legacy"
+        assert "project_id is missing" in result["projects_skipped"][0]["reason"]
+        assert len(result["projects_refreshed"]) == 0
+        assert len(result["projects_valid"]) == 0
+
+        # Storage verify_token should NOT have been called (skipped before check)
+        mock_storage.verify_token.assert_not_called()
+
+    def test_refresh_partial_failure(self, tmp_path: Path) -> None:
+        """One project refreshing successfully while another fails."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "alpha": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-alpha-expiredTokenValue12345",
+                    "project_name": "Alpha",
+                    "project_id": 100,
+                },
+                "beta": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-beta-expiredTokenValue123456",
+                    "project_name": "Beta",
+                    "project_id": 200,
+                },
+            },
+        )
+
+        # Storage: all old tokens are invalid, new token verification succeeds
+        def storage_factory(url, token):
+            mock = MagicMock()
+            if "expired" in token:
+                mock.verify_token.side_effect = KeboolaApiError(
+                    message="Invalid token",
+                    status_code=401,
+                    error_code="INVALID_TOKEN",
+                )
+            else:
+                mock.verify_token.return_value = TokenVerifyResponse(
+                    token_id="new-tok",
+                    token_description="kbagent-cli",
+                    project_id=100,
+                    project_name="Alpha",
+                    owner_name="Alpha",
+                )
+            return mock
+
+        # Manage: first create_project_token succeeds, second fails
+        create_call_count = {"n": 0}
+
+        def manage_factory(url, token):
+            mock = MagicMock()
+            mock.verify_token.return_value = {
+                "user": {"email": "admin@test.com", "name": "Admin"},
+            }
+
+            def create_token(project_id, description, **kwargs):
+                create_call_count["n"] += 1
+                if project_id == 200:
+                    raise KeboolaApiError(
+                        message="Access denied to project 200",
+                        status_code=403,
+                        error_code="ACCESS_DENIED",
+                    )
+                return {
+                    "id": "tok-new",
+                    "token": "901-99999-newGeneratedTokenValue12345",
+                    "description": description,
+                }
+
+            mock.create_project_token.side_effect = create_token
+            return mock
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+        )
+
+        assert result["projects_checked"] == 2
+        assert len(result["projects_refreshed"]) == 1
+        assert result["projects_refreshed"][0]["alias"] == "alpha"
+        assert len(result["projects_failed"]) == 1
+        assert result["projects_failed"][0]["alias"] == "beta"
+        assert "Access denied" in result["projects_failed"][0]["error"]
+
+    def test_refresh_all_valid_no_action(self, tmp_path: Path) -> None:
+        """All valid tokens result in no refreshes."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "prod": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-prod-validTokenValue1234567890",
+                    "project_name": "Prod",
+                    "project_id": 100,
+                },
+                "dev": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-dev-validTokenValue12345678901",
+                    "project_name": "Dev",
+                    "project_id": 200,
+                },
+            },
+        )
+
+        def storage_factory(url, token):
+            mock = MagicMock()
+            if "prod-valid" in token:
+                pid, name = 100, "Prod"
+            else:
+                pid, name = 200, "Dev"
+            mock.verify_token.return_value = TokenVerifyResponse(
+                token_id=f"tok-{pid}",
+                token_description="kbagent-cli",
+                project_id=pid,
+                project_name=name,
+                owner_name=name,
+            )
+            return mock
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+        )
+
+        assert result["projects_checked"] == 2
+        assert len(result["projects_valid"]) == 2
+        assert len(result["projects_refreshed"]) == 0
+        assert len(result["projects_failed"]) == 0
+        assert len(result["projects_skipped"]) == 0
+
+        # create_project_token should NOT have been called
+        manage_mock.create_project_token.assert_not_called()
+
+    def test_refresh_unknown_alias(self, tmp_path: Path) -> None:
+        """Requesting an unknown alias reports it as failed."""
+        store = self._setup_store(
+            tmp_path,
+            {
+                "prod": {
+                    "stack_url": "https://connection.keboola.com",
+                    "token": "901-prod-validTokenValue1234567890",
+                    "project_name": "Prod",
+                    "project_id": 100,
+                },
+            },
+        )
+
+        manage_mock = self._make_manage_mock()
+
+        def manage_factory(url: str, token: str) -> MagicMock:
+            return manage_mock
+
+        mock_storage = MagicMock()
+
+        def storage_factory(url: str, token: str) -> MagicMock:
+            return mock_storage
+
+        service = OrgService(
+            config_store=store,
+            manage_client_factory=manage_factory,
+            storage_client_factory=storage_factory,
+        )
+
+        result = service.refresh_tokens(
+            manage_token="manage-token-123456789012345678",
+            aliases=["nonexistent"],
+        )
+
+        assert len(result["projects_failed"]) == 1
+        assert result["projects_failed"][0]["alias"] == "nonexistent"
+        assert "not found in config" in result["projects_failed"][0]["error"]
+        assert result["projects_checked"] == 0
+        assert len(result["projects_refreshed"]) == 0
+        assert len(result["projects_valid"]) == 0

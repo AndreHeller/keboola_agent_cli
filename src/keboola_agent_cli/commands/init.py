@@ -2,6 +2,7 @@
 
 import json
 import stat
+import sys
 from pathlib import Path
 
 import typer
@@ -42,8 +43,31 @@ def init_command(
         return
 
     config = AppConfig()
-    if from_global:
-        global_store: ConfigStore = get_service(ctx, "config_store")
+
+    # Check if global config has projects to offer
+    global_store: ConfigStore = get_service(ctx, "config_store")
+    copy_from_global = from_global
+
+    if not from_global and global_store.source == "global":
+        try:
+            global_config = global_store.load()
+            project_count = len(global_config.projects)
+            if project_count > 0:
+                is_tty = hasattr(sys.stdin, "isatty") and sys.stdin.isatty()
+                if not formatter.json_mode and is_tty:
+                    copy_from_global = typer.confirm(
+                        f"Global config has {project_count} project(s). Copy to local workspace?",
+                        default=True,
+                    )
+                else:
+                    formatter.warning(
+                        f"Global config has {project_count} project(s) that won't be "
+                        "available in local workspace. Use --from-global to copy them."
+                    )
+        except Exception:
+            pass  # Global config unreadable, proceed with empty
+
+    if copy_from_global:
         if global_store.source != "global":
             formatter.error(
                 "CONFIG_ERROR",
@@ -73,7 +97,7 @@ def init_command(
 
     project_count = len(config.projects)
     message = f"Initialized local workspace at {local_dir}"
-    if from_global and project_count > 0:
+    if copy_from_global and project_count > 0:
         message += f" (copied {project_count} project(s) from global config)"
     if read_only:
         message += " [read-only mode]"
@@ -83,7 +107,7 @@ def init_command(
             "message": message,
             "path": str(local_dir),
             "created": True,
-            "projects_copied": project_count if from_global else 0,
+            "projects_copied": project_count if copy_from_global else 0,
             "read_only": read_only,
         }
     )

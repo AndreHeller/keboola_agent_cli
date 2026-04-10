@@ -69,6 +69,10 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent project status [--project NAME]
     Test connectivity. Shows OK/ERROR with response time.
 
+  kbagent project refresh --project ALIAS [--dry-run] [--force] [--yes] [--token-description ...] [--token-expires-in N]
+  kbagent project refresh --all [--dry-run] [--force] [--yes] [--token-description ...] [--token-expires-in N]
+    Refresh project tokens via Manage API. --all refreshes all projects. --force replaces non-expiring tokens.
+
 ### Component Discovery
 
   kbagent component list [--project NAME] [--type TYPE] [--query "search"]
@@ -159,10 +163,11 @@ Use `kbagent <command> --help` for full flag details and examples.
 
 ### Organization Management
 
-  kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX]
+  kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]
     Bulk-onboard all org projects. Requires org-admin manage token. Idempotent.
+    --refresh also refreshes tokens for already-registered projects with invalid tokens.
 
-  kbagent org setup --project-ids 901,9621,10539 --url URL [--dry-run] [--yes]
+  kbagent org setup --project-ids 901,9621,10539 --url URL [--dry-run] [--yes] [--refresh]
     Non-admin mode: onboard specific projects by ID. Works with Personal Access Token (PAT).
     Use --org-id OR --project-ids (at least one required).
     Token via KBC_MANAGE_API_TOKEN env var or interactive prompt.

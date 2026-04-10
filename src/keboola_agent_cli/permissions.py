@@ -19,6 +19,7 @@ OPERATION_REGISTRY: dict[str, str] = {
     "project.remove": "admin",
     "project.edit": "admin",
     "project.status": "read",
+    "project.refresh": "admin",
     # Config browsing & management
     "config.list": "read",
     "config.detail": "read",

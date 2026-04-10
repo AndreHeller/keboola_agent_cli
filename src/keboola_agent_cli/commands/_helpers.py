@@ -7,14 +7,46 @@ Provides common patterns used by all CLI commands:
 - Branch resolution for --branch flag
 """
 
+import os
+import sys
 from typing import Any
 
 import typer
 
 from ..config_store import ConfigStore
-from ..constants import EXIT_PERMISSION_DENIED
+from ..constants import ENV_KBC_MANAGE_API_TOKEN, EXIT_PERMISSION_DENIED
 from ..errors import KeboolaApiError, PermissionDeniedError
 from ..output import OutputFormatter
+
+
+def resolve_manage_token() -> str:
+    """Resolve the manage token from env var or interactive prompt.
+
+    Token resolution order:
+    1. KBC_MANAGE_API_TOKEN env var (for CI/CD)
+    2. Interactive prompt with hidden input (if TTY)
+    3. Error if neither available
+
+    Returns:
+        The manage API token.
+
+    Raises:
+        typer.Exit: If no token can be resolved.
+    """
+    env_token = os.environ.get(ENV_KBC_MANAGE_API_TOKEN)
+    if env_token:
+        return env_token
+
+    is_tty = hasattr(sys.stdin, "isatty") and sys.stdin.isatty()
+    if is_tty:
+        return typer.prompt("Manage API token", hide_input=True)
+
+    typer.echo(
+        f"Error: No manage token available. Set {ENV_KBC_MANAGE_API_TOKEN} env var "
+        "or run interactively.",
+        err=True,
+    )
+    raise typer.Exit(code=2)
 
 
 def get_formatter(ctx: typer.Context) -> OutputFormatter:

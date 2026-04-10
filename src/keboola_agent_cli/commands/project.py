@@ -11,9 +11,20 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..constants import DEFAULT_STACK_URL, ENV_KBC_STORAGE_API_URL, ENV_KBC_TOKEN
+from ..constants import (
+    DEFAULT_STACK_URL,
+    DEFAULT_TOKEN_DESCRIPTION,
+    ENV_KBC_STORAGE_API_URL,
+    ENV_KBC_TOKEN,
+)
 from ..errors import ConfigError, KeboolaApiError
-from ._helpers import check_cli_permission, get_formatter, get_service, map_error_to_exit_code
+from ._helpers import (
+    check_cli_permission,
+    get_formatter,
+    get_service,
+    map_error_to_exit_code,
+    resolve_manage_token,
+)
 
 project_app = typer.Typer(help="Manage connected Keboola projects")
 
@@ -238,6 +249,89 @@ def project_edit(
         raise typer.Exit(code=5) from None
 
 
+def _format_refresh_result(console: Console, data: dict) -> None:
+    """Render token refresh results as Rich tables with summary."""
+    dry_run = data.get("dry_run", False)
+    mode_label = "[bold yellow]DRY RUN[/bold yellow] " if dry_run else ""
+    console.print(f"\n{mode_label}Token Refresh\n")
+
+    # Refreshed projects
+    refreshed = data.get("projects_refreshed", [])
+    if refreshed:
+        action_label = "Projects to Refresh" if dry_run else "Projects Refreshed"
+        table = Table(title=action_label)
+        table.add_column("Alias", style="bold cyan")
+        table.add_column("Project ID", justify="right")
+        table.add_column("Project Name")
+        if not dry_run:
+            table.add_column("Token", style="dim")
+
+        for p in refreshed:
+            if dry_run:
+                table.add_row(p["alias"], str(p["project_id"]), p["project_name"])
+            else:
+                table.add_row(
+                    p["alias"], str(p["project_id"]), p["project_name"], p.get("token", "")
+                )
+
+        console.print(table)
+        console.print()
+
+    # Valid projects (tokens that were fine)
+    valid = data.get("projects_valid", [])
+    if valid:
+        table = Table(title="Projects Valid")
+        table.add_column("Alias", style="bold cyan")
+        table.add_column("Project ID", justify="right")
+        table.add_column("Project Name")
+
+        for p in valid:
+            table.add_row(p["alias"], str(p["project_id"]), p["project_name"])
+
+        console.print(table)
+        console.print()
+
+    # Skipped projects
+    skipped = data.get("projects_skipped", [])
+    if skipped:
+        table = Table(title="Projects Skipped")
+        table.add_column("Alias", style="bold cyan")
+        table.add_column("Reason", style="dim")
+
+        for p in skipped:
+            table.add_row(p["alias"], p["reason"])
+
+        console.print(table)
+        console.print()
+
+    # Failed projects
+    failed = data.get("projects_failed", [])
+    if failed:
+        table = Table(title="Projects Failed")
+        table.add_column("Alias", style="bold cyan")
+        table.add_column("Error", style="bold red")
+
+        for p in failed:
+            table.add_row(p["alias"], p["error"])
+
+        console.print(table)
+        console.print()
+
+    # Summary line
+    summary_parts = []
+    if refreshed:
+        verb = "to refresh" if dry_run else "refreshed"
+        summary_parts.append(f"[bold green]{len(refreshed)}[/bold green] {verb}")
+    if valid:
+        summary_parts.append(f"[bold green]{len(valid)}[/bold green] valid")
+    if skipped:
+        summary_parts.append(f"[dim]{len(skipped)} skipped[/dim]")
+    if failed:
+        summary_parts.append(f"[bold red]{len(failed)} failed[/bold red]")
+
+    console.print("Summary: " + ", ".join(summary_parts) if summary_parts else "No changes.")
+
+
 @project_app.command("status")
 def project_status(
     ctx: typer.Context,
@@ -265,3 +359,111 @@ def project_status(
             retryable=exc.retryable,
         )
         raise typer.Exit(code=exit_code) from None
+
+
+@project_app.command("refresh")
+def project_refresh(
+    ctx: typer.Context,
+    project: str | None = typer.Option(
+        None, "--project", "-p", help="Refresh token for a specific project"
+    ),
+    all_projects: bool = typer.Option(
+        False, "--all", help="Refresh all projects with invalid tokens"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview what would be refreshed without making changes"
+    ),
+    force: bool = typer.Option(False, "--force", help="Refresh even if token is valid"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    token_description: str = typer.Option(
+        DEFAULT_TOKEN_DESCRIPTION,
+        "--token-description",
+        help="Description prefix for created Storage API tokens",
+    ),
+    token_expires_in: int | None = typer.Option(
+        None,
+        "--token-expires-in",
+        min=1,
+        help="Token lifetime in seconds. If not set, tokens never expire.",
+    ),
+) -> None:
+    """Refresh expired or invalid Storage API tokens.
+
+    Creates new tokens via the Manage API and updates the local config.
+    Requires a Manage API token (via KBC_MANAGE_API_TOKEN env var or interactive prompt).
+
+    \b
+    Examples:
+        kbagent project refresh --project prod
+        kbagent project refresh --all
+        kbagent project refresh --all --dry-run
+        kbagent project refresh --all --force
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "org_service")
+
+    # Validate: must have --project or --all, not both, not neither
+    if project and all_projects:
+        formatter.error(
+            message="Provide --project or --all, not both",
+            error_code="usage_error",
+        )
+        raise typer.Exit(code=2)
+    if not project and not all_projects:
+        formatter.error(
+            message="Provide --project or --all",
+            error_code="usage_error",
+        )
+        raise typer.Exit(code=2)
+
+    manage_token = resolve_manage_token()
+
+    aliases = [project] if project else None
+
+    # Build kwargs shared by preview and real call
+    refresh_kwargs: dict = {
+        "manage_token": manage_token,
+        "aliases": aliases,
+        "token_description": token_description,
+        "token_expires_in": token_expires_in,
+        "force": force,
+    }
+
+    # Interactive safety: show preview first, then confirm
+    interactive = not formatter.json_mode and not yes and not dry_run
+    if interactive:
+        try:
+            preview = service.refresh_tokens(**refresh_kwargs, dry_run=True)
+        except KeboolaApiError as exc:
+            exit_code = map_error_to_exit_code(exc)
+            formatter.error(
+                message=exc.message,
+                error_code=exc.error_code,
+                retryable=exc.retryable,
+            )
+            raise typer.Exit(code=exit_code) from None
+
+        _format_refresh_result(formatter.console, preview)
+
+        would_refresh = len(preview.get("projects_refreshed", []))
+        if would_refresh == 0:
+            formatter.console.print("\nAll tokens are valid.")
+            return
+
+        if not typer.confirm(f"\nProceed to refresh {would_refresh} token(s)?"):
+            formatter.console.print("Aborted.")
+            raise typer.Exit(code=0)
+
+    # Execute the actual refresh
+    try:
+        result = service.refresh_tokens(**refresh_kwargs, dry_run=dry_run)
+    except KeboolaApiError as exc:
+        exit_code = map_error_to_exit_code(exc)
+        formatter.error(
+            message=exc.message,
+            error_code=exc.error_code,
+            retryable=exc.retryable,
+        )
+        raise typer.Exit(code=exit_code) from None
+
+    formatter.output(result, _format_refresh_result)

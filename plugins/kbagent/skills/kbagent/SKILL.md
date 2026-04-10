@@ -156,7 +156,7 @@ If kbagent is not yet installed:
 
 ```bash
 uv tool install git+https://github.com/padak/keboola_agent_cli
-uv tool install --prerelease=allow keboola-mcp-server
+uv tool install keboola-mcp-server
 kbagent doctor --fix
 ```
 

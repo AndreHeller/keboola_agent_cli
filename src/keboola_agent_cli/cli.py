@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from pathlib import Path
 
 import typer
 
@@ -184,6 +185,28 @@ def main(
     ctx.obj["workspace_service"] = workspace_service
     ctx.obj["doctor_service"] = doctor_service
     ctx.obj["version_service"] = version_service
+
+    # Warn if empty local config shadows global with projects (#104)
+    if source == "local" and not json_output and ctx.invoked_subcommand != "init":
+        try:
+            local_config = config_store.load()
+            if not local_config.projects:
+                import platformdirs as _platformdirs
+
+                _global_dir = Path(_platformdirs.user_config_dir("keboola-agent-cli"))
+                _global_path = _global_dir / "config.json"
+                if _global_path.is_file():
+                    _global_store = ConfigStore(config_dir=_global_dir, source="global")
+                    _global_config = _global_store.load()
+                    if _global_config.projects:
+                        _count = len(_global_config.projects)
+                        formatter.warning(
+                            f"Local workspace has no projects but global config has {_count}. "
+                            f"Run 'kbagent init --from-global' to copy them, "
+                            f"or remove {config_store.config_path.parent}/ to use global config."
+                        )
+        except Exception:
+            pass  # Don't let warning check crash the CLI
 
     # Enforce permissions for top-level commands (sub-app commands use callbacks)
     _top_level_commands = {"init", "doctor", "version", "update", "context", "repl"}

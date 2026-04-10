@@ -13,7 +13,7 @@ from helpers import make_mock_client
 from keboola_agent_cli.cli import app
 from keboola_agent_cli.config_store import ConfigStore
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
-from keboola_agent_cli.models import ProjectConfig
+from keboola_agent_cli.models import AppConfig, ProjectConfig
 from keboola_agent_cli.services.config_service import ConfigService
 from keboola_agent_cli.services.job_service import JobService
 from keboola_agent_cli.services.lineage_service import LineageService
@@ -5761,6 +5761,157 @@ class TestInit:
         local_store = ConfigStore(config_dir=tmp_path / ".kbagent")
         local_config = local_store.load()
         assert "prod" in local_config.projects
+
+    def test_init_prompts_to_copy_global_projects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init prompts to copy projects when global config has projects (#104)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        global_dir = tmp_path / "global-config"
+        global_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.resolve_config_dir") as mock_resolve,
+            patch(
+                "keboola_agent_cli.commands.init.typer.confirm", return_value=True
+            ) as mock_confirm,
+            patch("keboola_agent_cli.commands.init.sys") as mock_sys,
+        ):
+            mock_resolve.return_value = (global_dir, "global")
+            mock_sys.stdin.isatty.return_value = True
+
+            global_store = ConfigStore(config_dir=global_dir, source="global")
+            global_store.add_project(
+                "prod",
+                ProjectConfig(
+                    stack_url="https://connection.keboola.com",
+                    token="901-xxx-testtoken1234",
+                    project_name="Production",
+                    project_id=1234,
+                ),
+            )
+
+            result = runner.invoke(app, ["init"])
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        mock_confirm.assert_called_once()
+        assert "Copy to local workspace?" in mock_confirm.call_args[0][0]
+
+        # Verify local config got the project
+        local_store = ConfigStore(config_dir=tmp_path / ".kbagent")
+        local_config = local_store.load()
+        assert "prod" in local_config.projects
+
+    def test_init_prompt_decline_creates_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Declining the prompt creates empty local config (#104)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        global_dir = tmp_path / "global-config"
+        global_dir.mkdir()
+
+        with (
+            patch("keboola_agent_cli.cli.resolve_config_dir") as mock_resolve,
+            patch("keboola_agent_cli.commands.init.typer.confirm", return_value=False),
+            patch("keboola_agent_cli.commands.init.sys") as mock_sys,
+        ):
+            mock_resolve.return_value = (global_dir, "global")
+            mock_sys.stdin.isatty.return_value = True
+
+            global_store = ConfigStore(config_dir=global_dir, source="global")
+            global_store.add_project(
+                "prod",
+                ProjectConfig(
+                    stack_url="https://connection.keboola.com",
+                    token="901-xxx-testtoken1234",
+                    project_name="Production",
+                    project_id=1234,
+                ),
+            )
+
+            result = runner.invoke(app, ["init"])
+
+        assert result.exit_code == 0
+        # Local config should have zero projects
+        local_store = ConfigStore(config_dir=tmp_path / ".kbagent")
+        local_config = local_store.load()
+        assert len(local_config.projects) == 0
+
+    def test_init_json_mode_warns_about_global_projects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """In JSON mode, init warns about global projects instead of prompting (#104)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        global_dir = tmp_path / "global-config"
+        global_dir.mkdir()
+
+        with patch("keboola_agent_cli.cli.resolve_config_dir") as mock_resolve:
+            mock_resolve.return_value = (global_dir, "global")
+
+            global_store = ConfigStore(config_dir=global_dir, source="global")
+            global_store.add_project(
+                "prod",
+                ProjectConfig(
+                    stack_url="https://connection.keboola.com",
+                    token="901-xxx-testtoken1234",
+                    project_name="Production",
+                    project_id=1234,
+                ),
+            )
+
+            result = runner.invoke(app, ["--json", "init"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output["data"]["projects_copied"] == 0
+
+    def test_empty_local_config_warns_about_global(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Commands warn when empty local config shadows global with projects (#104)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBAGENT_CONFIG_DIR", raising=False)
+
+        # Create an empty local config
+        local_dir = tmp_path / ".kbagent"
+        local_dir.mkdir()
+        local_store = ConfigStore(config_dir=local_dir, source="local")
+        local_store.save(AppConfig())
+
+        # Create a global config with projects
+        global_dir = tmp_path / "global-config"
+        global_dir.mkdir()
+        global_store = ConfigStore(config_dir=global_dir, source="global")
+        global_store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-xxx-testtoken1234",
+                project_name="Production",
+                project_id=1234,
+            ),
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.resolve_config_dir") as mock_resolve,
+            patch("platformdirs.user_config_dir", return_value=str(global_dir)),
+            patch("keboola_agent_cli.output.OutputFormatter.warning") as mock_warning,
+        ):
+            mock_resolve.return_value = (local_dir, "local")
+
+            # Run a non-init command (project list) in human mode
+            runner.invoke(app, ["project", "list"])
+
+        # Warning should have been called with message about shadowing
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "Local workspace has no projects but global config has 1" in warning_msg
 
 
 # ---------------------------------------------------------------------------

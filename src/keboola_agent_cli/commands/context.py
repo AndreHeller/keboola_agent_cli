@@ -283,6 +283,9 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent update
     Self-update kbagent to latest version (via uv tool install --upgrade).
 
+  kbagent changelog [--limit N]
+    Show recent changelog (what changed in each version). Default: last 5 versions.
+
   kbagent permissions list [--category read|write|destructive|admin]
     List all operations with risk categories and current allowed/denied status.
 
@@ -335,6 +338,7 @@ Use `kbagent <command> --help` for full flag details and examples.
      KBAGENT_CONFIG_DIR       Override config directory
      KBAGENT_MAX_PARALLEL_WORKERS  Max concurrent threads for multi-project ops (default 10, max 100)
      KBAGENT_AUTO_UPDATE      Set to "false" to disable automatic update on startup
+     KBAGENT_UPDATED_FROM     Set to an older version to trigger "What's new" display on next run
      KBAGENT_MCP_TRANSPORT    MCP transport mode: "http" (default, persistent) or "stdio" (subprocess)
 
 8. Config resolution order:

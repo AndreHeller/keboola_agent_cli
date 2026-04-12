@@ -73,9 +73,18 @@ OPERATION_REGISTRY: dict[str, str] = {
     "storage.create-bucket": "write",
     "storage.create-table": "write",
     "storage.upload-table": "write",
+    # Storage files
+    "storage.files": "read",
+    "storage.file-detail": "read",
+    "storage.file-download": "read",
+    "storage.file-upload": "write",
+    "storage.file-tag": "write",
+    "storage.load-file": "write",
+    "storage.unload-table": "read",
     # Storage destructive
     "storage.delete-table": "destructive",
     "storage.delete-bucket": "destructive",
+    "storage.file-delete": "destructive",
     # Encryption
     "encrypt.values": "write",
     # Sync / git workflow

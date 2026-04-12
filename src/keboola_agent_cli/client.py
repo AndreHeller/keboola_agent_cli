@@ -905,6 +905,9 @@ class KeboolaClient(BaseHttpClient):
         self,
         name: str,
         size_bytes: int,
+        tags: list[str] | None = None,
+        is_permanent: bool = False,
+        notify: bool = False,
     ) -> dict[str, Any]:
         """Register a file with the Storage API and get a presigned upload URL.
 
@@ -913,6 +916,9 @@ class KeboolaClient(BaseHttpClient):
         Args:
             name: Filename (e.g. "data.csv").
             size_bytes: File size in bytes.
+            tags: Optional list of tags to assign to the file.
+            is_permanent: If True, file is not auto-deleted after 15 days.
+            notify: If True, send notification on upload completion.
 
         Returns:
             File resource dict including 'id' (fileId), 'url', 'uploadParams',
@@ -922,6 +928,13 @@ class KeboolaClient(BaseHttpClient):
         # federationToken=1 is required on newer stacks (AWS, Azure) to get
         # cloud-native credentials instead of deprecated presigned POST fields.
         body: dict[str, Any] = {"name": name, "sizeBytes": size_bytes, "federationToken": "1"}
+        if is_permanent:
+            body["isPermanent"] = "1"
+        if notify:
+            body["notify"] = "1"
+        if tags:
+            for i, tag in enumerate(tags):
+                body[f"tags[{i}]"] = tag
         response = self._request("POST", "/v2/storage/files/prepare", data=body)
         return response.json()
 
@@ -1198,6 +1211,112 @@ class KeboolaClient(BaseHttpClient):
             params={"federationToken": "1"},
         )
         return response.json()
+
+    def list_files(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        tags: list[str] | None = None,
+        since_id: int | None = None,
+        query: str | None = None,
+        branch_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """List Storage Files with optional filtering.
+
+        Args:
+            limit: Max number of files to return.
+            offset: Pagination offset.
+            tags: Filter by tags (AND logic — all tags must match).
+            since_id: Return only files with ID greater than this.
+            query: Full-text search query on file name.
+            branch_id: If set, list files from a specific dev branch.
+
+        Returns:
+            List of file resource dicts.
+        """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if tags:
+            for i, tag in enumerate(tags):
+                params[f"tags[{i}]"] = tag
+        if since_id is not None:
+            params["sinceId"] = since_id
+        if query:
+            params["q"] = query
+        response = self._request("GET", f"{prefix}/files", params=params)
+        return response.json()
+
+    def upload_file(
+        self,
+        file_path: str,
+        name: str | None = None,
+        tags: list[str] | None = None,
+        is_permanent: bool = False,
+        notify: bool = False,
+        branch_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Upload a local file to Storage Files.
+
+        Wraps prepare_file_upload + _upload_to_cloud into a single call.
+
+        Args:
+            file_path: Local path to the file to upload.
+            name: Custom filename (defaults to local file basename).
+            tags: Optional list of tags to assign.
+            is_permanent: If True, file is not auto-deleted after 15 days.
+            notify: If True, send notification on upload completion.
+            branch_id: If set, upload to a specific dev branch.
+
+        Returns:
+            File resource dict with id, name, sizeBytes, tags, url.
+        """
+        p = Path(file_path)
+        size_bytes = p.stat().st_size
+        file_name = name or p.name
+        upload_info = self.prepare_file_upload(
+            name=file_name,
+            size_bytes=size_bytes,
+            tags=tags,
+            is_permanent=is_permanent,
+            notify=notify,
+        )
+        self._upload_to_cloud(upload_info, file_path)
+        # Return file info (prepare response has the file metadata)
+        return {
+            "id": upload_info["id"],
+            "name": upload_info.get("name", file_name),
+            "sizeBytes": size_bytes,
+            "tags": upload_info.get("tags", tags or []),
+            "isPermanent": upload_info.get("isPermanent", is_permanent),
+            "created": upload_info.get("created"),
+        }
+
+    def delete_file(self, file_id: int) -> None:
+        """Delete a Storage File.
+
+        Args:
+            file_id: Storage file ID.
+        """
+        self._request("DELETE", f"/v2/storage/files/{file_id}")
+
+    def tag_file(self, file_id: int, tag: str) -> None:
+        """Add a tag to a Storage File.
+
+        Args:
+            file_id: Storage file ID.
+            tag: Tag string to add.
+        """
+        self._request("POST", f"/v2/storage/files/{file_id}/tags", data={"tag": tag})
+
+    def untag_file(self, file_id: int, tag: str) -> None:
+        """Remove a tag from a Storage File.
+
+        Args:
+            file_id: Storage file ID.
+            tag: Tag string to remove.
+        """
+        safe_tag = quote(tag, safe="")
+        self._request("DELETE", f"/v2/storage/files/{file_id}/tags/{safe_tag}")
 
     def download_sliced_file(self, file_detail: dict[str, Any], output_path: str) -> int:
         """Download a sliced file by fetching manifest and concatenating slices.
@@ -1800,8 +1919,27 @@ class _CloudDownloader:
                 provider="gcp",
                 auth_fn=lambda _url: {"Authorization": f"{token_type} {token}"},
             )
+        elif provider == "azure":
+            # Azure: SAS token from absCredentials for authenticating slice downloads
+            abs_creds = file_detail.get("absCredentials", {})
+            sas_string = abs_creds.get("SASConnectionString", "")
+            # Parse "BlobEndpoint=https://...;SharedAccessSignature=sv=..."
+            sas_parts: dict[str, str] = {}
+            for segment in sas_string.split(";"):
+                key, sep, value = segment.partition("=")
+                if sep:
+                    sas_parts[key] = value
+            blob_endpoint = sas_parts.get("BlobEndpoint", "").rstrip("/")
+            sas = sas_parts.get("SharedAccessSignature", "")
+            return _CloudDownloader(
+                provider="azure",
+                auth_fn=lambda _url, _be=blob_endpoint, _sas=sas: {
+                    "_blob_endpoint": _be,
+                    "_sas": _sas,
+                },
+            )
         else:
-            # Azure / other: presigned URLs, no extra auth needed
+            # Other: presigned URLs, no extra auth needed
             return _CloudDownloader(provider=provider, auth_fn=lambda _url: {})
 
     def resolve_base_url(self, file_detail: dict[str, Any]) -> str:
@@ -1821,8 +1959,15 @@ class _CloudDownloader:
             bucket = gcs_path.get("bucket", "")
             key = gcs_path.get("key", "")
             return f"https://storage.googleapis.com/{bucket}/{key}"
+        elif self._provider == "azure":
+            # Azure: base URL from absCredentials endpoint + container
+            auth_info = self._auth_fn("")
+            blob_endpoint = auth_info.get("_blob_endpoint", "")
+            abs_path = file_detail.get("absPath", {})
+            container = abs_path.get("container", "")
+            return f"{blob_endpoint}/{container}/"
         else:
-            # Azure/other: entries should be full URLs
+            # Other: entries should be full URLs
             return ""
 
     def resolve_slice_url(
@@ -1833,9 +1978,9 @@ class _CloudDownloader:
     ) -> str:
         """Convert a manifest entry URL to a downloadable HTTPS URL.
 
-        Manifest entries use cloud-native URLs (s3://bucket/key/slice.gz).
-        This strips the cloud prefix and appends the relative slice path
-        to the HTTPS base URL.
+        Manifest entries use cloud-native URLs (s3://bucket/key/slice.gz,
+        azure://container/blob). This strips the cloud prefix and builds
+        an HTTPS URL for download.
 
         Args:
             base_url: HTTPS base URL from resolve_base_url().
@@ -1862,13 +2007,25 @@ class _CloudDownloader:
             prefix = f"gs://{bucket}/{key}"
             relative = entry_url.removeprefix(prefix) if entry_url.startswith(prefix) else entry_url
             return base_url + relative
+        elif self._provider == "azure":
+            # entry_url: "azure://account.blob.core.windows.net/container/blob.gz"
+            # Replace azure:// with https:// and append SAS token
+            auth_info = self._auth_fn("")
+            sas = auth_info.get("_sas", "")
+            if entry_url.startswith("azure://"):
+                https_url = "https://" + entry_url[len("azure://") :]
+                return f"{https_url}?{sas}"
+            return entry_url
         else:
-            # Azure/other: entry URLs should be full HTTPS URLs
+            # Other: entry URLs should be full HTTPS URLs
             return entry_url
 
     def download_bytes(self, url: str) -> bytes:
         """Download content from a cloud URL with appropriate authentication."""
-        headers = self._auth_fn(url)
+        auth_result = self._auth_fn(url)
+        # Azure stores metadata (endpoint, SAS) in auth_fn result, not HTTP headers.
+        # The SAS token is embedded in the URL by resolve_slice_url().
+        headers = {k: v for k, v in auth_result.items() if not k.startswith("_")}
         with httpx.Client(timeout=FILE_DOWNLOAD_TIMEOUT) as http:
             response = http.get(url, headers=headers)
             response.raise_for_status()

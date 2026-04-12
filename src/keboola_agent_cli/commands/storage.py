@@ -19,7 +19,12 @@ from ._helpers import (
     resolve_branch,
 )
 
-storage_app = typer.Typer(help="Browse and manage storage buckets and tables")
+storage_app = typer.Typer(help="Browse and manage storage buckets, tables, and files")
+
+# Rich help panel names for grouping in --help output
+_BUCKETS = "Buckets"
+_TABLES = "Tables"
+_FILES = "Files"
 
 
 @storage_app.callback(invoke_without_command=True)
@@ -27,7 +32,7 @@ def _storage_permission_check(ctx: typer.Context) -> None:
     check_cli_permission(ctx, "storage")
 
 
-@storage_app.command("buckets")
+@storage_app.command("buckets", rich_help_panel=_BUCKETS)
 def storage_buckets(
     ctx: typer.Context,
     project: list[str] | None = typer.Option(
@@ -110,7 +115,7 @@ def storage_buckets(
         emit_project_warnings(formatter, result)
 
 
-@storage_app.command("bucket-detail")
+@storage_app.command("bucket-detail", rich_help_panel=_BUCKETS)
 def storage_bucket_detail(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -195,7 +200,76 @@ def storage_bucket_detail(
                 )
 
 
-@storage_app.command("table-detail")
+@storage_app.command("tables", rich_help_panel=_TABLES)
+def storage_tables(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    bucket_id: str | None = typer.Option(
+        None,
+        "--bucket-id",
+        help="Filter tables by bucket ID",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (defaults to active branch if set via 'branch use')",
+    ),
+) -> None:
+    """List storage tables from a project."""
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
+
+    try:
+        result = service.list_tables(
+            alias=project,
+            bucket_id=bucket_id,
+            branch_id=effective_branch,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        from rich.table import Table
+
+        tables = result["tables"]
+        if not tables:
+            formatter.console.print("[dim]No tables found.[/dim]")
+            return
+
+        table = Table(title=f"Tables - {result['project_alias']}")
+        table.add_column("Table ID", style="bold cyan")
+        table.add_column("Rows", justify="right")
+        table.add_column("Size", justify="right", style="dim")
+        table.add_column("Last Import", style="dim")
+
+        for t in tables:
+            size_mb = t["data_size_bytes"] / (1024 * 1024) if t["data_size_bytes"] else 0
+            last_import = t.get("last_import_date", "")
+            if last_import and "T" in last_import:
+                last_import = last_import.split("T")[0]
+            table.add_row(
+                t["id"],
+                str(t["rows_count"]),
+                f"{size_mb:.1f} MB",
+                last_import,
+            )
+
+        formatter.console.print(table)
+
+
+@storage_app.command("table-detail", rich_help_panel=_TABLES)
 def storage_table_detail(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -266,7 +340,7 @@ def storage_table_detail(
             formatter.console.print(table)
 
 
-@storage_app.command("create-bucket")
+@storage_app.command("create-bucket", rich_help_panel=_BUCKETS)
 def storage_create_bucket(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -335,7 +409,7 @@ def storage_create_bucket(
             formatter.console.print(f"  Description: {result['description']}")
 
 
-@storage_app.command("create-table")
+@storage_app.command("create-table", rich_help_panel=_TABLES)
 def storage_create_table(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -406,7 +480,7 @@ def storage_create_table(
         formatter.console.print(f"  Columns: {', '.join(result['columns'])}")
 
 
-@storage_app.command("upload-table")
+@storage_app.command("upload-table", rich_help_panel=_TABLES)
 def storage_upload_table(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -516,7 +590,7 @@ def storage_upload_table(
                 formatter.console.print(f"  [yellow]Warning:[/yellow] {w}")
 
 
-@storage_app.command("download-table")
+@storage_app.command("download-table", rich_help_panel=_TABLES)
 def storage_download_table(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -599,76 +673,7 @@ def storage_download_table(
         )
 
 
-@storage_app.command("tables")
-def storage_tables(
-    ctx: typer.Context,
-    project: str = typer.Option(
-        ...,
-        "--project",
-        help="Project alias",
-    ),
-    bucket_id: str | None = typer.Option(
-        None,
-        "--bucket-id",
-        help="Filter tables by bucket ID",
-    ),
-    branch: int | None = typer.Option(
-        None,
-        "--branch",
-        help="Dev branch ID (defaults to active branch if set via 'branch use')",
-    ),
-) -> None:
-    """List storage tables from a project."""
-    formatter = get_formatter(ctx)
-    service = get_service(ctx, "storage_service")
-    config_store: ConfigStore = ctx.obj["config_store"]
-    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
-
-    try:
-        result = service.list_tables(
-            alias=project,
-            bucket_id=bucket_id,
-            branch_id=effective_branch,
-        )
-    except ConfigError as exc:
-        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
-        raise typer.Exit(code=5) from None
-    except KeboolaApiError as exc:
-        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
-        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
-
-    if formatter.json_mode:
-        formatter.output(result)
-    else:
-        from rich.table import Table
-
-        tables = result["tables"]
-        if not tables:
-            formatter.console.print("[dim]No tables found.[/dim]")
-            return
-
-        table = Table(title=f"Tables - {result['project_alias']}")
-        table.add_column("Table ID", style="bold cyan")
-        table.add_column("Rows", justify="right")
-        table.add_column("Size", justify="right", style="dim")
-        table.add_column("Last Import", style="dim")
-
-        for t in tables:
-            size_mb = t["data_size_bytes"] / (1024 * 1024) if t["data_size_bytes"] else 0
-            last_import = t.get("last_import_date", "")
-            if last_import and "T" in last_import:
-                last_import = last_import.split("T")[0]
-            table.add_row(
-                t["id"],
-                str(t["rows_count"]),
-                f"{size_mb:.1f} MB",
-                last_import,
-            )
-
-        formatter.console.print(table)
-
-
-@storage_app.command("delete-table")
+@storage_app.command("delete-table", rich_help_panel=_TABLES)
 def storage_delete_table(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -750,14 +755,16 @@ def storage_delete_table(
     else:
         for tid in result["deleted"]:
             formatter.console.print(f"[bold green]Deleted:[/bold green] {tid}")
-        for f in result["failed"]:
-            formatter.console.print(f"[bold red]Failed:[/bold red] {f['id']}: {f['error']}")
+        for f_item in result["failed"]:
+            formatter.console.print(
+                f"[bold red]Failed:[/bold red] {f_item['id']}: {f_item['error']}"
+            )
 
     if result["failed"]:
         raise typer.Exit(code=1)
 
 
-@storage_app.command("delete-bucket")
+@storage_app.command("delete-bucket", rich_help_panel=_BUCKETS)
 def storage_delete_bucket(
     ctx: typer.Context,
     project: str = typer.Option(
@@ -825,8 +832,637 @@ def storage_delete_bucket(
         else:
             for bid in result["deleted"]:
                 formatter.console.print(f"[bold green]Deleted:[/bold green] {bid}")
-        for f in result["failed"]:
-            formatter.console.print(f"[bold red]Failed:[/bold red] {f['id']}: {f['error']}")
+        for f_item in result["failed"]:
+            formatter.console.print(
+                f"[bold red]Failed:[/bold red] {f_item['id']}: {f_item['error']}"
+            )
 
     if result["failed"]:
         raise typer.Exit(code=1)
+
+
+# ------------------------------------------------------------------
+# File operations
+# ------------------------------------------------------------------
+
+
+def _format_file_size(size_bytes: int | None) -> str:
+    """Format file size in human-readable form."""
+    if size_bytes is None:
+        return "unknown"
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    if size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
+    return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+
+@storage_app.command("files", rich_help_panel=_FILES)
+def storage_file_list(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    tag: list[str] | None = typer.Option(
+        None,
+        "--tag",
+        help="Filter by tag (repeat for AND logic: --tag a --tag b)",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        help="Max number of files to return",
+    ),
+    offset: int = typer.Option(
+        0,
+        "--offset",
+        help="Pagination offset",
+    ),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        "-q",
+        help="Full-text search on file name",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (defaults to active branch if set via 'branch use')",
+    ),
+) -> None:
+    """List Storage Files with optional tag filtering.
+
+    Lists files from the project's Storage Files API. Use --tag to filter
+    by tags (AND logic - all specified tags must match).
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
+
+    try:
+        result = service.list_files(
+            alias=project,
+            limit=limit,
+            offset=offset,
+            tags=tag,
+            query=query,
+            branch_id=effective_branch,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        files = result["files"]
+        if not files:
+            formatter.console.print("[dim]No files found.[/dim]")
+            return
+
+        from rich.table import Table
+
+        table = Table(title=f"Storage Files ({result['count']} files)")
+        table.add_column("ID", style="cyan")
+        table.add_column("Name")
+        table.add_column("Size", justify="right")
+        table.add_column("Tags")
+        table.add_column("Permanent")
+        table.add_column("Created")
+
+        for f in files:
+            tags_str = ", ".join(f.get("tags", []))
+            permanent = "yes" if f.get("isPermanent") else ""
+            created = f.get("created", "")[:19] if f.get("created") else ""
+            table.add_row(
+                str(f.get("id", "")),
+                f.get("name", ""),
+                _format_file_size(f.get("sizeBytes")),
+                tags_str,
+                permanent,
+                created,
+            )
+
+        formatter.console.print(table)
+
+
+@storage_app.command("file-detail", rich_help_panel=_FILES)
+def storage_file_info(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    file_id: int = typer.Option(
+        ...,
+        "--file-id",
+        help="Storage file ID",
+    ),
+) -> None:
+    """Show Storage File metadata (without downloading)."""
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    try:
+        result = service.get_file_info(alias=project, file_id=file_id)
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        formatter.console.print(f"[bold]File ID:[/bold] {result.get('id')}")
+        formatter.console.print(f"[bold]Name:[/bold] {result.get('name')}")
+        formatter.console.print(f"[bold]Size:[/bold] {_format_file_size(result.get('sizeBytes'))}")
+        formatter.console.print(f"[bold]Created:[/bold] {result.get('created', '')}")
+        formatter.console.print(f"[bold]Sliced:[/bold] {'yes' if result.get('isSliced') else 'no'}")
+        formatter.console.print(
+            f"[bold]Permanent:[/bold] {'yes' if result.get('isPermanent') else 'no'}"
+        )
+        tags_str = ", ".join(result.get("tags", []))
+        formatter.console.print(f"[bold]Tags:[/bold] {tags_str or '(none)'}")
+        creator = result.get("creatorToken", {})
+        if isinstance(creator, dict):
+            formatter.console.print(
+                f"[bold]Creator:[/bold] {creator.get('description', 'unknown')}"
+            )
+
+
+@storage_app.command("file-upload", rich_help_panel=_FILES)
+def storage_file_upload(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    file: str = typer.Option(
+        ...,
+        "--file",
+        help="Path to the file to upload",
+    ),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        help="Custom file name (default: local filename)",
+    ),
+    tag: list[str] | None = typer.Option(
+        None,
+        "--tag",
+        help="Tag to assign (repeat for multiple: --tag a --tag b)",
+    ),
+    permanent: bool = typer.Option(
+        False,
+        "--permanent",
+        help="Make file permanent (not auto-deleted after 15 days)",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (defaults to active branch if set via 'branch use')",
+    ),
+) -> None:
+    """Upload a local file to Storage Files.
+
+    Uploads any file (CSV, JSON, ZIP, etc.) to Keboola Storage Files.
+    Use --tag to assign tags and --permanent to prevent auto-deletion.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
+
+    p = Path(file)
+    if not p.is_file():
+        formatter.error(message=f"File not found: {file}", error_code="FILE_NOT_FOUND")
+        raise typer.Exit(code=2) from None
+
+    if not formatter.json_mode:
+        size_str = _format_file_size(p.stat().st_size)
+        formatter.console.print(f"Uploading [bold]{p.name}[/bold] ({size_str})...")
+
+    try:
+        result = service.upload_file(
+            alias=project,
+            file_path=file,
+            name=name,
+            tags=tag,
+            is_permanent=permanent,
+            branch_id=effective_branch,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        size_str = _format_file_size(result.get("file_size_bytes"))
+        tags_str = ", ".join(result.get("tags", []))
+        formatter.console.print(
+            f"[bold green]Uploaded:[/bold green] file ID {result['id']} "
+            f"({result.get('name', '')}), {size_str}"
+        )
+        if tags_str:
+            formatter.console.print(f"  Tags: {tags_str}")
+        if result.get("isPermanent"):
+            formatter.console.print("  Permanent: yes")
+
+
+@storage_app.command("file-download", rich_help_panel=_FILES)
+def storage_file_download(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    file_id: int | None = typer.Option(
+        None,
+        "--file-id",
+        help="Storage file ID to download",
+    ),
+    tag: list[str] | None = typer.Option(
+        None,
+        "--tag",
+        help="Download latest file matching tags (repeat for AND: --tag a --tag b)",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path (default: original filename)",
+    ),
+) -> None:
+    """Download a Storage File to local disk.
+
+    Download by file ID (--file-id) or by tags (--tag, downloads the latest
+    matching file). Handles both sliced and non-sliced files transparently.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    if not file_id and not tag:
+        formatter.error(
+            message="Either --file-id or --tag must be provided",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2) from None
+
+    if not formatter.json_mode:
+        if file_id:
+            formatter.console.print(f"Downloading file ID [cyan]{file_id}[/cyan]...")
+        else:
+            formatter.console.print(f"Downloading latest file with tags: {', '.join(tag or [])}...")
+
+    try:
+        result = service.download_file(
+            alias=project,
+            file_id=file_id,
+            tags=tag,
+            output_path=output,
+        )
+    except ValueError as exc:
+        formatter.error(message=str(exc), error_code="INVALID_ARGUMENT")
+        raise typer.Exit(code=2) from None
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        size_str = _format_file_size(result["file_size_bytes"])
+        formatter.console.print(
+            f"[bold green]Downloaded:[/bold green] {result['file_name']} "
+            f"-> {result['output_path']} ({size_str})"
+        )
+
+
+@storage_app.command("file-tag", rich_help_panel=_FILES)
+def storage_file_tag(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    file_id: int = typer.Option(
+        ...,
+        "--file-id",
+        help="Storage file ID",
+    ),
+    add: list[str] | None = typer.Option(
+        None,
+        "--add",
+        help="Tag to add (repeat for multiple: --add a --add b)",
+    ),
+    remove: list[str] | None = typer.Option(
+        None,
+        "--remove",
+        help="Tag to remove (repeat for multiple: --remove a --remove b)",
+    ),
+) -> None:
+    """Add and/or remove tags on a Storage File.
+
+    Use --add and --remove to modify tags in a single operation.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    if not add and not remove:
+        formatter.error(
+            message="At least one of --add or --remove must be provided",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2) from None
+
+    try:
+        result = service.tag_file(
+            alias=project,
+            file_id=file_id,
+            add_tags=add,
+            remove_tags=remove,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        for tag_name in result["added"]:
+            formatter.console.print(f"[bold green]Added tag:[/bold green] {tag_name}")
+        for tag_name in result["removed"]:
+            formatter.console.print(f"[bold yellow]Removed tag:[/bold yellow] {tag_name}")
+        for err in result["errors"]:
+            formatter.console.print(
+                f"[bold red]Failed:[/bold red] {err['action']} tag '{err['tag']}': {err['error']}"
+            )
+
+    if result["errors"]:
+        raise typer.Exit(code=1)
+
+
+@storage_app.command("file-delete", rich_help_panel=_FILES)
+def storage_file_delete(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    file_id: list[int] = typer.Option(
+        ...,
+        "--file-id",
+        help="Storage file ID to delete (repeat for multiple)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be deleted without executing",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Delete one or more Storage Files."""
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+
+    try:
+        result = service.delete_files(
+            alias=project,
+            file_ids=file_id,
+            dry_run=dry_run,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        if dry_run:
+            for fid in result.get("would_delete", []):
+                formatter.console.print(f"[bold blue]Would delete:[/bold blue] file ID {fid}")
+        else:
+            for fid in result["deleted"]:
+                formatter.console.print(f"[bold green]Deleted:[/bold green] file ID {fid}")
+        for f_err in result["failed"]:
+            formatter.console.print(
+                f"[bold red]Failed:[/bold red] file ID {f_err['id']}: {f_err['error']}"
+            )
+
+    if result["failed"]:
+        raise typer.Exit(code=1)
+
+
+@storage_app.command("load-file", rich_help_panel=_FILES)
+def storage_load_file(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    file_id: int = typer.Option(
+        ...,
+        "--file-id",
+        help="Storage file ID to load into a table",
+    ),
+    table_id: str = typer.Option(
+        ...,
+        "--table-id",
+        help="Target table ID (e.g. 'in.c-my-bucket.my-table')",
+    ),
+    incremental: bool = typer.Option(
+        False,
+        "--incremental",
+        help="Append rows instead of full load",
+    ),
+    delimiter: str = typer.Option(
+        ",",
+        "--delimiter",
+        help="CSV column delimiter",
+    ),
+    enclosure: str = typer.Option(
+        '"',
+        "--enclosure",
+        help="CSV value enclosure character",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (defaults to active branch if set via 'branch use')",
+    ),
+) -> None:
+    """Load a Storage File into a table.
+
+    Imports an already-uploaded file (from file-upload or component output)
+    into a storage table. Use --incremental to append rows.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
+
+    if not formatter.json_mode:
+        formatter.console.print(
+            f"Loading file ID [cyan]{file_id}[/cyan] into [cyan]{table_id}[/cyan]..."
+        )
+
+    try:
+        result = service.load_file_to_table(
+            alias=project,
+            file_id=file_id,
+            table_id=table_id,
+            incremental=incremental,
+            delimiter=delimiter,
+            enclosure=enclosure,
+            branch_id=effective_branch,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        load_type = "incremental" if result["incremental"] else "full"
+        formatter.console.print(
+            f"[bold green]Loaded:[/bold green] file {result['file_id']} -> "
+            f"{result['table_id']} ({load_type} load)"
+        )
+        if result["imported_rows"] is not None:
+            formatter.console.print(f"  Rows imported: {result['imported_rows']}")
+        for w in result.get("warnings", []):
+            formatter.console.print(f"  [yellow]Warning:[/yellow] {w}")
+
+
+@storage_app.command("unload-table", rich_help_panel=_FILES)
+def storage_unload_table(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    table_id: str = typer.Option(
+        ...,
+        "--table-id",
+        help="Table ID to export (e.g. 'in.c-my-bucket.my-table')",
+    ),
+    columns: list[str] | None = typer.Option(
+        None,
+        "--columns",
+        help="Column names to export (repeat for multiple)",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="Max number of rows to export",
+    ),
+    tag: list[str] | None = typer.Option(
+        None,
+        "--tag",
+        help="Tag to apply to the exported file (repeat for multiple)",
+    ),
+    download: bool = typer.Option(
+        False,
+        "--download",
+        help="Also download the exported file locally",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path (only with --download)",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (defaults to active branch if set via 'branch use')",
+    ),
+) -> None:
+    """Export a table to a Storage File.
+
+    Creates a file in Storage that can be downloaded or consumed by other
+    components. Use --tag to tag the output file and --download to also
+    save it locally.
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "storage_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
+
+    if not formatter.json_mode:
+        msg = f"Exporting [cyan]{table_id}[/cyan] to Storage File"
+        if download:
+            msg += " (with download)"
+        msg += "..."
+        formatter.console.print(msg)
+
+    try:
+        result = service.unload_table_to_file(
+            alias=project,
+            table_id=table_id,
+            columns=columns,
+            limit=limit,
+            tags=tag,
+            download=download,
+            output_path=output,
+            branch_id=effective_branch,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        size_str = _format_file_size(result.get("file_size_bytes"))
+        tags_str = ", ".join(result.get("tags", []))
+        formatter.console.print(
+            f"[bold green]Exported:[/bold green] {result['table_id']} -> "
+            f"file ID {result['file_id']} ({size_str})"
+        )
+        if tags_str:
+            formatter.console.print(f"  Tags: {tags_str}")
+        if result.get("downloaded"):
+            dl_size = _format_file_size(result.get("downloaded_bytes"))
+            formatter.console.print(f"  Downloaded to: {result['output_path']} ({dl_size})")

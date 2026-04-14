@@ -124,6 +124,7 @@ tests/
   test_ai_client.py        # AI Service client tests
   test_component_service.py # Component service tests
   test_component_cli.py    # Component CLI tests via CliRunner
+  test_e2e.py              # E2E tests against real API (make test-e2e)
   test_integration.py      # Integration tests (edge cases, linting)
 ```
 
@@ -199,6 +200,8 @@ All three inherit from `BaseHttpClient` (`http_base.py`) which provides shared r
 
 15. **Pre-commit checks are mandatory.** Before every `git commit`, run `ruff check` and `ruff format --check` on changed files. A pre-commit hook (`scripts/pre-commit`, install via `make hooks`) does this automatically. **Never commit without passing lint + format.** If using sub-agents that write code, always run `make check` (or at minimum `ruff check src/ tests/ && ruff format . --check`) before committing their output.
 
+16. **E2E test coverage**: Every new CLI command MUST have a corresponding E2E test in `tests/test_e2e.py`. Run `make test-e2e` to verify. E2E tests require `E2E_API_TOKEN` and `E2E_URL` env vars and exercise the full CLI against a real Keboola project.
+
 ## Claude Code Plugin (Marketplace)
 
 This repo doubles as a Claude Code plugin marketplace. The plugin lives in `plugins/kbagent/` and contains a skill that teaches Claude how to use kbagent.
@@ -241,6 +244,7 @@ kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID]
 kbagent config detail --project NAME --component-id ID --config-id ID [--branch ID]
 kbagent config search --query PATTERN [--project NAME] [--component-type TYPE] [--ignore-case] [--regex] [--branch ID]
 kbagent config update --project NAME --component-id ID --config-id ID [--name N] [--description D] [--configuration JSON|@file|-] [--configuration-file PATH] [--set PATH=VALUE ...] [--merge] [--dry-run] [--branch ID]
+kbagent config rename --project NAME --component-id ID --config-id ID --name "New Name" [--branch ID] [--directory DIR]
 
 kbagent job list [--project NAME] [--component-id ID] [--status STATUS] [--limit N]
 kbagent job detail --project NAME --job-id ID
@@ -255,6 +259,7 @@ kbagent storage create-table --project NAME --bucket-id ID --name NAME --column 
 kbagent storage upload-table --project NAME --table-id ID --file PATH [--incremental] [--branch ID]
 kbagent storage download-table --project NAME --table-id ID [--output FILE] [--columns COL ...] [--limit N] [--branch ID]
 kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]
+kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--dry-run] [--yes] [--branch ID]
 kbagent storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]
 kbagent storage files --project NAME [--tag TAG ...] [--limit N] [--offset N] [--query Q] [--branch ID]
 kbagent storage file-upload --project NAME --file PATH [--name NAME] [--tag TAG ...] [--permanent] [--branch ID]
@@ -301,6 +306,11 @@ kbagent component detail --component-id ID [--project NAME]
 kbagent config new --component-id ID [--name NAME] [--project NAME] [--output-dir DIR]
 
 kbagent encrypt values --project ALIAS --component-id ID --input JSON|@file|- [--output-file PATH]
+
+kbagent kai ping [--project NAME]
+kbagent kai ask --message "question" [--project NAME]
+kbagent kai chat --message "msg" [--chat-id ID] [--project NAME]
+kbagent kai history [--project NAME] [--limit N]
 
 kbagent context
 kbagent init [--from-global]

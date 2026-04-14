@@ -25,6 +25,7 @@ OPERATION_REGISTRY: dict[str, str] = {
     "config.detail": "read",
     "config.search": "read",
     "config.update": "write",
+    "config.rename": "write",
     "config.delete": "destructive",
     "config.new": "write",
     # Job history
@@ -60,6 +61,11 @@ OPERATION_REGISTRY: dict[str, str] = {
     # MCP tools
     "tool.list": "read",
     "tool.call": "write",
+    # Kai (Keboola AI Assistant)
+    "kai.ping": "read",
+    "kai.ask": "read",
+    "kai.chat": "write",
+    "kai.history": "read",
     # Component discovery
     "component.list": "read",
     "component.detail": "read",
@@ -83,6 +89,7 @@ OPERATION_REGISTRY: dict[str, str] = {
     "storage.unload-table": "read",
     # Storage destructive
     "storage.delete-table": "destructive",
+    "storage.delete-column": "destructive",
     "storage.delete-bucket": "destructive",
     "storage.file-delete": "destructive",
     # Encryption

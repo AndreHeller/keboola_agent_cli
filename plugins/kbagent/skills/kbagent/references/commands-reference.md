@@ -30,6 +30,7 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `config detail --project NAME --component-id ID --config-id ID [--branch ID]` -- full config with parameters and rows (branch-aware)
 - `config search --query PATTERN [--project NAME] [-i] [-r] [--branch ID]` -- search config bodies for string/regex (branch-aware)
 - `config update --project NAME --component-id ID --config-id ID [--name N] [--description D] [--configuration JSON|@file|-] [--configuration-file PATH] [--set PATH=VALUE ...] [--merge] [--dry-run] [--branch ID]` -- update metadata and/or configuration content. `--set` targets a nested key (e.g. `parameters.db.host=new-host`). `--merge` deep-merges into existing config (preserves sibling keys). `--dry-run` previews changes without applying. Paths are relative to the configuration root (unlike MCP's `update_config` which uses paths relative to `parameters`)
+- `config rename --project NAME --component-id ID --config-id ID --name "New Name" [--branch ID] [--directory DIR]` -- rename a configuration (API update + local sync directory rename with git mv support)
 - `config delete --project NAME --component-id ID --config-id ID [--branch ID]` -- delete a configuration
 - `config new --component-id ID [--project NAME] [--name NAME] [--output-dir DIR]` -- scaffold new config from component schema
 
@@ -48,6 +49,7 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `storage upload-table --project NAME --table-id ID --file PATH [--incremental] [--branch ID]` -- upload CSV (branch-aware)
 - `storage download-table --project NAME --table-id ID [--output FILE] [--columns COL ...] [--limit N] [--branch ID]` -- export table to CSV (branch-aware)
 - `storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]` -- delete tables (branch-aware)
+- `storage delete-column --project NAME --table-id ID --column COL [--column ...] [--dry-run] [--yes] [--branch ID]` -- delete columns from a table (branch-aware)
 - `storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete buckets (branch-aware)
 
 ## Data Lineage
@@ -74,6 +76,12 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 ## MCP Tools
 - `tool list [--project NAME] [--branch ID]` -- list available MCP tools (multi_project annotation)
 - `tool call TOOL_NAME [--project NAME] [--input JSON|@file|-] [--branch ID]` -- call MCP tool (read = all projects, write = single). `--input` accepts inline JSON, `@file.json`, or `-` (stdin)
+
+## Kai (Keboola AI Assistant)
+- `kai ping [--project NAME]` -- check Kai server health and MCP connection status
+- `kai ask --message "question" [--project NAME]` -- one-shot question to Kai, collects full response
+- `kai chat --message "msg" [--chat-id ID] [--project NAME]` -- send message in a chat session, returns chat_id for continuation
+- `kai history [--project NAME] [--limit N]` -- list recent Kai chat sessions (default limit: 10)
 
 ## Sync (GitOps)
 - `sync init --project ALIAS [--directory DIR] [--git-branching]` -- initialize sync working directory

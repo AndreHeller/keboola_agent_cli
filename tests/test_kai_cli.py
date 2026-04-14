@@ -1,0 +1,646 @@
+"""Tests for Kai CLI commands via CliRunner.
+
+Tests the `kbagent kai` subcommands: ping, ask, chat, history.
+Each command is tested in both JSON and human output modes, plus error cases.
+"""
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+from typer.testing import CliRunner
+
+from helpers import setup_single_project
+from keboola_agent_cli.cli import app
+from keboola_agent_cli.errors import KeboolaApiError
+from keboola_agent_cli.services.kai_service import KaiService
+
+runner = CliRunner()
+
+
+class TestKaiPingCli:
+    """Tests for `kbagent kai ping` command."""
+
+    def test_kai_ping_json_output(self, tmp_config_dir: Path) -> None:
+        """kai ping --json returns structured JSON with server info."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ping.return_value = {
+            "project_alias": "prod",
+            "timestamp": "2025-01-15T10:30:00+00:00",
+            "app_name": "kai-api",
+            "app_version": "1.2.3",
+            "server_version": "2.0.0",
+            "mcp_status": "connected",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ping",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["project_alias"] == "prod"
+        assert output["data"]["app_name"] == "kai-api"
+        assert output["data"]["mcp_status"] == "connected"
+
+    def test_kai_ping_human_output(self, tmp_config_dir: Path) -> None:
+        """kai ping in human mode shows readable server info."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ping.return_value = {
+            "project_alias": "prod",
+            "timestamp": "2025-01-15T10:30:00+00:00",
+            "app_name": "kai-api",
+            "app_version": "1.2.3",
+            "server_version": "2.0.0",
+            "mcp_status": "connected",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ping",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "Kai is alive" in result.output
+        assert "kai-api" in result.output
+        assert "connected" in result.output
+
+    def test_kai_ping_api_error(self, tmp_config_dir: Path) -> None:
+        """kai ping with API error returns structured error and exit code 1."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ping.side_effect = KeboolaApiError(
+            message="Kai ping failed: Connection refused",
+            status_code=0,
+            error_code="KAI_ERROR",
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ping",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "KAI_ERROR" in output["error"]["code"]
+
+    def test_kai_ping_not_enabled(self, tmp_config_dir: Path) -> None:
+        """kai ping when Kai is not enabled returns KAI_NOT_ENABLED error."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ping.side_effect = KeboolaApiError(
+            message="Kai is not enabled for project 'prod'.",
+            status_code=0,
+            error_code="KAI_NOT_ENABLED",
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ping",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "KAI_NOT_ENABLED" in output["error"]["code"]
+
+    def test_kai_ping_help(self) -> None:
+        """kai ping --help shows usage information."""
+        result = runner.invoke(app, ["kai", "ping", "--help"])
+
+        assert result.exit_code == 0
+        assert "Check Kai server health" in result.output
+        assert "--project" in result.output
+
+
+class TestKaiAskCli:
+    """Tests for `kbagent kai ask` command."""
+
+    def test_kai_ask_json_output(self, tmp_config_dir: Path) -> None:
+        """kai ask --json returns structured JSON with response text."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ask.return_value = {
+            "project_alias": "prod",
+            "chat_id": "chat-xyz-789",
+            "response": "You have 5 transformations configured.",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ask",
+                    "--message",
+                    "How many transformations?",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["chat_id"] == "chat-xyz-789"
+        assert output["data"]["response"] == "You have 5 transformations configured."
+
+    def test_kai_ask_human_output(self, tmp_config_dir: Path) -> None:
+        """kai ask in human mode shows just the response text."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ask.return_value = {
+            "project_alias": "prod",
+            "chat_id": "chat-xyz-789",
+            "response": "You have 5 transformations configured.",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ask",
+                    "--message",
+                    "How many transformations?",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "You have 5 transformations configured." in result.output
+
+    def test_kai_ask_api_error(self, tmp_config_dir: Path) -> None:
+        """kai ask with API error returns structured error."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.ask.side_effect = KeboolaApiError(
+            message="Kai ask failed: timeout",
+            status_code=0,
+            error_code="KAI_ERROR",
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ask",
+                    "--message",
+                    "test",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+
+    def test_kai_ask_help(self) -> None:
+        """kai ask --help shows usage information."""
+        result = runner.invoke(app, ["kai", "ask", "--help"])
+
+        assert result.exit_code == 0
+        assert "Ask Kai a one-shot question" in result.output
+        assert "--message" in result.output
+        assert "--project" in result.output
+
+
+class TestKaiChatCli:
+    """Tests for `kbagent kai chat` command."""
+
+    def test_kai_chat_json_output(self, tmp_config_dir: Path) -> None:
+        """kai chat --json returns structured JSON with chat_id and response."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.chat_message.return_value = {
+            "project_alias": "prod",
+            "chat_id": "chat-session-001",
+            "response": "I can help with that.",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "chat",
+                    "--message",
+                    "Help me debug",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert output["data"]["chat_id"] == "chat-session-001"
+        assert output["data"]["response"] == "I can help with that."
+
+    def test_kai_chat_with_chat_id(self, tmp_config_dir: Path) -> None:
+        """kai chat --chat-id passes the ID to the service for continuation."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.chat_message.return_value = {
+            "project_alias": "prod",
+            "chat_id": "existing-chat-42",
+            "response": "Continuing our conversation.",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "chat",
+                    "--message",
+                    "What about now?",
+                    "--chat-id",
+                    "existing-chat-42",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        # Verify chat_id was passed through to the service
+        mock_service.chat_message.assert_called_once_with(
+            "prod", "What about now?", chat_id="existing-chat-42"
+        )
+
+    def test_kai_chat_human_output(self, tmp_config_dir: Path) -> None:
+        """kai chat in human mode shows response text and chat ID."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.chat_message.return_value = {
+            "project_alias": "prod",
+            "chat_id": "chat-session-001",
+            "response": "Here is the answer.",
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "chat",
+                    "--message",
+                    "question",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "Here is the answer." in result.output
+        assert "chat-session-001" in result.output
+
+    def test_kai_chat_help(self) -> None:
+        """kai chat --help shows usage information."""
+        result = runner.invoke(app, ["kai", "chat", "--help"])
+
+        assert result.exit_code == 0
+        assert "Send a message to Kai" in result.output
+        assert "--message" in result.output
+        assert "--chat-id" in result.output
+
+
+class TestKaiHistoryCli:
+    """Tests for `kbagent kai history` command."""
+
+    def test_kai_history_json_output(self, tmp_config_dir: Path) -> None:
+        """kai history --json returns structured JSON with chat list."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.get_history.return_value = {
+            "project_alias": "prod",
+            "chats": [
+                {
+                    "id": "chat-aaa-111",
+                    "title": "Data pipeline question",
+                    "created_at": "2025-01-10T08:00:00+00:00",
+                    "visibility": "private",
+                },
+                {
+                    "id": "chat-bbb-222",
+                    "title": "(untitled)",
+                    "created_at": None,
+                    "visibility": "public",
+                },
+            ],
+            "has_more": False,
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "history",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        output = json.loads(result.output)
+        assert output["status"] == "ok"
+        assert len(output["data"]["chats"]) == 2
+        assert output["data"]["chats"][0]["title"] == "Data pipeline question"
+        assert output["data"]["has_more"] is False
+
+    def test_kai_history_with_limit(self, tmp_config_dir: Path) -> None:
+        """kai history --limit passes the limit to the service."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.get_history.return_value = {
+            "project_alias": "prod",
+            "chats": [],
+            "has_more": False,
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "history",
+                    "--limit",
+                    "25",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_service.get_history.assert_called_once_with("prod", limit=25)
+
+    def test_kai_history_human_output(self, tmp_config_dir: Path) -> None:
+        """kai history in human mode shows a table of chats."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.get_history.return_value = {
+            "project_alias": "prod",
+            "chats": [
+                {
+                    "id": "chat-aaa-111-full-uuid",
+                    "title": "Pipeline debugging",
+                    "created_at": "2025-01-10T08:00:00+00:00",
+                    "visibility": "private",
+                },
+            ],
+            "has_more": True,
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "history",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "Pipeline debugging" in result.output
+        assert "More chats available" in result.output
+
+    def test_kai_history_empty_human(self, tmp_config_dir: Path) -> None:
+        """kai history in human mode shows 'No chat history' when empty."""
+        setup_single_project(tmp_config_dir)
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.return_value = "prod"
+        mock_service.get_history.return_value = {
+            "project_alias": "prod",
+            "chats": [],
+            "has_more": False,
+        }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "history",
+                    "--project",
+                    "prod",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "No chat history" in result.output
+
+    def test_kai_history_help(self) -> None:
+        """kai history --help shows usage information."""
+        result = runner.invoke(app, ["kai", "history", "--help"])
+
+        assert result.exit_code == 0
+        assert "List recent Kai chat sessions" in result.output
+        assert "--project" in result.output
+        assert "--limit" in result.output
+
+
+class TestKaiConfigError:
+    """Tests for ConfigError handling across kai commands."""
+
+    def test_kai_ping_config_error(self, tmp_config_dir: Path) -> None:
+        """kai ping with ConfigError returns exit code 5."""
+        setup_single_project(tmp_config_dir)
+
+        from keboola_agent_cli.errors import ConfigError
+
+        mock_service = MagicMock(spec=KaiService)
+        mock_service.resolve_alias.side_effect = ConfigError("Project 'unknown' not found.")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "keboola_agent_cli.commands.kai.get_service",
+                lambda ctx, name: mock_service,
+            )
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "--config-dir",
+                    str(tmp_config_dir),
+                    "kai",
+                    "ping",
+                    "--project",
+                    "unknown",
+                ],
+            )
+
+        assert result.exit_code == 5
+        output = json.loads(result.output)
+        assert output["status"] == "error"
+        assert "CONFIG_ERROR" in output["error"]["code"]

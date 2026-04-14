@@ -6,6 +6,7 @@ from . import (
     config,  # noqa: F401
     encrypt,  # noqa: F401
     job,  # noqa: F401
+    kai,  # noqa: F401
     lineage,  # noqa: F401
     org,  # noqa: F401
     sharing,  # noqa: F401

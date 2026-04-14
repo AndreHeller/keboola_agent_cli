@@ -96,6 +96,11 @@ Use `kbagent <command> --help` for full flag details and examples.
     existing config (preserves sibling keys). --dry-run previews changes.
     Paths are always relative to the configuration root.
 
+  kbagent config rename --project NAME --component-id ID --config-id ID --name "New Name" [--branch ID] [--directory DIR]
+    Rename a configuration. Updates name via API. If a local sync directory
+    exists (.keboola/manifest.json), renames the directory and updates the
+    manifest path. Uses git mv when inside a git repo for cleaner history.
+
   kbagent config delete --project NAME --component-id ID --config-id ID [--branch ID]
     Delete a configuration. Branch-aware.
 
@@ -150,6 +155,9 @@ Use `kbagent <command> --help` for full flag details and examples.
 
   kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]
     Delete one or more tables. Batch: repeat --table-id. --dry-run to preview. Branch-aware.
+
+  kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--dry-run] [--yes] [--branch ID]
+    Delete one or more columns from a table. Batch: repeat --column. --dry-run to preview. Branch-aware.
 
   kbagent storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]
     Delete one or more buckets. --force cascade-deletes tables. Linked/shared buckets protected. Branch-aware.
@@ -273,6 +281,7 @@ Use `kbagent <command> --help` for full flag details and examples.
     Download configs as local files. Idempotent, protects local modifications.
     --job-limit controls max recent jobs per config (default 5). For large projects,
     automatically falls back to per-config job fetching to ensure all configs get job history.
+    Auto-detects renamed configs and renames local directories to match (uses git mv in git repos).
 
   kbagent sync status [--directory DIR]
     Show local changes since last pull (SHA256-based).
@@ -311,6 +320,24 @@ Use `kbagent <command> --help` for full flag details and examples.
     Call an MCP tool. Read tools auto-query all projects. Write tools need --project.
     --input accepts: inline JSON, @file.json (from file), or - (from stdin).
     --branch is a CLI flag (NOT a tool input param). Do not pass branch_id in --input.
+
+### Kai -- Keboola AI Assistant (BETA)
+
+  kbagent kai ping [--project NAME]
+    Check Kai server health and MCP connection status.
+    Fails with KAI_NOT_ENABLED if the project lacks the 'agent-chat' feature.
+
+  kbagent kai ask --message "question" [--project NAME]
+    One-shot question to Kai. Collects full response. Use --json for structured output.
+    Kai has MCP access to project data -- use for Keboola-specific questions
+    (e.g. "What tables do I have?", "Is it safe to drop bucket X?").
+
+  kbagent kai chat --message "msg" [--chat-id ID] [--project NAME]
+    Send message in a chat session. Use --chat-id to continue a conversation.
+    Without --chat-id starts a new chat. Returns chat_id for continuation.
+
+  kbagent kai history [--project NAME] [--limit N]
+    List recent Kai chat sessions. Default limit: 10.
 
 ### Utility Commands
 

@@ -68,6 +68,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Show detailed information about a specific configuration | `kbagent config detail --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
 | Search through configuration bodies for a string or pattern | `kbagent config search --query QUERY` |
 | Update a configuration's metadata and/or content | `kbagent config update --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
+| Rename a configuration (update name via API + rename local sync directory) | `kbagent config rename --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID --name NAME` |
 | Delete a configuration from a project | `kbagent config delete --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
 | Generate boilerplate configuration files for a Keboola component | `kbagent config new --component-id COMPONENT-ID` |
 | List jobs from connected projects | `kbagent job list` |
@@ -82,6 +83,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Upload a CSV file into a storage table | `kbagent storage upload-table --project PROJECT --table-id TABLE-ID --file FILE` |
 | Export a storage table to a local CSV file | `kbagent storage download-table --project PROJECT --table-id TABLE-ID` |
 | Delete one or more storage tables | `kbagent storage delete-table --project PROJECT --table-id TABLE-ID` |
+| Delete one or more columns from a storage table | `kbagent storage delete-column --project PROJECT --table-id TABLE-ID --column COLUMN` |
 | Delete one or more storage buckets | `kbagent storage delete-bucket --project PROJECT --bucket-id BUCKET-ID` |
 | List Storage Files with optional tag filtering | `kbagent storage files --project PROJECT` |
 | Show Storage File metadata (without downloading) | `kbagent storage file-detail --project PROJECT --file-id FILE-ID` |
@@ -97,6 +99,10 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Link a shared bucket into a project | `kbagent sharing link --project PROJECT --source-project-id SOURCE-PROJECT-ID --bucket-id BUCKET-ID` |
 | Remove a linked bucket from a project | `kbagent sharing unlink --project PROJECT --bucket-id BUCKET-ID` |
 | Show cross-project data lineage via bucket sharing | `kbagent lineage show` |
+| Check Kai server health and MCP connection status | `kbagent kai ping` |
+| Ask Kai a one-shot question and get the full response | `kbagent kai ask --message MESSAGE` |
+| Send a message to Kai in a chat session | `kbagent kai chat --message MESSAGE` |
+| List recent Kai chat sessions | `kbagent kai history` |
 | List development branches from connected projects | `kbagent branch list` |
 | Create a new development branch and auto-activate it | `kbagent branch create --project PROJECT --name NAME` |
 | Set an existing development branch as active | `kbagent branch use --project PROJECT --branch BRANCH` |

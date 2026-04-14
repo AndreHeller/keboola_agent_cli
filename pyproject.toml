@@ -1,6 +1,6 @@
 [project]
 name = "keboola-agent-cli"
-version = "0.18.6"
+version = "0.19.0"
 description = "AI-friendly CLI for managing Keboola projects"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,6 +19,7 @@ dependencies = [
     "pyyaml>=6",
     "packaging>=23",
     "prompt-toolkit>=3.0",
+    "kai-client>=0.11.0",
 ]
 
 [project.scripts]
@@ -36,6 +37,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "tests"]
 markers = [
     "integration: marks tests as integration tests requiring real API credentials (deselect with '-m \"not integration\"')",
+    "e2e: marks tests as end-to-end tests requiring real API credentials (deselect with '-m \"not e2e\"')",
 ]
 
 [tool.ruff]

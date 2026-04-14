@@ -16,7 +16,7 @@ Auto-updates on every launch. Run `kbagent changelog` to see what changed.
 
 This CLI is built AI-first. Every command outputs structured JSON (`--json`), errors include machine-readable codes, and the permission firewall enforces safety at the code level -- not via prompt instructions.
 
-**Claude Code plugin** (agent learns all 74 commands automatically):
+**Claude Code plugin** (agent learns all 80 commands automatically):
 
 ```
 /plugin marketplace add padak/keboola_agent_cli
@@ -77,6 +77,7 @@ kbagent workspace query --project prod --workspace-id WS_ID \
 | **MCP tools** | Call `keboola-mcp-server` tools with auto-expand, multi-project fan-out, branch propagation, schema validation. |
 | **Workspaces** | Create Snowflake/BQ workspace, load tables, run SQL. Create from transformation config for instant debugging. |
 | **Sharing & lineage** | Cross-project data lineage via bucket sharing. Share/link/unlink with org/project/user access control. |
+| **Kai (AI Assistant)** | Ask Keboola's built-in AI questions about your project. One-shot or chat sessions with full MCP context. |
 | **Encryption** | Encrypt secrets (`#password`, `#api_token`) via Keboola Encryption API. Works with sync push and MCP. |
 | **Permissions** | Firewall for AI agents: read-only, deny-writes, deny-destructive. Code-level enforcement, not prompt tricks. |
 | **Auto-update** | Self-updates on startup. "What's new" after each update. Full changelog via `kbagent changelog`. |
@@ -110,10 +111,10 @@ Full command reference with flags: [SKILL.md](plugins/kbagent/skills/kbagent/SKI
 kbagent project     add | list | remove | edit | status | refresh
 kbagent org         setup
 kbagent component   list | detail
-kbagent config      list | detail | search | update | delete | new
+kbagent config      list | detail | search | update | rename | delete | new
 kbagent job         list | detail | run
 kbagent storage     buckets | bucket-detail | create-bucket | delete-bucket
-                    tables | table-detail | create-table | upload-table | download-table | delete-table
+                    tables | table-detail | create-table | upload-table | download-table | delete-table | delete-column
                     files | file-detail | file-upload | file-download | file-tag | file-delete
                     load-file | unload-table
 kbagent sharing     list | share | unshare | link | unlink
@@ -122,6 +123,7 @@ kbagent branch      list | create | use | reset | delete | merge
 kbagent workspace   create | list | detail | delete | password | load | query | from-transformation
 kbagent tool        list | call
 kbagent sync        init | pull | status | diff | push | branch-link | branch-unlink | branch-status
+kbagent kai         ping | ask | chat | history
 kbagent encrypt     values
 kbagent permissions list | show | set | reset | check
 kbagent             init | context | doctor | version | update | changelog

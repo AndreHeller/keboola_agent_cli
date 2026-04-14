@@ -5,13 +5,21 @@ aggregation, and full-text search without knowing about CLI or HTTP details.
 """
 
 import json
+import logging
 import re
+import shutil
+import subprocess
+from pathlib import Path
 from typing import Any
 
 from ..errors import KeboolaApiError
 from ..json_utils import compute_diff, deep_merge, set_nested_value
 from ..models import ProjectConfig
+from ..sync.manifest import Manifest, load_manifest, save_manifest
+from ..sync.naming import sanitize_name
 from .base import BaseService
+
+logger = logging.getLogger(__name__)
 
 
 def _find_matches_in_json(
@@ -436,6 +444,203 @@ class ConfigService(BaseService):
             "config_id": config_id,
             "branch_id": effective_branch_id,
         }
+
+    def rename_config(
+        self,
+        alias: str,
+        component_id: str,
+        config_id: str,
+        name: str,
+        branch_id: int | None = None,
+        directory: Path | None = None,
+    ) -> dict[str, Any]:
+        """Rename a configuration (update name via API + rename local sync dir).
+
+        Args:
+            alias: Project alias.
+            component_id: The component ID.
+            config_id: The configuration ID to rename.
+            name: The new configuration name.
+            branch_id: If set, rename in a specific dev branch.
+                       If None, uses the project's active branch (if any).
+            directory: Optional sync working directory. If a manifest exists
+                       here and tracks this config, the local directory is
+                       renamed and the manifest path is updated.
+
+        Returns:
+            Dict with old name, new name, and optional sync rename details.
+
+        Raises:
+            ConfigError: If the alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+        effective_branch_id = branch_id or project.active_branch_id
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            # Fetch current state to get old name
+            current = client.get_config_detail(
+                component_id, config_id, branch_id=effective_branch_id
+            )
+            old_name = current.get("name", "")
+
+            # Update name via API
+            client.update_config(
+                component_id=component_id,
+                config_id=config_id,
+                name=name,
+                change_description=f"Renamed via kbagent config rename: {old_name} -> {name}",
+                branch_id=effective_branch_id,
+            )
+        finally:
+            client.close()
+
+        result: dict[str, Any] = {
+            "status": "renamed",
+            "project_alias": alias,
+            "component_id": component_id,
+            "config_id": config_id,
+            "old_name": old_name,
+            "new_name": name,
+            "branch_id": effective_branch_id,
+        }
+
+        # Attempt local sync directory rename if applicable
+        sync_result = self._rename_sync_directory(
+            directory=directory,
+            component_id=component_id,
+            config_id=config_id,
+            new_name=name,
+        )
+        if sync_result:
+            result["sync"] = sync_result
+
+        return result
+
+    def _rename_sync_directory(
+        self,
+        directory: Path | None,
+        component_id: str,
+        config_id: str,
+        new_name: str,
+    ) -> dict[str, str] | None:
+        """Rename the local sync directory for a config if a manifest tracks it.
+
+        Returns a dict with old_path/new_path on success, or None if no
+        sync directory was found or rename was not needed.
+        """
+        if directory is None:
+            return None
+
+        from ..constants import KEBOOLA_DIR_NAME, MANIFEST_FILENAME
+
+        manifest_path = directory / KEBOOLA_DIR_NAME / MANIFEST_FILENAME
+        if not manifest_path.exists():
+            return None
+
+        try:
+            manifest = load_manifest(directory)
+        except (FileNotFoundError, ValueError):
+            return None
+
+        # Find the config entry in the manifest
+        target_cfg = None
+        for cfg in manifest.configurations:
+            if cfg.component_id == component_id and cfg.id == config_id:
+                target_cfg = cfg
+                break
+
+        if target_cfg is None:
+            return None
+
+        # Compute new path using the naming template
+        old_path = target_cfg.path
+        old_basename = old_path.rsplit("/", 1)[-1] if "/" in old_path else old_path
+        new_basename = sanitize_name(new_name)
+
+        if old_basename == new_basename:
+            return None  # No rename needed
+
+        # Build new path: replace only the last segment (config name)
+        if "/" in old_path:
+            parent = old_path.rsplit("/", 1)[0]
+            new_path = f"{parent}/{new_basename}"
+        else:
+            new_path = new_basename
+
+        # Collision detection: if target already exists, append numeric suffix
+        branch_dir = self._find_sync_branch_dir(manifest, directory)
+        if branch_dir is None:
+            return None
+
+        target_dir = branch_dir / new_path
+        if target_dir.exists():
+            counter = 2
+            while (branch_dir / f"{new_path}-{counter}").exists():
+                counter += 1
+            new_path = f"{new_path}-{counter}"
+            target_dir = branch_dir / new_path
+
+        # Perform the rename
+        source_dir = branch_dir / old_path
+        if not source_dir.exists():
+            # Directory doesn't exist locally, just update manifest
+            target_cfg.path = new_path
+            target_cfg.metadata.pop("pull_hash", None)
+            target_cfg.metadata.pop("pull_config_hash", None)
+            save_manifest(directory, manifest)
+            return {"old_path": old_path, "new_path": new_path, "method": "manifest_only"}
+
+        # Try git mv first for cleaner history, fall back to shutil.move
+        method = self._move_directory(source_dir, target_dir)
+
+        # Update manifest
+        target_cfg.path = new_path
+        target_cfg.metadata.pop("pull_hash", None)
+        target_cfg.metadata.pop("pull_config_hash", None)
+        save_manifest(directory, manifest)
+
+        # Clean up empty parent directories
+        parent_dir = source_dir.parent
+        while parent_dir != branch_dir and parent_dir.exists():
+            if not any(parent_dir.iterdir()):
+                parent_dir.rmdir()
+                parent_dir = parent_dir.parent
+            else:
+                break
+
+        return {"old_path": old_path, "new_path": new_path, "method": method}
+
+    @staticmethod
+    def _move_directory(source: Path, target: Path) -> str:
+        """Move a directory, using git mv if in a git repo, else shutil.move."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            result = subprocess.run(
+                ["git", "mv", str(source), str(target)],
+                cwd=source.parent,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return "git_mv"
+        except FileNotFoundError:
+            pass  # git not installed
+        shutil.move(str(source), str(target))
+        return "shutil_move"
+
+    @staticmethod
+    def _find_sync_branch_dir(manifest: Manifest, project_root: Path) -> Path | None:
+        """Find the branch directory within a sync project root."""
+        if not manifest.branches:
+            return None
+        # Use the first branch (typically "main")
+        branch_path = manifest.branches[0].path
+        branch_dir = project_root / branch_path
+        return branch_dir if branch_dir.exists() else None
 
     def search_configs(
         self,

@@ -449,8 +449,8 @@ class TestUnloadTableToFileService:
         )
 
         assert mock_client.tag_file.call_count == 2
-        mock_client.tag_file.assert_any_call(99, "export")
-        mock_client.tag_file.assert_any_call(99, "daily")
+        mock_client.tag_file.assert_any_call(99, "export", branch_id=None)
+        mock_client.tag_file.assert_any_call(99, "daily", branch_id=None)
 
     def test_unload_with_download(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -1071,3 +1071,121 @@ class TestFormatFileSize:
         from keboola_agent_cli.commands.storage import _format_file_size
 
         assert _format_file_size(2 * 1024 * 1024 * 1024) == "2.00 GB"
+
+
+# ------------------------------------------------------------------
+# Branch-scoped file operations (issue #161)
+# ------------------------------------------------------------------
+
+
+class TestClientGetFileInfoBranch:
+    """Verify get_file_info uses branch-scoped URL prefix."""
+
+    def test_get_file_info_without_branch(self, httpx_mock) -> None:
+        from keboola_agent_cli.client import KeboolaClient
+
+        httpx_mock.add_response(json=SAMPLE_FILE)
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token=TEST_TOKEN,
+        )
+        client.get_file_info(12345)
+        request = httpx_mock.get_requests()[0]
+        assert "/v2/storage/files/12345" in str(request.url)
+        assert "/branch/" not in str(request.url)
+        client.close()
+
+    def test_get_file_info_with_branch(self, httpx_mock) -> None:
+        from keboola_agent_cli.client import KeboolaClient
+
+        httpx_mock.add_response(json=SAMPLE_FILE)
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token=TEST_TOKEN,
+        )
+        client.get_file_info(12345, branch_id=42)
+        request = httpx_mock.get_requests()[0]
+        assert "/v2/storage/branch/42/files/12345" in str(request.url)
+        client.close()
+
+
+class TestClientDeleteFileBranch:
+    """Verify delete_file uses branch-scoped URL prefix."""
+
+    def test_delete_file_with_branch(self, httpx_mock) -> None:
+        from keboola_agent_cli.client import KeboolaClient
+
+        httpx_mock.add_response(method="DELETE", status_code=204)
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token=TEST_TOKEN,
+        )
+        client.delete_file(12345, branch_id=42)
+        request = httpx_mock.get_requests()[0]
+        assert "/v2/storage/branch/42/files/12345" in str(request.url)
+        client.close()
+
+
+class TestClientTagFileBranch:
+    """Verify tag_file and untag_file use branch-scoped URL prefix."""
+
+    def test_tag_file_with_branch(self, httpx_mock) -> None:
+        from keboola_agent_cli.client import KeboolaClient
+
+        httpx_mock.add_response(method="POST", status_code=201)
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token=TEST_TOKEN,
+        )
+        client.tag_file(12345, "my-tag", branch_id=42)
+        request = httpx_mock.get_requests()[0]
+        assert "/v2/storage/branch/42/files/12345/tags" in str(request.url)
+        client.close()
+
+    def test_untag_file_with_branch(self, httpx_mock) -> None:
+        from keboola_agent_cli.client import KeboolaClient
+
+        httpx_mock.add_response(method="DELETE", status_code=204)
+        client = KeboolaClient(
+            stack_url="https://connection.keboola.com",
+            token=TEST_TOKEN,
+        )
+        client.untag_file(12345, "old-tag", branch_id=42)
+        request = httpx_mock.get_requests()[0]
+        assert "/v2/storage/branch/42/files/12345/tags/old-tag" in str(request.url)
+        client.close()
+
+
+class TestUnloadTableToFileBranchService:
+    """Verify unload_table_to_file passes branch_id to file operations."""
+
+    def test_unload_with_branch_passes_branch_to_file_ops(self, tmp_path: Path) -> None:
+        store = _make_store(tmp_path)
+        mock_client = MagicMock()
+        mock_client.export_table_async.return_value = {
+            "results": {"file": {"id": 99}},
+        }
+        mock_client.get_file_info.return_value = {
+            "id": 99,
+            "name": "export.csv.gz",
+            "sizeBytes": 2048,
+            "isSliced": False,
+            "tags": ["export"],
+        }
+        service = _make_service(store, mock_client)
+
+        service.unload_table_to_file(
+            alias="test",
+            table_id="in.c-data.users",
+            tags=["export"],
+            branch_id=33,
+        )
+
+        mock_client.export_table_async.assert_called_once_with(
+            table_id="in.c-data.users",
+            columns=None,
+            limit=None,
+            branch_id=33,
+        )
+        mock_client.tag_file.assert_called_once_with(99, "export", branch_id=33)
+        mock_client.get_file_info.assert_called_once_with(99, branch_id=33)

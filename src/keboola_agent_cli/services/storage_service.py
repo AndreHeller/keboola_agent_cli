@@ -600,8 +600,8 @@ class StorageService(BaseService):
                     retryable=False,
                 )
 
-            # Step 3: Get download URL
-            file_detail = client.get_file_info(file_id)
+            # Step 3: Get download URL (branch-scoped if exporting from dev branch)
+            file_detail = client.get_file_info(file_id, branch_id=branch_id)
             download_url = file_detail.get("url")
             if not download_url:
                 raise KeboolaApiError(
@@ -693,6 +693,67 @@ class StorageService(BaseService):
             "failed": failed,
             "dry_run": False,
             "project_alias": alias,
+        }
+
+    def delete_columns(
+        self,
+        alias: str,
+        table_id: str,
+        columns: list[str],
+        dry_run: bool = False,
+        branch_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Delete one or more columns from a storage table.
+
+        Batch-tolerant: accumulates errors per column, one failure does not
+        stop other deletes.
+
+        Args:
+            alias: Project alias.
+            table_id: Full table ID (e.g. "in.c-bucket.table").
+            columns: List of column names to delete.
+            dry_run: If True, only report what would be deleted.
+            branch_id: If set, target a specific dev branch.
+
+        Returns:
+            Dict with 'deleted', 'failed', 'dry_run', 'project_alias',
+            'table_id', and optionally 'would_delete'.
+        """
+        from ..errors import KeboolaApiError
+
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        if dry_run:
+            return {
+                "deleted": [],
+                "failed": [],
+                "would_delete": list(columns),
+                "dry_run": True,
+                "project_alias": alias,
+                "table_id": table_id,
+            }
+
+        deleted: list[str] = []
+        failed: list[dict[str, str]] = []
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            for col in columns:
+                try:
+                    client.delete_column(table_id, col, branch_id=branch_id)
+                    deleted.append(col)
+                except KeboolaApiError as exc:
+                    failed.append({"column": col, "error": exc.message})
+        finally:
+            client.close()
+
+        return {
+            "deleted": deleted,
+            "failed": failed,
+            "dry_run": False,
+            "project_alias": alias,
+            "table_id": table_id,
         }
 
     def delete_buckets(
@@ -1193,12 +1254,12 @@ class StorageService(BaseService):
                     retryable=False,
                 )
 
-            # Step 3: Tag the exported file
+            # Step 3: Tag the exported file (branch-scoped if on dev branch)
             for tag in tags or []:
-                client.tag_file(file_id, tag)
+                client.tag_file(file_id, tag, branch_id=branch_id)
 
-            # Step 4: Get full file detail
-            file_detail = client.get_file_info(file_id)
+            # Step 4: Get full file detail (branch-scoped if on dev branch)
+            file_detail = client.get_file_info(file_id, branch_id=branch_id)
 
             result: dict[str, Any] = {
                 "project_alias": alias,

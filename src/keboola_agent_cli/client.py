@@ -1212,18 +1212,20 @@ class KeboolaClient(BaseHttpClient):
         )
         return self._wait_for_storage_job(response.json(), max_wait=EXPORT_JOB_MAX_WAIT)
 
-    def get_file_info(self, file_id: int) -> dict[str, Any]:
+    def get_file_info(self, file_id: int, branch_id: int | None = None) -> dict[str, Any]:
         """Get file metadata including download URL.
 
         Args:
             file_id: Storage file ID (from export job results).
+            branch_id: If set, query file from a specific dev branch scope.
 
         Returns:
             File resource dict with 'url', 'isSliced', 'sizeBytes', etc.
         """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         response = self._request(
             "GET",
-            f"/v2/storage/files/{file_id}",
+            f"{prefix}/files/{file_id}",
             params={"federationToken": "1"},
         )
         return response.json()
@@ -1307,32 +1309,38 @@ class KeboolaClient(BaseHttpClient):
             "created": upload_info.get("created"),
         }
 
-    def delete_file(self, file_id: int) -> None:
+    def delete_file(self, file_id: int, branch_id: int | None = None) -> None:
         """Delete a Storage File.
 
         Args:
             file_id: Storage file ID.
+            branch_id: If set, target a file in a specific dev branch scope.
         """
-        self._request("DELETE", f"/v2/storage/files/{file_id}")
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        self._request("DELETE", f"{prefix}/files/{file_id}")
 
-    def tag_file(self, file_id: int, tag: str) -> None:
+    def tag_file(self, file_id: int, tag: str, branch_id: int | None = None) -> None:
         """Add a tag to a Storage File.
 
         Args:
             file_id: Storage file ID.
             tag: Tag string to add.
+            branch_id: If set, target a file in a specific dev branch scope.
         """
-        self._request("POST", f"/v2/storage/files/{file_id}/tags", data={"tag": tag})
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
+        self._request("POST", f"{prefix}/files/{file_id}/tags", data={"tag": tag})
 
-    def untag_file(self, file_id: int, tag: str) -> None:
+    def untag_file(self, file_id: int, tag: str, branch_id: int | None = None) -> None:
         """Remove a tag from a Storage File.
 
         Args:
             file_id: Storage file ID.
             tag: Tag string to remove.
+            branch_id: If set, target a file in a specific dev branch scope.
         """
+        prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         safe_tag = quote(tag, safe="")
-        self._request("DELETE", f"/v2/storage/files/{file_id}/tags/{safe_tag}")
+        self._request("DELETE", f"{prefix}/files/{file_id}/tags/{safe_tag}")
 
     def download_sliced_file(self, file_detail: dict[str, Any], output_path: str) -> int:
         """Download a sliced file by fetching manifest and concatenating slices.

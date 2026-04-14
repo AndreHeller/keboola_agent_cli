@@ -244,6 +244,7 @@ kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID]
 kbagent config detail --project NAME --component-id ID --config-id ID [--branch ID]
 kbagent config search --query PATTERN [--project NAME] [--component-type TYPE] [--ignore-case] [--regex] [--branch ID]
 kbagent config update --project NAME --component-id ID --config-id ID [--name N] [--description D] [--configuration JSON|@file|-] [--configuration-file PATH] [--set PATH=VALUE ...] [--merge] [--dry-run] [--branch ID]
+kbagent config rename --project NAME --component-id ID --config-id ID --name "New Name" [--branch ID] [--directory DIR]
 
 kbagent job list [--project NAME] [--component-id ID] [--status STATUS] [--limit N]
 kbagent job detail --project NAME --job-id ID

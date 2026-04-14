@@ -614,6 +614,87 @@ class TestPull:
         # Directory must still exist after dry-run
         assert snowflake_dir.exists(), "Dry-run should NOT delete directories"
 
+    def test_pull_auto_renames_config_on_remote_name_change(
+        self, tmp_config_dir: Path, tmp_path: Path
+    ) -> None:
+        """pull auto-renames local directory when config name changed on remote."""
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+
+        store = self._init_project(tmp_config_dir, project_root)
+
+        # First pull: download config with original name "My HTTP Extractor"
+        pull_client = _make_sync_mock_client(
+            components_response=SAMPLE_COMPONENTS_NO_ROWS,
+        )
+        svc = SyncService(
+            config_store=store,
+            client_factory=lambda url, token: pull_client,
+        )
+        result1 = svc.pull(alias="prod", project_root=project_root)
+        assert result1["configs_pulled"] == 1
+
+        # Verify original directory exists at expected path
+        old_dir = project_root / "main" / "extractor" / "keboola.ex-http" / "my-http-extractor"
+        assert old_dir.exists(), "Original config directory should exist after first pull"
+        assert (old_dir / CONFIG_FILENAME).exists()
+
+        # Verify manifest tracks the original path
+        manifest_before = load_manifest(project_root)
+        assert len(manifest_before.configurations) == 1
+        assert (
+            manifest_before.configurations[0].path == "extractor/keboola.ex-http/my-http-extractor"
+        )
+
+        # Second pull: same config ID but with renamed name
+        renamed_components = [
+            {
+                "id": "keboola.ex-http",
+                "type": "extractor",
+                "configurations": [
+                    {
+                        "id": "cfg-001",
+                        "name": "Renamed HTTP Extractor",
+                        "description": "Fetches data",
+                        "configuration": {
+                            "parameters": {"baseUrl": "https://api.example.com"},
+                        },
+                        "rows": [],
+                    }
+                ],
+            },
+        ]
+        pull_client2 = _make_sync_mock_client(components_response=renamed_components)
+        svc2 = SyncService(
+            config_store=store,
+            client_factory=lambda url, token: pull_client2,
+        )
+        result2 = svc2.pull(alias="prod", project_root=project_root)
+
+        # Verify the old directory no longer exists
+        assert not old_dir.exists(), "Old config directory should be gone after rename"
+
+        # Verify the new directory exists
+        new_dir = project_root / "main" / "extractor" / "keboola.ex-http" / "renamed-http-extractor"
+        assert new_dir.exists(), "Renamed config directory should exist"
+        assert (new_dir / CONFIG_FILENAME).exists()
+
+        # Verify manifest path was updated
+        manifest_after = load_manifest(project_root)
+        assert len(manifest_after.configurations) == 1
+        assert (
+            manifest_after.configurations[0].path
+            == "extractor/keboola.ex-http/renamed-http-extractor"
+        )
+
+        # Verify pull_details contains a "renamed" action
+        renamed_details = [d for d in result2["details"] if d["action"] == "renamed"]
+        assert len(renamed_details) == 1
+        assert renamed_details[0]["component_id"] == "keboola.ex-http"
+        assert renamed_details[0]["config_name"] == "Renamed HTTP Extractor"
+        assert renamed_details[0]["old_path"] == "extractor/keboola.ex-http/my-http-extractor"
+        assert renamed_details[0]["path"] == "extractor/keboola.ex-http/renamed-http-extractor"
+
 
 # ===================================================================
 # status tests

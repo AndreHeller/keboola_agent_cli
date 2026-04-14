@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import shutil
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -318,6 +319,40 @@ class SyncService(BaseService):
                 is_new = lookup_key not in existing_keys
                 if lookup_key in existing_paths:
                     rel_path = existing_paths[lookup_key]
+
+                    # Auto-rename: detect when remote name changed
+                    expected_path = config_path(
+                        manifest.naming.config,
+                        component_type,
+                        component_id,
+                        config_name,
+                    )
+                    if rel_path != expected_path and not dry_run:
+                        rename_target = expected_path
+                        # Collision: if target already used, add suffix
+                        if rename_target in used_paths:
+                            suffix = config_id[:8] if len(config_id) > 8 else config_id
+                            rename_target = f"{rename_target}-{suffix}"
+
+                        old_dir = branch_dir / rel_path
+                        new_dir = branch_dir / rename_target
+                        if old_dir.exists() and not new_dir.exists():
+                            self._rename_directory(old_dir, new_dir)
+                            pull_details.append(
+                                {
+                                    "action": "renamed",
+                                    "component_id": component_id,
+                                    "config_name": config_name,
+                                    "path": rename_target,
+                                    "old_path": rel_path,
+                                }
+                            )
+                            rel_path = rename_target
+                            logger.info(
+                                "Renamed config dir: %s -> %s",
+                                rel_path,
+                                rename_target,
+                            )
                 else:
                     # Generate new filesystem path with collision detection
                     rel_path = config_path(
@@ -889,6 +924,9 @@ class SyncService(BaseService):
 
         branch_id = self._resolve_branch_id(project, manifest, project_root)
 
+        # Detect name drift: local dir name doesn't match config name
+        name_drift_warnings = self._detect_name_drift(manifest, project_root)
+
         client = self._client_factory(project.stack_url, project.token)
         created = 0
         updated = 0
@@ -1027,7 +1065,7 @@ class SyncService(BaseService):
         if manifest_dirty:
             save_manifest(project_root, manifest)
 
-        return {
+        result_data: dict[str, Any] = {
             "status": "pushed",
             "created": created,
             "updated": updated,
@@ -1035,6 +1073,9 @@ class SyncService(BaseService):
             "errors": errors,
             "pushed_details": pushed_details,
         }
+        if name_drift_warnings:
+            result_data["name_drift_warnings"] = name_drift_warnings
+        return result_data
 
     @staticmethod
     def _encrypt_secrets_in_config(
@@ -2046,6 +2087,65 @@ class SyncService(BaseService):
         """Return the SHA256 hex digest of a file's contents."""
         content = file_path.read_bytes()
         return hashlib.sha256(content).hexdigest()
+
+    def _detect_name_drift(self, manifest: Manifest, project_root: Path) -> list[dict[str, str]]:
+        """Detect configs where local dir name doesn't match the config name.
+
+        Reads each tracked config's _config.yml to get the current name,
+        then compares sanitize_name(name) against the directory basename.
+
+        Returns a list of warning dicts with component_id, config_id,
+        local_dirname, and expected_dirname.
+        """
+        warnings: list[dict[str, str]] = []
+        for cfg in manifest.configurations:
+            path = cfg.path
+            dirname = path.rsplit("/", 1)[-1] if "/" in path else path
+
+            # Find branch dir and read _config.yml
+            branch_path = self._find_branch_path(manifest, cfg.branch_id)
+            config_dir = project_root / branch_path / path
+            local_data = self._read_config_file(config_dir)
+            if local_data is None:
+                continue
+
+            config_name = local_data.get("name", "")
+            if not config_name:
+                continue
+
+            expected_dirname = sanitize_name(config_name)
+            if dirname != expected_dirname:
+                warnings.append(
+                    {
+                        "component_id": cfg.component_id,
+                        "config_id": cfg.id,
+                        "local_dirname": dirname,
+                        "expected_dirname": expected_dirname,
+                        "config_name": config_name,
+                    }
+                )
+        return warnings
+
+    def _rename_directory(self, source: Path, target: Path) -> str:
+        """Rename a directory, using git mv if in a git repo, else shutil.move.
+
+        Returns 'git_mv' or 'shutil_move' indicating which method was used.
+        """
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            result = subprocess.run(
+                ["git", "mv", str(source), str(target)],
+                cwd=source.parent,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return "git_mv"
+        except FileNotFoundError:
+            pass  # git not installed
+        shutil.move(str(source), str(target))
+        return "shutil_move"
 
     def _read_config_file(self, config_dir: Path) -> dict[str, Any] | None:
         """Read and parse a ``_config.yml`` file, returning None if missing."""

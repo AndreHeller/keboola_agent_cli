@@ -88,6 +88,7 @@ OPERATION_REGISTRY: dict[str, str] = {
     "storage.unload-table": "read",
     # Storage destructive
     "storage.delete-table": "destructive",
+    "storage.delete-column": "destructive",
     "storage.delete-bucket": "destructive",
     "storage.file-delete": "destructive",
     # Encryption

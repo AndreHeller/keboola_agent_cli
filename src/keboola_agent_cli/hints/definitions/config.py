@@ -1,4 +1,4 @@
-"""Hint definitions for config commands (list, detail, search)."""
+"""Hint definitions for config commands (list, detail, search, rename)."""
 
 from .. import HintRegistry
 from ..models import ClientCall, CommandHint, HintStep, ServiceCall
@@ -115,6 +115,48 @@ HintRegistry.register(
             "configuration JSON bodies yourself.",
             "Service layer does the full-text search and returns "
             "{'matches': [...], 'errors': [...], 'stats': {...}}.",
+        ],
+    )
+)
+
+# ── config rename ─────────────────────────────────────────────────
+
+HintRegistry.register(
+    CommandHint(
+        cli_command="config.rename",
+        description="Rename a configuration (update name via API + local sync dir)",
+        steps=[
+            HintStep(
+                comment="Rename configuration via API",
+                client=ClientCall(
+                    method="update_config",
+                    args={
+                        "component_id": "{component_id}",
+                        "config_id": "{config_id}",
+                        "name": "{name}",
+                        "branch_id": "{branch}",
+                    },
+                    result_var="result",
+                    result_hint="dict",
+                ),
+                service=ServiceCall(
+                    service_class="ConfigService",
+                    service_module="config_service",
+                    method="rename_config",
+                    args={
+                        "alias": "{project}",
+                        "component_id": "{component_id}",
+                        "config_id": "{config_id}",
+                        "name": "{name}",
+                        "branch_id": "{branch}",
+                    },
+                ),
+            ),
+        ],
+        notes=[
+            "Only the name is updated; configuration content is unchanged.",
+            "If a local sync directory exists, the folder is renamed and "
+            "manifest.json is updated automatically.",
         ],
     )
 )

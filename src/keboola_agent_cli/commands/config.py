@@ -539,6 +539,117 @@ def config_update(
         )
 
 
+@config_app.command("rename")
+def config_rename(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    component_id: str = typer.Option(
+        ...,
+        "--component-id",
+        help="Component ID (e.g. keboola.python-transformation-v2)",
+    ),
+    config_id: str = typer.Option(
+        ...,
+        "--config-id",
+        help="Configuration ID to rename",
+    ),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="New name for the configuration",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Rename in a specific dev branch ID (defaults to active branch)",
+    ),
+    directory: Path | None = typer.Option(
+        None,
+        "--directory",
+        "-d",
+        help="Sync working directory (auto-detects .keboola/manifest.json in CWD if omitted)",
+    ),
+) -> None:
+    """Rename a configuration (update name via API + rename local sync directory).
+
+    Updates the configuration name in the Keboola project. If a local sync
+    directory is detected (either via --directory or the current working
+    directory), the local folder is renamed and the manifest is updated
+    to match.
+
+    \b
+    Examples:
+      # Simple rename
+      kbagent config rename --project prod --component-id kds-team.app-custom-python \\
+        --config-id abc123 --name "Stripe Extractor"
+
+      # Rename with explicit sync directory
+      kbagent config rename --project prod --component-id kds-team.app-custom-python \\
+        --config-id abc123 --name "Stripe Extractor" --directory ./my-project
+    """
+    if should_hint(ctx):
+        emit_hint(
+            ctx,
+            "config.rename",
+            project=project,
+            component_id=component_id,
+            config_id=config_id,
+            name=name,
+            branch=branch,
+        )
+
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "config_service")
+
+    # Auto-detect sync directory from CWD if not specified
+    effective_directory = directory
+    if effective_directory is None:
+        cwd = Path.cwd()
+        if (cwd / KEBOOLA_DIR_NAME / MANIFEST_FILENAME).exists():
+            effective_directory = cwd
+
+    try:
+        result = service.rename_config(
+            alias=project,
+            component_id=component_id,
+            config_id=config_id,
+            name=name,
+            branch_id=branch,
+            directory=effective_directory,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(
+            message=exc.message,
+            error_code=exc.error_code,
+            retryable=exc.retryable,
+        )
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        branch_info = ""
+        if result.get("branch_id"):
+            branch_info = f" (branch {result['branch_id']})"
+        formatter.success(
+            f'Renamed "{result["old_name"]}" -> "{result["new_name"]}"'
+            f" ({component_id}/{config_id}){branch_info}"
+        )
+        sync_info = result.get("sync")
+        if sync_info:
+            formatter.console.print(
+                f"  Sync: {sync_info['old_path']}/ -> {sync_info['new_path']}/"
+                f" ({sync_info['method']})"
+            )
+
+
 @config_app.command("delete")
 def config_delete(
     ctx: typer.Context,

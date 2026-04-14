@@ -134,9 +134,10 @@ def _format_pull_result(formatter: Any, result: dict) -> None:
     new_cfgs = [d for d in details if d["action"] == "new"]
     updated_cfgs = [d for d in details if d["action"] == "updated"]
     removed_cfgs = [d for d in details if d["action"] == "removed"]
+    renamed_cfgs = [d for d in details if d["action"] == "renamed"]
     skipped_cfgs = [d for d in details if d["action"] == "skipped"]
 
-    has_changes = bool(new_cfgs or updated_cfgs or removed_cfgs)
+    has_changes = bool(new_cfgs or updated_cfgs or removed_cfgs or renamed_cfgs)
 
     storage = result.get("storage", {})
     jobs_written = result.get("jobs_written", 0)
@@ -168,6 +169,12 @@ def _format_pull_result(formatter: Any, result: dict) -> None:
         if jobs_written:
             formatter.console.print(f"  Jobs: {jobs_written} configs with job history")
 
+    if renamed_cfgs:
+        formatter.console.print(f"  [magenta]Renamed ({len(renamed_cfgs)}):[/magenta]")
+        for d in renamed_cfgs:
+            formatter.console.print(
+                f"    > {d.get('old_path', '?')} -> {d['component_id']}/{d['config_name']}"
+            )
     if new_cfgs:
         formatter.console.print(f"  [green]New ({len(new_cfgs)}):[/green]")
         for d in new_cfgs:
@@ -241,6 +248,19 @@ def _format_push_result(formatter: Any, result: dict) -> None:
         f"{result.get('updated', 0)} updated, "
         f"{result.get('deleted', 0)} deleted"
     )
+    # Show name drift warnings
+    drift_warnings = result.get("name_drift_warnings", [])
+    if drift_warnings:
+        formatter.console.print(
+            f"\n  [yellow]Warning: {len(drift_warnings)} config(s) have "
+            f"local directory names that don't match their config name:[/yellow]"
+        )
+        for w in drift_warnings:
+            formatter.console.print(
+                f"    '{w['local_dirname']}' should be "
+                f"'{w['expected_dirname']}' (config: {w['config_name']})"
+            )
+        formatter.console.print("  Run 'kbagent config rename' or 'kbagent sync pull' to fix.")
 
 
 def _pull_one_liner(result: dict) -> str:
@@ -249,10 +269,13 @@ def _pull_one_liner(result: dict) -> str:
     new_n = sum(1 for d in details if d["action"] == "new")
     upd_n = sum(1 for d in details if d["action"] == "updated")
     rem_n = sum(1 for d in details if d["action"] == "removed")
+    ren_n = sum(1 for d in details if d["action"] == "renamed")
     skip_n = sum(1 for d in details if d["action"] == "skipped")
-    if not new_n and not upd_n and not rem_n and not skip_n:
+    if not new_n and not upd_n and not rem_n and not ren_n and not skip_n:
         return "[green]up to date[/green]"
     parts = []
+    if ren_n:
+        parts.append(f"[magenta]>{ren_n} renamed[/magenta]")
     if new_n:
         parts.append(f"[green]+{new_n} new[/green]")
     if upd_n:

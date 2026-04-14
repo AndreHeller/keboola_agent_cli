@@ -413,6 +413,9 @@ class TestFullE2E:
         _step(18, "config update --merge", "partial merge without losing keys")
         self._test_config_merge(config_id)
 
+        _step("18b", "config rename", "rename config via API")
+        self._test_config_rename(config_id)
+
         _step(19, "config new scaffold", "generate boilerplate for component")
         self._test_config_new_scaffold()
 
@@ -1158,6 +1161,55 @@ class TestFullE2E:
         assert db_config["host"] == "final.example.com", "Existing 'host' preserved"
         assert db_config["port"] == 5439, "Existing 'port' preserved"
         assert db_config["database"] == "final_db", "Existing 'database' preserved"
+
+    def _test_config_rename(self, config_id: str) -> None:
+        """Test config rename: rename a config via API and verify."""
+        # Rename the config
+        data = self._run_ok(
+            "config",
+            "rename",
+            "--project",
+            self.alias,
+            "--component-id",
+            TEST_COMPONENT_ID,
+            "--config-id",
+            config_id,
+            "--name",
+            "E2E Renamed Config",
+        )
+        result = data["data"]
+        assert result["status"] == "renamed"
+        assert result["new_name"] == "E2E Renamed Config"
+        assert result["old_name"]  # should have the old name
+        assert result["component_id"] == TEST_COMPONENT_ID
+        assert result["config_id"] == config_id
+
+        # Verify via config detail that the name actually changed
+        data = self._run_ok(
+            "config",
+            "detail",
+            "--project",
+            self.alias,
+            "--component-id",
+            TEST_COMPONENT_ID,
+            "--config-id",
+            config_id,
+        )
+        assert data["data"]["name"] == "E2E Renamed Config"
+
+        # Rename back so subsequent tests are not affected
+        self._run_ok(
+            "config",
+            "rename",
+            "--project",
+            self.alias,
+            "--component-id",
+            TEST_COMPONENT_ID,
+            "--config-id",
+            config_id,
+            "--name",
+            "E2E Test Config",
+        )
 
     def _test_config_new_scaffold(self) -> None:
         """Test config new -- generate scaffold for a component."""

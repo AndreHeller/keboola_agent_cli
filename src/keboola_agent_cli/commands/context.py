@@ -96,6 +96,11 @@ Use `kbagent <command> --help` for full flag details and examples.
     existing config (preserves sibling keys). --dry-run previews changes.
     Paths are always relative to the configuration root.
 
+  kbagent config rename --project NAME --component-id ID --config-id ID --name "New Name" [--branch ID] [--directory DIR]
+    Rename a configuration. Updates name via API. If a local sync directory
+    exists (.keboola/manifest.json), renames the directory and updates the
+    manifest path. Uses git mv when inside a git repo for cleaner history.
+
   kbagent config delete --project NAME --component-id ID --config-id ID [--branch ID]
     Delete a configuration. Branch-aware.
 
@@ -276,6 +281,7 @@ Use `kbagent <command> --help` for full flag details and examples.
     Download configs as local files. Idempotent, protects local modifications.
     --job-limit controls max recent jobs per config (default 5). For large projects,
     automatically falls back to per-config job fetching to ensure all configs get job history.
+    Auto-detects renamed configs and renames local directories to match (uses git mv in git repos).
 
   kbagent sync status [--directory DIR]
     Show local changes since last pull (SHA256-based).

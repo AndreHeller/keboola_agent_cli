@@ -1,0 +1,821 @@
+"""Deep lineage service - column-level lineage from sync'd data on disk.
+
+Scans sync'd project data (from `kbagent sync pull --all-projects`),
+builds a comprehensive dependency graph at table and column level,
+and optionally uses AI to parse SQL/Python code for hidden dependencies.
+
+Architecture: reads from disk only, no API calls. Requires sync'd data.
+"""
+
+import json
+import logging
+import re
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from ..config_store import ConfigStore
+
+logger = logging.getLogger(__name__)
+
+# Snowflake qualified table reference pattern: "KBC_USE4_{project_id}"."bucket_id"."table_name"
+KBC_DB_PATTERN = re.compile(r'"KBC_USE4_(\d+)"\.?"([^"]+)"\.?"([^"]+)"')
+
+SQL_COMPONENTS = {
+    "keboola.snowflake-transformation",
+    "keboola.synapse-transformation",
+    "keboola.oracle-transformation",
+    "keboola.redshift-sql-transformation",
+}
+
+PYTHON_COMPONENTS = {
+    "keboola.python-transformation-v2",
+    "kds-team.app-custom-python",
+}
+
+AI_CACHE_FILE = ".lineage_ai_cache.json"
+
+AI_SQL_PROMPT = (
+    "Extract table dependencies from this Snowflake SQL. "
+    'Tables use format "KBC_USE4_{{pid}}"."bucket"."table" or just "table_alias".\n'
+    "Project: {project_alias} (pid={project_id})\n\n"
+    "Return JSON only:\n"
+    '{{"inputs":[{{"pid":123,"bucket":"x","table":"y","columns":["a","b"]}}],'
+    '"outputs":[{{"table":"local_name","columns":["c","d"]}}],'
+    '"col_map":[{{"out":"c","in_table":"bucket.table","in_col":"a",'
+    '"transform":"direct|expression"}}]}}\n\n'
+    "SQL:\n{sql_code}"
+)
+
+AI_PYTHON_PROMPT = (
+    "Extract Keboola table dependencies from this Python code beyond what "
+    "input/output mapping covers.\n"
+    "Project: {project_alias} (pid={project_id})\n"
+    "Known inputs: {known_inputs}\nKnown outputs: {known_outputs}\n\n"
+    "Return JSON only:\n"
+    '{{"extra_inputs":[{{"table_id":"bucket.table","evidence":"code line"}}],'
+    '"extra_outputs":[{{"table_id":"bucket.table","evidence":"code line"}}],'
+    '"external":[{{"system":"name","op":"read|write"}}]}}\n\n'
+    "Python:\n{python_code}"
+)
+
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Table:
+    """A storage table in a Keboola project."""
+
+    table_id: str
+    project_alias: str
+    project_id: int
+    bucket_id: str
+    name: str
+    columns: list[str] = field(default_factory=list)
+    primary_key: list[str] = field(default_factory=list)
+    rows_count: int = 0
+
+    @property
+    def fqn(self) -> str:
+        return f"{self.project_alias}:{self.table_id}"
+
+
+@dataclass
+class Configuration:
+    """A Keboola configuration."""
+
+    config_id: str
+    config_name: str
+    component_id: str
+    component_type: str
+    project_alias: str
+    project_id: int
+    path: str
+    input_tables: list[dict] = field(default_factory=list)
+    output_tables: list[dict] = field(default_factory=list)
+    code: str = ""
+    code_type: str = ""
+
+    @property
+    def fqn(self) -> str:
+        return f"{self.project_alias}:{self.component_id}/{self.config_id}"
+
+
+@dataclass
+class Edge:
+    """A dependency edge in the lineage graph."""
+
+    source_fqn: str
+    target_fqn: str
+    source_type: str
+    target_type: str
+    edge_type: str
+    detection: str
+    columns: list[str] = field(default_factory=list)
+    column_mapping: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class LineageGraph:
+    """Complete lineage graph for an organization."""
+
+    tables: dict[str, Table] = field(default_factory=dict)
+    configurations: dict[str, Configuration] = field(default_factory=dict)
+    edges: list[Edge] = field(default_factory=list)
+    _upstream: dict[str, list[int]] = field(default_factory=dict)
+    _downstream: dict[str, list[int]] = field(default_factory=dict)
+
+    def add_edge(self, edge: Edge) -> None:
+        idx = len(self.edges)
+        self.edges.append(edge)
+        self._downstream.setdefault(edge.source_fqn, []).append(idx)
+        self._upstream.setdefault(edge.target_fqn, []).append(idx)
+
+    def get_upstream(self, fqn: str, depth: int = 10) -> list[dict]:
+        visited: set[str] = set()
+        result: list[dict] = []
+        self._walk(fqn, depth, 0, visited, result, direction="upstream")
+        return result
+
+    def get_downstream(self, fqn: str, depth: int = 10) -> list[dict]:
+        visited: set[str] = set()
+        result: list[dict] = []
+        self._walk(fqn, depth, 0, visited, result, direction="downstream")
+        return result
+
+    def _walk(
+        self,
+        fqn: str,
+        max_depth: int,
+        current_depth: int,
+        visited: set[str],
+        result: list[dict],
+        direction: str,
+    ) -> None:
+        if current_depth >= max_depth or fqn in visited:
+            return
+        visited.add(fqn)
+        index = self._upstream if direction == "upstream" else self._downstream
+        for edge_idx in index.get(fqn, []):
+            edge = self.edges[edge_idx]
+            next_fqn = edge.source_fqn if direction == "upstream" else edge.target_fqn
+            result.append(
+                {
+                    "depth": current_depth + 1,
+                    "source": edge.source_fqn,
+                    "target": edge.target_fqn,
+                    "edge_type": edge.edge_type,
+                    "detection": edge.detection,
+                    "columns": edge.columns,
+                    "column_mapping": edge.column_mapping,
+                }
+            )
+            self._walk(next_fqn, max_depth, current_depth + 1, visited, result, direction)
+
+    def summary(self) -> dict:
+        edge_types: dict[str, int] = {}
+        detection_methods: dict[str, int] = {}
+        for edge in self.edges:
+            edge_types[edge.edge_type] = edge_types.get(edge.edge_type, 0) + 1
+            detection_methods[edge.detection] = detection_methods.get(edge.detection, 0) + 1
+        return {
+            "tables": len(self.tables),
+            "configurations": len(self.configurations),
+            "edges": len(self.edges),
+            "edge_types": edge_types,
+            "detection_methods": detection_methods,
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "summary": self.summary(),
+            "tables": {fqn: asdict(t) for fqn, t in self.tables.items()},
+            "configurations": {
+                fqn: {
+                    "config_id": c.config_id,
+                    "config_name": c.config_name,
+                    "component_id": c.component_id,
+                    "component_type": c.component_type,
+                    "project_alias": c.project_alias,
+                    "project_id": c.project_id,
+                    "path": c.path,
+                    "code_type": c.code_type,
+                    "input_table_count": len(c.input_tables),
+                    "output_table_count": len(c.output_tables),
+                }
+                for fqn, c in self.configurations.items()
+            },
+            "edges": [asdict(e) for e in self.edges],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
+
+class DeepLineageService:
+    """Business logic for column-level lineage from sync'd data on disk.
+
+    Scans project directories, builds deterministic lineage from config mappings,
+    detects hidden SQL dependencies via regex, and optionally uses AI for
+    column-level analysis.
+    """
+
+    def __init__(self, config_store: ConfigStore) -> None:
+        self._config_store = config_store
+
+    def build_lineage(
+        self,
+        root: Path,
+        *,
+        include_ai: bool = False,
+        ai_model: str = "haiku",
+        ai_workers: int = 4,
+    ) -> dict[str, Any]:
+        """Build comprehensive lineage graph from sync'd data.
+
+        Args:
+            root: Root directory containing sync'd project subdirectories.
+            include_ai: Whether to use AI for SQL/Python analysis.
+            ai_model: Claude model for AI analysis (haiku/sonnet/opus).
+            ai_workers: Number of parallel AI workers.
+
+        Returns:
+            Dict with lineage graph data and summary.
+        """
+        # Build project_id -> alias mapping from config store
+        project_id_to_alias = self._build_project_map()
+
+        # Phase 1: Scan
+        graph = self._scan_projects(root, project_id_to_alias)
+
+        # Phase 2: Deterministic edges
+        self._build_deterministic_edges(graph, project_id_to_alias)
+
+        # Phase 3: Cross-project sharing
+        self._add_cross_project_lineage(graph, root)
+
+        # Phase 4: AI analysis (optional)
+        if include_ai:
+            self._run_ai_analysis(
+                graph, root, project_id_to_alias, model=ai_model, max_workers=ai_workers
+            )
+
+        return graph.to_dict()
+
+    def build_and_cache(
+        self,
+        root: Path,
+        cache_path: Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Build lineage and save to cache file."""
+        result = self.build_lineage(root, **kwargs)
+        with open(cache_path, "w") as f:
+            json.dump(result, f, indent=2)
+        return result
+
+    def load_from_cache(self, cache_path: Path) -> LineageGraph:
+        """Load a previously saved lineage graph from JSON cache."""
+        with open(cache_path) as f:
+            data = json.load(f)
+        return self._graph_from_dict(data)
+
+    def query_upstream(
+        self,
+        graph: LineageGraph,
+        identifier: str,
+        project: str = "",
+        depth: int = 10,
+    ) -> dict[str, Any]:
+        """Query upstream dependencies of a node."""
+        fqn = self._find_node(graph, identifier, project)
+        if not fqn:
+            return {
+                "error": f"Node not found: {identifier}",
+                "suggestions": self._suggest(graph, identifier),
+            }
+        return {
+            "node": fqn,
+            "direction": "upstream",
+            "node_info": self._node_info(graph, fqn),
+            "edges": graph.get_upstream(fqn, depth),
+        }
+
+    def query_downstream(
+        self,
+        graph: LineageGraph,
+        identifier: str,
+        project: str = "",
+        depth: int = 10,
+    ) -> dict[str, Any]:
+        """Query downstream dependents of a node."""
+        fqn = self._find_node(graph, identifier, project)
+        if not fqn:
+            return {
+                "error": f"Node not found: {identifier}",
+                "suggestions": self._suggest(graph, identifier),
+            }
+        return {
+            "node": fqn,
+            "direction": "downstream",
+            "node_info": self._node_info(graph, fqn),
+            "edges": graph.get_downstream(fqn, depth),
+        }
+
+    # --- Internal methods ---
+
+    def _build_project_map(self) -> dict[int, str]:
+        """Build project_id -> alias mapping from config store."""
+        mapping: dict[int, str] = {}
+        try:
+            app_config = self._config_store.load()
+            for alias, project in app_config.projects.items():
+                if project.project_id:
+                    mapping[project.project_id] = alias
+        except Exception:
+            pass
+        return mapping
+
+    def _scan_projects(self, root: Path, project_id_to_alias: dict[int, str]) -> LineageGraph:
+        """Scan all sync'd projects and build initial graph."""
+        graph = LineageGraph()
+
+        for project_dir in sorted(root.iterdir()):
+            if not project_dir.is_dir() or project_dir.name.startswith("."):
+                continue
+            manifest_path = project_dir / ".keboola" / "manifest.json"
+            if not manifest_path.exists():
+                continue
+
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+
+            project_alias = project_dir.name
+            project_id = manifest.get("project", {}).get("id", 0)
+            project_id_to_alias[project_id] = project_alias
+
+            # Scan storage tables
+            storage_dir = project_dir / "storage" / "tables"
+            if storage_dir.exists():
+                for bucket_dir in sorted(storage_dir.iterdir()):
+                    if not bucket_dir.is_dir():
+                        continue
+                    for table_file in sorted(bucket_dir.glob("*.json")):
+                        with open(table_file) as f:
+                            meta = json.load(f)
+                        table = Table(
+                            table_id=meta["id"],
+                            project_alias=project_alias,
+                            project_id=project_id,
+                            bucket_id=meta["id"].rsplit(".", 1)[0],
+                            name=meta["name"],
+                            columns=meta.get("columns", []),
+                            primary_key=meta.get("primary_key", []),
+                            rows_count=meta.get("rows_count", 0),
+                        )
+                        graph.tables[table.fqn] = table
+
+            # Scan configurations
+            for config_entry in manifest.get("configurations", []):
+                self._scan_configuration(
+                    project_dir, config_entry, project_alias, project_id, graph
+                )
+
+        # Store mapping for cross-project resolution
+        graph._project_id_to_alias = project_id_to_alias  # type: ignore[attr-defined]
+        return graph
+
+    def _scan_configuration(
+        self,
+        project_dir: Path,
+        config_entry: dict,
+        project_alias: str,
+        project_id: int,
+        graph: LineageGraph,
+    ) -> None:
+        config_path = config_entry["path"]
+        component_id = config_entry["componentId"]
+        config_id = config_entry["id"]
+        full_path = project_dir / "main" / config_path
+
+        component_type = config_path.split("/")[0] if "/" in config_path else "unknown"
+
+        config_yml_path = full_path / "_config.yml"
+        input_tables: list[dict] = []
+        output_tables: list[dict] = []
+        config_name = ""
+
+        if config_yml_path.exists():
+            with open(config_yml_path) as f:
+                cfg = yaml.safe_load(f) or {}
+            config_name = cfg.get("name", "")
+            input_tables = cfg.get("input", {}).get("tables", []) or []
+            output_tables = cfg.get("output", {}).get("tables", []) or []
+
+        code = ""
+        code_type = ""
+        transform_sql = full_path / "transform.sql"
+        code_py = full_path / "code.py"
+
+        if transform_sql.exists():
+            code = transform_sql.read_text()
+            code_type = "sql"
+        elif code_py.exists():
+            code = code_py.read_text()
+            code_type = "python"
+
+        # Include config row mappings
+        for row_entry in config_entry.get("rows", []):
+            row_path = project_dir / "main" / row_entry.get("path", "")
+            row_config = row_path / "_config.yml"
+            if row_config.exists():
+                with open(row_config) as f:
+                    row_cfg = yaml.safe_load(f) or {}
+                input_tables.extend(row_cfg.get("input", {}).get("tables", []) or [])
+                output_tables.extend(row_cfg.get("output", {}).get("tables", []) or [])
+
+        config = Configuration(
+            config_id=config_id,
+            config_name=config_name,
+            component_id=component_id,
+            component_type=component_type,
+            project_alias=project_alias,
+            project_id=project_id,
+            path=config_path,
+            input_tables=input_tables,
+            output_tables=output_tables,
+            code=code,
+            code_type=code_type,
+        )
+        graph.configurations[config.fqn] = config
+
+    def _build_deterministic_edges(
+        self, graph: LineageGraph, project_id_to_alias: dict[int, str]
+    ) -> None:
+        for config in graph.configurations.values():
+            # Input mapping: table -> config
+            for inp in config.input_tables:
+                source_table_id = inp.get("source", "")
+                if not source_table_id:
+                    continue
+                table_fqn = f"{config.project_alias}:{source_table_id}"
+                columns = inp.get("columns", [])
+                if not columns:
+                    table = graph.tables.get(table_fqn)
+                    if table:
+                        columns = table.columns
+                graph.add_edge(
+                    Edge(
+                        source_fqn=table_fqn,
+                        target_fqn=config.fqn,
+                        source_type="table",
+                        target_type="config",
+                        edge_type="reads",
+                        detection="input_mapping",
+                        columns=columns,
+                    )
+                )
+
+            # Output mapping: config -> table
+            for out in config.output_tables:
+                dest_table_id = out.get("destination", "")
+                if not dest_table_id:
+                    continue
+                table_fqn = f"{config.project_alias}:{dest_table_id}"
+                graph.add_edge(
+                    Edge(
+                        source_fqn=config.fqn,
+                        target_fqn=table_fqn,
+                        source_type="config",
+                        target_type="table",
+                        edge_type="writes",
+                        detection="output_mapping",
+                    )
+                )
+
+            # SQL regex: find KBC_USE4_XXX references
+            if config.code_type == "sql" and config.code:
+                matches = KBC_DB_PATTERN.findall(config.code)
+                seen: set[tuple[int, str, str]] = set()
+                for ref_pid_str, ref_bucket, ref_table in matches:
+                    ref_pid = int(ref_pid_str)
+                    key = (ref_pid, ref_bucket, ref_table)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    ref_alias = project_id_to_alias.get(ref_pid, f"unknown-{ref_pid}")
+                    table_id = f"{ref_bucket}.{ref_table}"
+                    table_fqn = f"{ref_alias}:{table_id}"
+                    if any(inp.get("source", "") == table_id for inp in config.input_tables):
+                        continue
+                    table = graph.tables.get(table_fqn)
+                    columns = table.columns if table else []
+                    detection = (
+                        "sql_regex_cross_project" if ref_pid != config.project_id else "sql_regex"
+                    )
+                    graph.add_edge(
+                        Edge(
+                            source_fqn=table_fqn,
+                            target_fqn=config.fqn,
+                            source_type="table",
+                            target_type="config",
+                            edge_type="reads",
+                            detection=detection,
+                            columns=columns,
+                        )
+                    )
+
+    def _add_cross_project_lineage(self, graph: LineageGraph, root: Path) -> None:
+        try:
+            result = subprocess.run(
+                ["kbagent", "--json", "lineage"],
+                capture_output=True,
+                text=True,
+                cwd=str(root),
+                timeout=120,
+            )
+            if result.returncode != 0:
+                return
+            data = json.loads(result.stdout)
+            for edge_data in data.get("data", {}).get("edges", []):
+                source_alias = edge_data.get("source_project_alias", "")
+                target_alias = edge_data.get("target_project_alias", "")
+                source_bucket = edge_data.get("source_bucket_id", "")
+                target_bucket = edge_data.get("target_bucket_id", "")
+                if not source_alias or not target_alias:
+                    continue
+                source_tables = {
+                    t.name: t
+                    for t in graph.tables.values()
+                    if t.project_alias == source_alias and t.bucket_id == source_bucket
+                }
+                for t in graph.tables.values():
+                    if t.project_alias == target_alias and t.bucket_id == target_bucket:
+                        source_table = source_tables.get(t.name)
+                        if source_table:
+                            graph.add_edge(
+                                Edge(
+                                    source_fqn=source_table.fqn,
+                                    target_fqn=t.fqn,
+                                    source_type="table",
+                                    target_type="table",
+                                    edge_type="cross_project_share",
+                                    detection="bucket_sharing",
+                                    columns=source_table.columns,
+                                )
+                            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+            pass
+
+    def _run_ai_analysis(
+        self,
+        graph: LineageGraph,
+        root: Path,
+        project_id_to_alias: dict[int, str],
+        model: str = "haiku",
+        max_workers: int = 4,
+    ) -> None:
+        cache_path = root / AI_CACHE_FILE
+        ai_cache: dict[str, dict] = {}
+        if cache_path.exists():
+            with open(cache_path) as f:
+                ai_cache = json.load(f)
+
+        configs_needing_ai = [
+            c
+            for c in graph.configurations.values()
+            if c.code and ((c.code_type == "sql" and not c.input_tables) or c.code_type == "python")
+        ]
+        uncached = [c for c in configs_needing_ai if c.fqn not in ai_cache]
+        for c in configs_needing_ai:
+            if c.fqn in ai_cache:
+                self._apply_ai_result(graph, c, ai_cache[c.fqn], project_id_to_alias)
+
+        if not uncached:
+            return
+
+        def _analyze_one(config: Configuration) -> tuple[str, dict | None]:
+            if config.code_type == "sql":
+                return config.fqn, self._ai_analyze_sql(config, model)
+            elif config.code_type == "python":
+                return config.fqn, self._ai_analyze_python(config, model)
+            return config.fqn, None
+
+        workers = min(max_workers, len(uncached)) or 1
+        completed = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_analyze_one, c): c for c in uncached}
+            for future in as_completed(futures):
+                config = futures[future]
+                completed += 1
+                try:
+                    fqn, result = future.result()
+                    if result:
+                        ai_cache[fqn] = result
+                        self._apply_ai_result(graph, config, result, project_id_to_alias)
+                except Exception:
+                    pass
+                if completed % 10 == 0:
+                    with open(cache_path, "w") as f:
+                        json.dump(ai_cache, f, indent=2)
+
+        with open(cache_path, "w") as f:
+            json.dump(ai_cache, f, indent=2)
+
+    def _ai_analyze_sql(self, config: Configuration, model: str) -> dict | None:
+        prompt = AI_SQL_PROMPT.format(
+            project_alias=config.project_alias,
+            project_id=config.project_id,
+            sql_code=config.code[:6000],
+        )
+        return self._call_ai(prompt, model)
+
+    def _ai_analyze_python(self, config: Configuration, model: str) -> dict | None:
+        known_in = [t.get("source", "") for t in config.input_tables[:10]]
+        known_out = [t.get("destination", "") for t in config.output_tables[:10]]
+        prompt = AI_PYTHON_PROMPT.format(
+            project_alias=config.project_alias,
+            project_id=config.project_id,
+            known_inputs=", ".join(known_in) or "none",
+            known_outputs=", ".join(known_out) or "none",
+            python_code=config.code[:6000],
+        )
+        return self._call_ai(prompt, model)
+
+    def _apply_ai_result(
+        self,
+        graph: LineageGraph,
+        config: Configuration,
+        result: dict,
+        project_id_to_alias: dict[int, str],
+    ) -> None:
+        for inp in result.get("inputs", []):
+            ref_pid = inp.get("pid", config.project_id)
+            bucket = inp.get("bucket", "")
+            table = inp.get("table", "")
+            if not bucket or not table:
+                continue
+            table_id = f"{bucket}.{table}"
+            ref_alias = project_id_to_alias.get(ref_pid, config.project_alias)
+            table_fqn = f"{ref_alias}:{table_id}"
+            if any(e.source_fqn == table_fqn and e.target_fqn == config.fqn for e in graph.edges):
+                continue
+            detection = "sql_ai_cross_project" if ref_pid != config.project_id else "sql_ai"
+            graph.add_edge(
+                Edge(
+                    source_fqn=table_fqn,
+                    target_fqn=config.fqn,
+                    source_type="table",
+                    target_type="config",
+                    edge_type="reads",
+                    detection=detection,
+                    columns=inp.get("columns", []),
+                )
+            )
+
+        for inp in result.get("extra_inputs", []):
+            table_id = inp.get("table_id", "")
+            if not table_id:
+                continue
+            table_fqn = f"{config.project_alias}:{table_id}"
+            if any(e.source_fqn == table_fqn and e.target_fqn == config.fqn for e in graph.edges):
+                continue
+            graph.add_edge(
+                Edge(
+                    source_fqn=table_fqn,
+                    target_fqn=config.fqn,
+                    source_type="table",
+                    target_type="config",
+                    edge_type="reads",
+                    detection="python_ai",
+                )
+            )
+
+    @staticmethod
+    def _call_ai(prompt: str, model: str = "haiku") -> dict | None:
+        try:
+            result = subprocess.run(
+                ["claude", "-p", prompt, "--model", model, "--output-format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                response = json.loads(result.stdout)
+                text = response.get("result", "")
+                return DeepLineageService._extract_json(text)
+        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            pass
+        return None
+
+    @staticmethod
+    def _extract_json(text: str) -> dict | None:
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if not text:
+            return None
+        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    @staticmethod
+    def _graph_from_dict(data: dict) -> LineageGraph:
+        graph = LineageGraph()
+        for fqn, t_data in data.get("tables", {}).items():
+            graph.tables[fqn] = Table(**t_data)
+        for fqn, c_data in data.get("configurations", {}).items():
+            graph.configurations[fqn] = Configuration(
+                config_id=c_data["config_id"],
+                config_name=c_data["config_name"],
+                component_id=c_data["component_id"],
+                component_type=c_data["component_type"],
+                project_alias=c_data["project_alias"],
+                project_id=c_data["project_id"],
+                path=c_data["path"],
+                code_type=c_data.get("code_type", ""),
+            )
+        for e_data in data.get("edges", []):
+            graph.add_edge(
+                Edge(
+                    source_fqn=e_data["source_fqn"],
+                    target_fqn=e_data["target_fqn"],
+                    source_type=e_data["source_type"],
+                    target_type=e_data["target_type"],
+                    edge_type=e_data["edge_type"],
+                    detection=e_data["detection"],
+                    columns=e_data.get("columns", []),
+                    column_mapping=e_data.get("column_mapping", {}),
+                )
+            )
+        return graph
+
+    def _find_node(self, graph: LineageGraph, identifier: str, project: str = "") -> str | None:
+        if ":" in identifier:
+            all_fqns = set(graph.tables) | set(graph.configurations)
+            for e in graph.edges:
+                all_fqns.add(e.source_fqn)
+                all_fqns.add(e.target_fqn)
+            return identifier if identifier in all_fqns else None
+
+        all_fqns = set(graph.tables) | set(graph.configurations)
+        for e in graph.edges:
+            all_fqns.add(e.source_fqn)
+            all_fqns.add(e.target_fqn)
+
+        if project:
+            fqn = f"{project}:{identifier}"
+            return fqn if fqn in all_fqns else None
+
+        matches = [f for f in all_fqns if f.endswith(f":{identifier}")]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            return sorted(matches)[0]
+
+        partial = [f for f in all_fqns if f.split(":")[-1].endswith(f".{identifier}")]
+        return sorted(partial)[0] if partial else None
+
+    @staticmethod
+    def _suggest(graph: LineageGraph, identifier: str) -> list[str]:
+        all_fqns = set(graph.tables) | set(graph.configurations)
+        for e in graph.edges:
+            all_fqns.add(e.source_fqn)
+            all_fqns.add(e.target_fqn)
+        search = identifier.lower()
+        return sorted(f for f in all_fqns if search in f.lower())[:10]
+
+    @staticmethod
+    def _node_info(graph: LineageGraph, fqn: str) -> dict:
+        if fqn in graph.tables:
+            t = graph.tables[fqn]
+            return {"type": "table", "fqn": fqn, "columns": len(t.columns), "rows": t.rows_count}
+        if fqn in graph.configurations:
+            c = graph.configurations[fqn]
+            return {
+                "type": c.component_type,
+                "fqn": fqn,
+                "name": c.config_name,
+                "component": c.component_id,
+            }
+        return {"type": "unknown", "fqn": fqn}

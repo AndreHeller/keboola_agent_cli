@@ -35,6 +35,7 @@ from .permissions import PermissionEngine
 from .services.branch_service import BranchService
 from .services.component_service import ComponentService
 from .services.config_service import ConfigService
+from .services.deep_lineage_service import DeepLineageService
 from .services.doctor_service import DoctorService
 from .services.encrypt_service import EncryptService
 from .services.job_service import JobService
@@ -181,6 +182,7 @@ def main(
     config_service = ConfigService(config_store=config_store)
     job_service = JobService(config_store=config_store)
     lineage_service = LineageService(config_store=config_store)
+    deep_lineage_service = DeepLineageService(config_store=config_store)
     org_service = OrgService(config_store=config_store)
     mcp_service = McpService(config_store=config_store)
     branch_service = BranchService(config_store=config_store)
@@ -220,6 +222,7 @@ def main(
     ctx.obj["config_service"] = config_service
     ctx.obj["job_service"] = job_service
     ctx.obj["lineage_service"] = lineage_service
+    ctx.obj["deep_lineage_service"] = deep_lineage_service
     ctx.obj["org_service"] = org_service
     ctx.obj["mcp_service"] = mcp_service
     ctx.obj["branch_service"] = branch_service

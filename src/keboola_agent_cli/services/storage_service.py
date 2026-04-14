@@ -600,8 +600,8 @@ class StorageService(BaseService):
                     retryable=False,
                 )
 
-            # Step 3: Get download URL
-            file_detail = client.get_file_info(file_id)
+            # Step 3: Get download URL (branch-scoped if exporting from dev branch)
+            file_detail = client.get_file_info(file_id, branch_id=branch_id)
             download_url = file_detail.get("url")
             if not download_url:
                 raise KeboolaApiError(
@@ -1193,12 +1193,12 @@ class StorageService(BaseService):
                     retryable=False,
                 )
 
-            # Step 3: Tag the exported file
+            # Step 3: Tag the exported file (branch-scoped if on dev branch)
             for tag in tags or []:
-                client.tag_file(file_id, tag)
+                client.tag_file(file_id, tag, branch_id=branch_id)
 
-            # Step 4: Get full file detail
-            file_detail = client.get_file_info(file_id)
+            # Step 4: Get full file detail (branch-scoped if on dev branch)
+            file_detail = client.get_file_info(file_id, branch_id=branch_id)
 
             result: dict[str, Any] = {
                 "project_alias": alias,

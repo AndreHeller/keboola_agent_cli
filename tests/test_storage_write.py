@@ -1255,7 +1255,7 @@ class TestDownloadTableService:
             limit=None,
             branch_id=None,
         )
-        mock_client.get_file_info.assert_called_once_with(42)
+        mock_client.get_file_info.assert_called_once_with(42, branch_id=None)
         mock_client.close.assert_called_once()
 
     def test_with_columns_and_limit(self, tmp_path: Path) -> None:
@@ -1432,6 +1432,8 @@ class TestDownloadTableService:
             limit=None,
             branch_id=42,
         )
+        # Issue #161: get_file_info must also receive branch_id
+        mock_client.get_file_info.assert_called_once_with(7, branch_id=42)
 
 
 # ---------------------------------------------------------------------------

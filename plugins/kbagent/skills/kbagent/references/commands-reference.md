@@ -77,6 +77,12 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `tool list [--project NAME] [--branch ID]` -- list available MCP tools (multi_project annotation)
 - `tool call TOOL_NAME [--project NAME] [--input JSON|@file|-] [--branch ID]` -- call MCP tool (read = all projects, write = single). `--input` accepts inline JSON, `@file.json`, or `-` (stdin)
 
+## Kai (Keboola AI Assistant)
+- `kai ping [--project NAME]` -- check Kai server health and MCP connection status
+- `kai ask --message "question" [--project NAME]` -- one-shot question to Kai, collects full response
+- `kai chat --message "msg" [--chat-id ID] [--project NAME]` -- send message in a chat session, returns chat_id for continuation
+- `kai history [--project NAME] [--limit N]` -- list recent Kai chat sessions (default limit: 10)
+
 ## Sync (GitOps)
 - `sync init --project ALIAS [--directory DIR] [--git-branching]` -- initialize sync working directory
 - `sync pull --project ALIAS [--all-projects] [--force] [--dry-run] [--with-samples] [--no-storage] [--no-jobs] [--job-limit N]` -- download configs to local files. For large projects (>100 configs), automatically fetches jobs per-config when the grouped API limit is insufficient

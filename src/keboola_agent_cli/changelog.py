@@ -8,6 +8,15 @@ from __future__ import annotations
 
 # Ordered newest-first.  Each value is a list of brief one-line descriptions.
 CHANGELOG: dict[str, list[str]] = {
+    "0.19.0": [
+        "New: Kai (Keboola AI Assistant) -- kai ping, ask, chat, history (BETA) (#164)",
+        "New: config rename -- rename via API + auto-rename local sync directory (#160)",
+        "New: sync pull auto-rename -- detects remote name changes and renames local dirs (#160)",
+        "New: sync push warning -- alerts when local dir names drift from config names (#160)",
+        "New: storage delete-column -- remove columns from tables with --dry-run (#159)",
+        "Fix: branch-scoped file operations (get_file_info, delete, tag, untag) (#161)",
+        "Test: comprehensive E2E test suite covering all CLI commands (#158)",
+    ],
     "0.18.6": [
         "New: config update --set PATH=VALUE -- set nested config keys without losing siblings (#156)",
         "New: config update --merge -- deep-merge partial JSON into existing configuration (#156)",

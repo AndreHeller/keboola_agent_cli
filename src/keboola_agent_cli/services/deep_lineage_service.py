@@ -941,6 +941,114 @@ class DeepLineageService:
         partial = [f for f in all_fqns if f.split(":")[-1].endswith(f".{identifier}")]
         return sorted(partial)[0] if partial else None
 
+    # --- Mermaid / HTML rendering ---
+
+    @staticmethod
+    def _sanitize_mermaid_id(fqn: str) -> str:
+        """Sanitize FQN into a valid mermaid node ID (alphanumeric + underscore)."""
+        return re.sub(r"[^a-zA-Z0-9_]", "_", fqn)
+
+    @staticmethod
+    def _escape_mermaid_label(text: str) -> str:
+        """Escape characters that break mermaid label syntax."""
+        return text.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+    @staticmethod
+    def render_mermaid(
+        edges: list[dict],
+        graph: LineageGraph,
+        direction: str,
+        node_fqn: str,
+    ) -> str:
+        """Render lineage edges as a mermaid flowchart.
+
+        Args:
+            edges: List of edge dicts from query_upstream/query_downstream.
+            graph: The lineage graph (for node metadata).
+            direction: "upstream" or "downstream".
+            node_fqn: The FQN of the queried node.
+
+        Returns:
+            Mermaid flowchart source code.
+        """
+        sanitize = DeepLineageService._sanitize_mermaid_id
+        escape = DeepLineageService._escape_mermaid_label
+
+        graph_dir = "RL" if direction == "upstream" else "LR"
+        lines: list[str] = [f"graph {graph_dir}"]
+
+        # Collect all unique node FQNs (including the root node)
+        node_fqns: set[str] = {node_fqn}
+        for edge in edges:
+            node_fqns.add(edge["source"])
+            node_fqns.add(edge["target"])
+
+        # Emit node definitions with labels and classes
+        for fqn in sorted(node_fqns):
+            node_id = sanitize(fqn)
+            if fqn in graph.tables:
+                t = graph.tables[fqn]
+                label = escape(
+                    f"{t.project_alias}:{t.table_id}<br/>{len(t.columns)} cols, {t.rows_count:,} rows"
+                )
+                lines.append(f'  {node_id}["{label}"]:::table')
+            elif fqn in graph.configurations:
+                c = graph.configurations[fqn]
+                label = escape(f"{c.project_alias}:{c.config_name}<br/>{c.component_id}")
+                lines.append(f'  {node_id}["{label}"]:::config')
+            else:
+                label = escape(fqn)
+                lines.append(f'  {node_id}["{label}"]')
+
+        # Emit edges
+        seen_edges: set[tuple[str, str]] = set()
+        for edge in edges:
+            src_id = sanitize(edge["source"])
+            tgt_id = sanitize(edge["target"])
+            edge_key = (src_id, tgt_id)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            detection = escape(edge["detection"])
+            lines.append(f"  {src_id} -->|{detection}| {tgt_id}")
+
+        # Style definitions
+        lines.append("")
+        lines.append("  classDef table fill:#e1f5fe,stroke:#0288d1")
+        lines.append("  classDef config fill:#e8f5e9,stroke:#388e3c")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def render_html(mermaid_code: str, title: str) -> str:
+        """Wrap mermaid code in a self-contained HTML page.
+
+        Args:
+            mermaid_code: Mermaid flowchart source.
+            title: Page title / heading.
+
+        Returns:
+            Complete HTML document string.
+        """
+        escaped_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return (
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            "<head>\n"
+            f"  <title>{escaped_title}</title>\n"
+            '  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>\n'
+            "  <style>body { font-family: system-ui; max-width: 100%; padding: 20px; } "
+            ".mermaid { text-align: center; }</style>\n"
+            "</head>\n"
+            "<body>\n"
+            f"  <h2>{escaped_title}</h2>\n"
+            f'  <div class="mermaid">\n{mermaid_code}\n  </div>\n'
+            "  <script>mermaid.initialize({startOnLoad: true, theme: 'default', "
+            "flowchart: {curve: 'basis'}});</script>\n"
+            "</body>\n"
+            "</html>"
+        )
+
     @staticmethod
     def _suggest(graph: LineageGraph, identifier: str) -> list[str]:
         all_fqns = set(graph.tables) | set(graph.configurations)

@@ -9,6 +9,7 @@ Two subcommands:
 """
 
 import json
+import re
 from pathlib import Path
 
 import typer
@@ -195,6 +196,12 @@ def lineage_show(
         help="Project alias filter for queries.",
     ),
     depth: int = typer.Option(10, "--depth", help="Max traversal depth (default: 10)."),
+    format: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text, mermaid, or html.",
+    ),
 ) -> None:
     """Query upstream/downstream dependencies from a cached lineage graph.
 
@@ -206,6 +213,14 @@ def lineage_show(
 
       Table only:  bucket_id.table_name  (auto-resolves, warns if ambiguous)
 
+    Output formats (--format):
+
+      text     Rich tree (default)
+
+      mermaid  Mermaid flowchart source code
+
+      html     Self-contained HTML file with embedded mermaid diagram
+
     Examples:
 
       kbagent lineage show -l lineage.json --downstream "project:table"
@@ -213,6 +228,10 @@ def lineage_show(
       kbagent lineage show -l lineage.json --upstream "project:table" --columns
 
       kbagent lineage show -l lineage.json --upstream "project:table" -c "col_name"
+
+      kbagent lineage show -l lineage.json --downstream "project:table" -f mermaid
+
+      kbagent lineage show -l lineage.json --downstream "project:table" -f html
     """
     if should_hint(ctx):
         emit_hint(
@@ -227,6 +246,14 @@ def lineage_show(
 
     formatter = get_formatter(ctx)
     service = get_service(ctx, "deep_lineage_service")
+
+    valid_formats = ("text", "mermaid", "html")
+    if format not in valid_formats:
+        formatter.error(
+            message=f"Invalid format '{format}'. Must be one of: {', '.join(valid_formats)}",
+            error_code="INVALID_FORMAT",
+        )
+        raise typer.Exit(code=2)
 
     if not load.exists():
         formatter.error(message=f"Cache file not found: {load}", error_code="FILE_NOT_FOUND")
@@ -280,6 +307,8 @@ def lineage_show(
             if column:
                 query_result = _filter_column_json(query_result, column)
             formatter.output(query_result)
+        elif format in ("mermaid", "html"):
+            _output_mermaid_or_html(formatter, service, graph, query_result, "upstream", format)
         else:
             _format_lineage_tree(formatter, graph, query_result, "upstream", **display_opts)
 
@@ -297,11 +326,49 @@ def lineage_show(
             if column:
                 query_result = _filter_column_json(query_result, column)
             formatter.output(query_result)
+        elif format in ("mermaid", "html"):
+            _output_mermaid_or_html(formatter, service, graph, query_result, "downstream", format)
         else:
             _format_lineage_tree(formatter, graph, query_result, "downstream", **display_opts)
 
 
 # -- Output formatting helpers ----------------------------------------------
+
+
+def _output_mermaid_or_html(
+    formatter,
+    service,
+    graph,
+    query_result: dict,
+    direction: str,
+    output_format: str,
+) -> None:
+    """Render query result as mermaid or HTML and output it."""
+    from ..services.deep_lineage_service import DeepLineageService
+
+    node_fqn = query_result["node"]
+    edges = query_result.get("edges", [])
+
+    mermaid_code = DeepLineageService.render_mermaid(edges, graph, direction, node_fqn)
+
+    if output_format == "mermaid":
+        typer.echo(mermaid_code)
+    elif output_format == "html":
+        title = f"Lineage {direction} of {node_fqn}"
+        html_content = DeepLineageService.render_html(mermaid_code, title)
+        sanitized_node = re.sub(r"[^a-zA-Z0-9_]", "_", node_fqn)
+        filename = f"lineage_{direction}_{sanitized_node}.html"
+        try:
+            with open(filename, "w") as f:
+                f.write(html_content)
+            if not formatter.json_mode:
+                formatter.console.print(f"HTML lineage diagram saved to: {filename}")
+        except OSError as exc:
+            formatter.error(
+                message=f"Cannot write HTML file '{filename}': {exc}",
+                error_code="WRITE_ERROR",
+            )
+            raise typer.Exit(code=1) from None
 
 
 def _filter_column_json(result: dict, column_name: str) -> dict:

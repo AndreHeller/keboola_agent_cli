@@ -143,7 +143,23 @@ def lineage_deep(
       5. With AI:         kbagent lineage deep -d /path -o lineage.json --ai
 
       6. Update:          kbagent lineage deep -d /path -o lineage.json --refresh --ai
+
+      7. Python code:     kbagent --hint service lineage deep -d /path --upstream "project:table"
     """
+    if should_hint(ctx):
+        emit_hint(
+            ctx,
+            "lineage.deep",
+            directory=str(directory),
+            upstream=upstream,
+            downstream=downstream,
+            project=project,
+            depth=depth,
+            ai=ai,
+            ai_model=ai_model,
+            ai_workers=ai_workers,
+        )
+        return
     formatter = get_formatter(ctx)
     service = get_service(ctx, "deep_lineage_service")
 

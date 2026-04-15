@@ -6,6 +6,7 @@ No business logic belongs here.
 
 import typer
 
+from ..config_store import ConfigStore
 from ..constants import DEFAULT_JOB_LIMIT, DEFAULT_JOB_RUN_TIMEOUT, MAX_JOB_LIMIT, VALID_STATUSES
 from ..errors import ConfigError, KeboolaApiError
 from ..output import format_job_detail, format_jobs_table
@@ -16,7 +17,9 @@ from ._helpers import (
     get_formatter,
     get_service,
     map_error_to_exit_code,
+    resolve_branch,
     should_hint,
+    validate_branch_requires_project,
 )
 
 job_app = typer.Typer(help="Browse job history and run jobs")
@@ -177,11 +180,19 @@ def job_run(
         "--timeout",
         help="Max seconds to wait when --wait is set",
     ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (overrides active branch)",
+    ),
 ) -> None:
     """Run a job for a component configuration.
 
     Creates a Queue API job and optionally waits for completion.
     Use --row-id to run specific configuration rows.
+
+    When a dev branch is active (via 'branch use'), the job automatically
+    runs on that branch. Use --branch to override.
     """
     if should_hint(ctx):
         emit_hint(
@@ -193,15 +204,22 @@ def job_run(
             row_id=row_id,
             wait=wait,
             timeout=timeout,
+            branch=branch,
         )
         return
     formatter = get_formatter(ctx)
     service = get_service(ctx, "job_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+
+    validate_branch_requires_project(formatter, branch, project)
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
 
     if not formatter.json_mode:
         msg = f"Running [cyan]{component_id}[/cyan] / [cyan]{config_id}[/cyan]"
         if row_id:
             msg += f" (rows: {', '.join(row_id)})"
+        if effective_branch is not None:
+            msg += f" on branch [cyan]{effective_branch}[/cyan]"
         if wait:
             msg += f" [dim](waiting up to {timeout:.0f}s)[/dim]"
         msg += "..."
@@ -215,6 +233,7 @@ def job_run(
             config_row_ids=row_id,
             wait=wait,
             timeout=timeout,
+            branch_id=effective_branch,
         )
     except ConfigError as exc:
         formatter.error(message=exc.message, error_code="CONFIG_ERROR")

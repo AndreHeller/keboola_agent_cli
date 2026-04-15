@@ -1543,6 +1543,7 @@ class KeboolaClient(BaseHttpClient):
         config_data: dict[str, Any] | None = None,
         config_row_ids: list[str] | None = None,
         mode: str = "run",
+        branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Create and run a Queue API job.
 
@@ -1553,6 +1554,8 @@ class KeboolaClient(BaseHttpClient):
             config_row_ids: Optional list of config row IDs to run
                 (omit to run entire config).
             mode: Job mode (default: run).
+            branch_id: Optional dev branch ID. When set, the job runs
+                on that branch instead of the default (production) branch.
 
         Returns:
             Job dict from the Queue API.
@@ -1562,6 +1565,8 @@ class KeboolaClient(BaseHttpClient):
             "config": config_id,
             "mode": mode,
         }
+        if branch_id is not None:
+            body["branchId"] = str(branch_id)
         if config_data:
             body["configData"] = config_data
         if config_row_ids:

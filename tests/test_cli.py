@@ -2041,6 +2041,211 @@ class TestJobDetail:
         assert output["error"]["code"] == "NOT_FOUND"
 
 
+class TestJobRun:
+    """Tests for `kbagent job run` command - branch support."""
+
+    def test_job_run_with_branch_flag(self, tmp_path: Path) -> None:
+        """job run --branch 789 passes branch_id to service.run_job."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+
+            job_service = MagicMock()
+            job_service.run_job.return_value = {
+                "id": 555,
+                "status": "waiting",
+                "branchId": "789",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "run",
+                    "--project",
+                    "prod",
+                    "--component-id",
+                    "keboola.snowflake-transformation",
+                    "--config-id",
+                    "100",
+                    "--branch",
+                    "789",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        job_service.run_job.assert_called_once()
+        call_kwargs = job_service.run_job.call_args
+        assert call_kwargs.kwargs.get("branch_id") == 789 or (
+            call_kwargs[1].get("branch_id") == 789 if call_kwargs[1] else False
+        )
+
+    def test_job_run_active_branch_resolved(self, tmp_path: Path) -> None:
+        """job run without --branch uses active_branch_id from config."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+        # Set active branch for the project
+        store.set_project_branch("prod", 456)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+
+            job_service = MagicMock()
+            job_service.run_job.return_value = {
+                "id": 556,
+                "status": "waiting",
+                "branchId": "456",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "run",
+                    "--project",
+                    "prod",
+                    "--component-id",
+                    "keboola.ex-http",
+                    "--config-id",
+                    "42",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        job_service.run_job.assert_called_once()
+        call_kwargs = job_service.run_job.call_args
+        assert call_kwargs.kwargs.get("branch_id") == 456 or (
+            call_kwargs[1].get("branch_id") == 456 if call_kwargs[1] else False
+        )
+
+    def test_job_run_no_branch_passes_none(self, tmp_path: Path) -> None:
+        """job run without --branch and no active branch passes branch_id=None."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+
+            job_service = MagicMock()
+            job_service.run_job.return_value = {
+                "id": 557,
+                "status": "waiting",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "run",
+                    "--project",
+                    "prod",
+                    "--component-id",
+                    "keboola.ex-http",
+                    "--config-id",
+                    "42",
+                ],
+            )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        job_service.run_job.assert_called_once()
+        call_kwargs = job_service.run_job.call_args
+        assert call_kwargs.kwargs.get("branch_id") is None or (
+            call_kwargs[1].get("branch_id") is None if call_kwargs[1] else True
+        )
+
+    def test_job_run_branch_requires_project(self, tmp_path: Path) -> None:
+        """job run --branch 123 without --project is rejected (but --project is required anyway)."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            # --project is required for job run, so missing it returns usage error
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "run",
+                    "--component-id",
+                    "keboola.ex-http",
+                    "--config-id",
+                    "42",
+                    "--branch",
+                    "123",
+                ],
+            )
+
+        # --project is required, so typer returns exit code 2 (usage error)
+        assert result.exit_code == 2
+
+
 # ---------------------------------------------------------------------------
 # Context command tests
 # ---------------------------------------------------------------------------

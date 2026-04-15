@@ -250,6 +250,26 @@ def _format_lineage_tree(formatter, graph, result: dict, direction: str) -> None
 
         formatter.console.print(f"{indent}{arrow} ({edge['detection']}) {node_desc}{cols}")
 
+        # Show column-level mapping if available
+        col_map = edge.get("column_mapping", {})
+        if col_map:
+            map_indent = "  " * (edge["depth"] + 1)
+            items = list(col_map.items())
+            for out_col, src_expr in items[:6]:
+                # Shorten source expression for readability
+                src_short = src_expr.split(".")[-1] if "." in src_expr else src_expr
+                src_table = ".".join(src_expr.split(".")[:-1]) if "." in src_expr else ""
+                if src_table:
+                    formatter.console.print(
+                        f"{map_indent}[dim]{out_col}[/dim] <- {src_table}.[bold]{src_short}[/bold]"
+                    )
+                else:
+                    formatter.console.print(f"{map_indent}[dim]{out_col}[/dim] <- {src_expr}")
+            if len(items) > 6:
+                formatter.console.print(
+                    f"{map_indent}[dim]... +{len(items) - 6} more columns[/dim]"
+                )
+
 
 @lineage_app.callback(invoke_without_command=True)
 def lineage_callback(ctx: typer.Context) -> None:

@@ -6,7 +6,7 @@ No business logic belongs here.
 Four subcommands:
   build -- scan sync'd projects, build lineage graph, save cache
   show  -- query upstream/downstream from cached graph
-  serve -- start local web server with interactive D3.js visualization
+  serve -- start local web server with interactive lineage browser
 """
 
 import http.server
@@ -15,6 +15,7 @@ import re
 import threading
 import webbrowser
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import typer
 
@@ -514,420 +515,515 @@ _LINEAGE_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Keboola Lineage Graph</title>
+<title>Keboola Lineage Browser</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  background: #1a1a2e; color: #e0e0e0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  overflow: hidden; height: 100vh;
+  height: 100vh; overflow: hidden; display: flex; background: #fff; color: #333;
 }
-#controls {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-  background: rgba(26, 26, 46, 0.95); padding: 10px 16px;
-  display: flex; align-items: center; gap: 12px;
-  border-bottom: 1px solid #333;
+/* -- Sidebar -- */
+#sidebar {
+  width: 280px; min-width: 280px; background: #f8f9fa;
+  border-right: 1px solid #e0e0e0; display: flex; flex-direction: column;
+  height: 100vh; overflow: hidden;
 }
-#controls h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
-#search {
-  padding: 6px 12px; border-radius: 6px; border: 1px solid #444;
-  background: #16213e; color: #e0e0e0; font-size: 14px; width: 300px;
-  outline: none;
+#sidebar-header {
+  padding: 16px; border-bottom: 1px solid #e0e0e0;
 }
-#search:focus { border-color: #4fc3f7; }
-#stats { font-size: 12px; color: #888; white-space: nowrap; }
-#legend {
-  position: fixed; bottom: 16px; left: 16px; z-index: 10;
-  background: rgba(26, 26, 46, 0.92); padding: 12px 16px;
-  border-radius: 8px; border: 1px solid #333; font-size: 12px;
+#sidebar-header h1 {
+  font-size: 15px; font-weight: 700; color: #1a73e8; margin-bottom: 12px;
 }
-#legend div { margin: 4px 0; display: flex; align-items: center; gap: 8px; }
-.legend-swatch {
-  width: 14px; height: 14px; display: inline-block; border-radius: 2px;
+#project-select {
+  width: 100%; padding: 6px 8px; border: 1px solid #dadce0; border-radius: 4px;
+  font-size: 13px; background: #fff; color: #333; outline: none;
 }
-.legend-circle { border-radius: 50%; }
-#tooltip {
-  position: fixed; display: none; z-index: 20;
-  background: rgba(22, 33, 62, 0.96); border: 1px solid #4fc3f7;
-  border-radius: 8px; padding: 10px 14px; font-size: 13px;
-  max-width: 380px; pointer-events: none;
+#project-select:focus { border-color: #1a73e8; }
+
+/* Tabs */
+#tabs {
+  display: flex; border-bottom: 1px solid #e0e0e0;
 }
-#tooltip .tt-title { font-weight: 600; margin-bottom: 4px; }
-#tooltip .tt-row { color: #aaa; margin: 2px 0; }
-svg { width: 100vw; height: 100vh; }
-.link { stroke-opacity: 0.4; fill: none; }
-.link-label { font-size: 9px; fill: #777; pointer-events: none; }
-.node-label {
-  font-size: 10px; fill: #ccc; pointer-events: none;
-  text-anchor: middle; dominant-baseline: central;
+.tab {
+  flex: 1; padding: 8px 0; text-align: center; font-size: 12px; font-weight: 600;
+  cursor: pointer; color: #5f6368; border-bottom: 2px solid transparent;
+  background: none; border-top: none; border-left: none; border-right: none;
 }
-.node { cursor: pointer; stroke-width: 1.5; }
-.node:hover { stroke-width: 3; }
-marker { overflow: visible; }
+.tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+.tab:hover { background: #e8eaed; }
+
+/* Search */
+#node-search {
+  margin: 8px 12px; padding: 6px 8px; border: 1px solid #dadce0; border-radius: 4px;
+  font-size: 13px; outline: none; width: calc(100% - 24px);
+}
+#node-search:focus { border-color: #1a73e8; }
+
+/* Node list */
+#node-list {
+  flex: 1; overflow-y: auto; padding: 0;
+}
+.node-item {
+  padding: 6px 12px; cursor: pointer; font-size: 12px; color: #333;
+  border-bottom: 1px solid #f0f0f0; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.node-item:hover { background: #e8f0fe; }
+.node-item.selected { background: #d2e3fc; font-weight: 600; }
+.node-item .node-meta {
+  font-size: 11px; color: #888; margin-top: 1px;
+}
+
+/* Controls below list */
+#query-controls {
+  padding: 12px; border-top: 1px solid #e0e0e0; background: #f8f9fa;
+}
+#query-controls label { font-size: 12px; font-weight: 600; color: #5f6368; }
+.radio-group {
+  display: flex; gap: 12px; margin: 4px 0 8px 0;
+}
+.radio-group label { font-weight: 400; font-size: 12px; cursor: pointer; }
+.radio-group input { margin-right: 3px; }
+#depth-row { display: flex; align-items: center; gap: 8px; }
+#depth-slider { flex: 1; }
+#depth-value { font-size: 12px; color: #333; min-width: 16px; }
+
+/* -- Main area -- */
+#main {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+}
+#main-header {
+  padding: 12px 20px; border-bottom: 1px solid #e0e0e0;
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 48px; background: #fff;
+}
+#main-header h2 {
+  font-size: 14px; font-weight: 600; color: #333; margin: 0;
+}
+#main-stats {
+  font-size: 12px; color: #888;
+}
+#export-buttons {
+  display: flex; gap: 6px;
+}
+#export-buttons button {
+  padding: 4px 10px; font-size: 11px; border: 1px solid #dadce0;
+  border-radius: 4px; background: #fff; color: #333; cursor: pointer;
+}
+#export-buttons button:hover { background: #f1f3f4; }
+
+/* Diagram area */
+#diagram-area {
+  flex: 1; overflow: auto; padding: 20px; display: flex;
+  align-items: flex-start; justify-content: center;
+}
+#diagram-area .mermaid-container {
+  max-width: 100%; overflow: auto;
+}
+#diagram-area .mermaid-container svg {
+  max-width: none;
+}
+#placeholder {
+  color: #999; font-size: 14px; text-align: center; margin-top: 100px;
+}
+#placeholder p { margin: 8px 0; }
+
+/* Loading indicator */
+#loading {
+  display: none; color: #1a73e8; font-size: 13px; text-align: center;
+  margin-top: 80px;
+}
+
+/* Responsive: collapse sidebar on narrow screens */
+@media (max-width: 700px) {
+  #sidebar { width: 220px; min-width: 220px; }
+}
+@media (max-width: 500px) {
+  body { flex-direction: column; }
+  #sidebar { width: 100%; min-width: 100%; height: 40vh; }
+  #main { height: 60vh; }
+}
 </style>
 </head>
 <body>
-<div id="controls">
-  <h1>Lineage Graph</h1>
-  <input id="search" type="text" placeholder="Search nodes..." autocomplete="off">
-  <span id="stats"></span>
-</div>
-<div id="legend">
-  <div><span class="legend-swatch legend-circle" style="background:#4fc3f7"></span> Table</div>
-  <div><span class="legend-swatch" style="background:#81c784"></span> Configuration</div>
-  <div>
-    <span class="legend-swatch"
-          style="background:#ff8a65;height:2px;width:20px;border-radius:0"></span>
-    Cross-project edge
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>Keboola Lineage Browser</h1>
+    <select id="project-select"><option value="">Loading...</option></select>
   </div>
-  <div style="color:#aaa">Click node: highlight upstream (red) / downstream (blue)</div>
-  <div style="color:#aaa">Scroll: zoom | Drag: pan</div>
+  <div id="tabs">
+    <button class="tab active" data-type="tables">Tables</button>
+    <button class="tab" data-type="configs">Configs</button>
+  </div>
+  <input id="node-search" type="text" placeholder="Filter nodes..." autocomplete="off">
+  <div id="node-list"></div>
+  <div id="query-controls">
+    <label>Direction</label>
+    <div class="radio-group">
+      <label><input type="radio" name="direction" value="upstream" checked> Upstream</label>
+      <label><input type="radio" name="direction" value="downstream"> Downstream</label>
+    </div>
+    <label>Depth</label>
+    <div id="depth-row">
+      <input type="range" id="depth-slider" min="1" max="10" value="3">
+      <span id="depth-value">3</span>
+    </div>
+  </div>
 </div>
-<div id="tooltip">
-  <div class="tt-title"></div>
-  <div class="tt-body"></div>
+
+<!-- Main -->
+<div id="main">
+  <div id="main-header">
+    <h2 id="diagram-title">Select a node to explore lineage</h2>
+    <span id="main-stats"></span>
+    <div id="export-buttons" style="display:none">
+      <button id="btn-mermaid">Download Mermaid</button>
+      <button id="btn-json">Download JSON</button>
+      <button id="btn-html">Download HTML</button>
+    </div>
+  </div>
+  <div id="diagram-area">
+    <div id="placeholder">
+      <p>Choose a project and click a table or configuration to visualize its lineage.</p>
+      <p style="font-size:12px;color:#bbb">
+        Use the sidebar to browse nodes, then click to query upstream or downstream dependencies.
+      </p>
+    </div>
+    <div id="loading">Querying lineage...</div>
+    <div id="mermaid-output" class="mermaid-container"></div>
+  </div>
 </div>
-<svg></svg>
-<script src="https://d3js.org/d3.v7.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
 (function() {
-  var WIDTH = window.innerWidth;
-  var HEIGHT = window.innerHeight;
+  // State
+  var allData = null;       // full lineage data from /data.json
+  var currentTab = "tables";
+  var selectedProject = "";
+  var selectedNode = null;  // FQN of the selected node
+  var lastQueryResult = null;
+  var lastMermaidCode = null;
+  var renderCounter = 0;    // unique ID for mermaid renders
 
-  fetch("/data.json").then(function(r) { return r.json(); }).then(function(raw) {
-    var graph = buildGraph(raw);
-    renderGraph(graph);
+  // DOM refs
+  var projectSelect = document.getElementById("project-select");
+  var nodeSearch = document.getElementById("node-search");
+  var nodeList = document.getElementById("node-list");
+  var depthSlider = document.getElementById("depth-slider");
+  var depthValue = document.getElementById("depth-value");
+  var diagramTitle = document.getElementById("diagram-title");
+  var mainStats = document.getElementById("main-stats");
+  var exportBtns = document.getElementById("export-buttons");
+  var mermaidOutput = document.getElementById("mermaid-output");
+  var placeholder = document.getElementById("placeholder");
+  var loading = document.getElementById("loading");
+
+  // Initialize mermaid
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "default",
+    flowchart: { useMaxWidth: false, htmlLabels: true },
+    securityLevel: "loose"
   });
 
-  function buildGraph(raw) {
-    var nodeMap = {};
-    var links = [];
-    var edges = raw.edges || [];
+  // -- Data loading --
+  fetch("/data.json")
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      allData = data;
+      populateProjects();
+    })
+    .catch(function(err) {
+      placeholder.innerHTML = "<p style='color:#d93025'>Failed to load lineage data: " +
+        err.message + "</p>";
+    });
 
-    function ensureNode(fqn, type, meta) {
-      if (!nodeMap[fqn]) {
-        nodeMap[fqn] = { id: fqn, type: type || "unknown", meta: meta || {}, conns: 0 };
-      } else if (meta) {
-        Object.assign(nodeMap[fqn].meta, meta);
-        if (type) nodeMap[fqn].type = type;
-      }
-      return nodeMap[fqn];
-    }
-
-    var rawNodes = raw.nodes || {};
-    var tables = rawNodes.tables || raw.tables || {};
-    var configs = rawNodes.configurations || raw.configurations || {};
+  function populateProjects() {
+    var projects = {};
+    var tables = allData.tables || {};
+    var configs = allData.configurations || {};
     for (var fqn in tables) {
-      var t = tables[fqn];
-      ensureNode(fqn, "table", {
-        columns: t.columns ? (Array.isArray(t.columns) ? t.columns.length : t.columns) : 0,
-        rows: t.rows_count || t.rows || 0,
-        project: t.project_alias || t.project || ""
-      });
+      var pa = tables[fqn].project_alias || fqn.split(":")[0] || "";
+      if (pa) projects[pa] = true;
     }
     for (var cfqn in configs) {
-      var c = configs[cfqn];
-      ensureNode(cfqn, "config", {
-        name: c.config_name || c.name || cfqn,
-        component: c.component_id || c.component || "",
-        component_type: c.component_type || "",
-        project: c.project_alias || c.project || ""
-      });
+      var cpa = configs[cfqn].project_alias || cfqn.split(":")[0] || "";
+      if (cpa) projects[cpa] = true;
     }
-
-    for (var i = 0; i < edges.length; i++) {
-      var e = edges[i];
-      var srcFqn = e.source || e.from;
-      var tgtFqn = e.target || e.to;
-      if (!srcFqn || !tgtFqn) continue;
-      var srcNode = ensureNode(srcFqn, null, {});
-      var tgtNode = ensureNode(tgtFqn, null, {});
-      srcNode.conns++;
-      tgtNode.conns++;
-      var srcProject = srcFqn.split(":")[0] || "";
-      var tgtProject = tgtFqn.split(":")[0] || "";
-      links.push({
-        source: srcFqn, target: tgtFqn,
-        detection: e.detection || e.type || "",
-        crossProject: srcProject !== tgtProject,
-        columns: e.columns || [],
-        column_mapping: e.column_mapping || {}
-      });
+    var sorted = Object.keys(projects).sort();
+    projectSelect.innerHTML = '<option value="">-- Select project --</option>';
+    for (var i = 0; i < sorted.length; i++) {
+      var opt = document.createElement("option");
+      opt.value = sorted[i];
+      opt.textContent = sorted[i];
+      projectSelect.appendChild(opt);
     }
-
-    var nodes = Object.values(nodeMap);
-    return { nodes: nodes, links: links };
+    // Auto-select first project if only one
+    if (sorted.length === 1) {
+      projectSelect.value = sorted[0];
+      selectedProject = sorted[0];
+      renderNodeList();
+    }
   }
 
-  function renderGraph(graph) {
-    var svg = d3.select("svg").attr("width", WIDTH).attr("height", HEIGHT);
-    var tooltip = d3.select("#tooltip");
-    var searchInput = d3.select("#search");
-    var stats = d3.select("#stats");
+  // -- Event handlers --
+  projectSelect.addEventListener("change", function() {
+    selectedProject = this.value;
+    selectedNode = null;
+    nodeSearch.value = "";
+    renderNodeList();
+  });
 
-    stats.text(graph.nodes.length + " nodes, " + graph.links.length + " edges");
-
-    var defs = svg.append("defs");
-    var markerTypes = ["normal", "cross", "upstream", "downstream", "dimmed"];
-    var markerColors = {
-      normal: "#555", cross: "#ff8a65",
-      upstream: "#ef5350", downstream: "#42a5f5", dimmed: "#333"
-    };
-    markerTypes.forEach(function(mt) {
-      defs.append("marker")
-        .attr("id", "arrow-" + mt).attr("viewBox", "0 -5 10 10")
-        .attr("refX", 20).attr("refY", 0)
-        .attr("markerWidth", 6).attr("markerHeight", 6)
-        .attr("orient", "auto")
-        .append("path").attr("d", "M0,-5L10,0L0,5")
-        .attr("fill", markerColors[mt]);
+  document.querySelectorAll(".tab").forEach(function(tab) {
+    tab.addEventListener("click", function() {
+      document.querySelectorAll(".tab").forEach(function(t) { t.classList.remove("active"); });
+      tab.classList.add("active");
+      currentTab = tab.getAttribute("data-type");
+      selectedNode = null;
+      renderNodeList();
     });
+  });
 
-    var g = svg.append("g");
+  nodeSearch.addEventListener("input", function() {
+    renderNodeList();
+  });
 
-    var zoom = d3.zoom()
-      .scaleExtent([0.1, 8])
-      .on("zoom", function(e) { g.attr("transform", e.transform); });
-    svg.call(zoom);
+  depthSlider.addEventListener("input", function() {
+    depthValue.textContent = this.value;
+  });
 
-    var maxConns = d3.max(graph.nodes, function(d) { return d.conns; }) || 1;
-    var rScale = d3.scaleSqrt().domain([0, maxConns]).range([5, 20]);
+  // Re-query when direction or depth changes (if a node is selected)
+  document.querySelectorAll('input[name="direction"]').forEach(function(radio) {
+    radio.addEventListener("change", function() {
+      if (selectedNode) queryNode(selectedNode);
+    });
+  });
+  depthSlider.addEventListener("change", function() {
+    if (selectedNode) queryNode(selectedNode);
+  });
 
-    var sim = d3.forceSimulation(graph.nodes)
-      .force("link", d3.forceLink(graph.links).id(function(d) { return d.id; }).distance(100))
-      .force("charge", d3.forceManyBody().strength(-200))
-      .force("center", d3.forceCenter(WIDTH / 2, HEIGHT / 2))
-      .force("collision", d3.forceCollide().radius(function(d) {
-        return rScale(d.conns) + 4;
-      }));
+  // Export buttons
+  document.getElementById("btn-mermaid").addEventListener("click", function() {
+    if (lastMermaidCode) downloadFile("lineage.mmd", lastMermaidCode, "text/plain");
+  });
+  document.getElementById("btn-json").addEventListener("click", function() {
+    if (lastQueryResult) {
+      downloadFile("lineage.json", JSON.stringify(lastQueryResult, null, 2), "application/json");
+    }
+  });
+  document.getElementById("btn-html").addEventListener("click", function() {
+    if (lastMermaidCode) {
+      var html = buildStandaloneHtml(lastMermaidCode, diagramTitle.textContent);
+      downloadFile("lineage.html", html, "text/html");
+    }
+  });
 
-    var link = g.append("g").selectAll("line")
-      .data(graph.links).join("line")
-      .attr("class", "link")
-      .attr("stroke", function(d) { return d.crossProject ? "#ff8a65" : "#555"; })
-      .attr("stroke-width", function(d) { return d.crossProject ? 1.8 : 1; })
-      .attr("marker-end", function(d) {
-        return "url(#arrow-" + (d.crossProject ? "cross" : "normal") + ")";
-      });
+  // -- Render node list --
+  function renderNodeList() {
+    nodeList.innerHTML = "";
+    if (!allData || !selectedProject) return;
 
-    var linkLabel = g.append("g").selectAll("text")
-      .data(graph.links).join("text")
-      .attr("class", "link-label")
-      .text(function(d) { return d.detection; });
+    var query = (nodeSearch.value || "").toLowerCase().trim();
+    var items = [];
 
-    var node = g.append("g").selectAll(".node")
-      .data(graph.nodes).join(function(enter) {
-        return enter.append(function(d) {
-          return document.createElementNS("http://www.w3.org/2000/svg",
-            d.type === "table" ? "circle" : "rect");
+    if (currentTab === "tables") {
+      var tables = allData.tables || {};
+      for (var fqn in tables) {
+        var t = tables[fqn];
+        var pa = t.project_alias || fqn.split(":")[0] || "";
+        if (pa !== selectedProject) continue;
+        var tableId = t.table_id || fqn.split(":").slice(1).join(":") || fqn;
+        var displayName = tableId;
+        if (query && displayName.toLowerCase().indexOf(query) < 0 &&
+            fqn.toLowerCase().indexOf(query) < 0) continue;
+        var colCount = Array.isArray(t.columns) ? t.columns.length : (t.columns || 0);
+        items.push({
+          fqn: fqn,
+          name: displayName,
+          meta: colCount + " cols, " + (t.rows_count || 0).toLocaleString() + " rows"
         });
-      })
-      .attr("class", "node")
-      .attr("fill", function(d) { return d.type === "table" ? "#4fc3f7" : "#81c784"; })
-      .attr("stroke", function(d) { return d.type === "table" ? "#29b6f6" : "#66bb6a"; })
-      .each(function(d) {
-        var el = d3.select(this);
-        var r = rScale(d.conns);
-        if (d.type === "table") {
-          el.attr("r", r);
-        } else {
-          el.attr("width", r * 2).attr("height", r * 2)
-            .attr("rx", 3).attr("ry", 3);
-        }
-      })
-      .call(d3.drag()
-        .on("start", function(e, d) {
-          if (!e.active) sim.alphaTarget(0.3).restart();
-          d.fx = d.x; d.fy = d.y;
-        })
-        .on("drag", function(e, d) { d.fx = e.x; d.fy = e.y; })
-        .on("end", function(e, d) {
-          if (!e.active) sim.alphaTarget(0);
-          d.fx = null; d.fy = null;
-        })
-      );
+      }
+    } else {
+      var configs = allData.configurations || {};
+      for (var cfqn in configs) {
+        var c = configs[cfqn];
+        var cpa = c.project_alias || cfqn.split(":")[0] || "";
+        if (cpa !== selectedProject) continue;
+        var configName = c.config_name || c.name || cfqn;
+        if (query && configName.toLowerCase().indexOf(query) < 0 &&
+            cfqn.toLowerCase().indexOf(query) < 0) continue;
+        items.push({
+          fqn: cfqn,
+          name: configName,
+          meta: c.component_id || c.component_type || ""
+        });
+      }
+    }
 
-    var nodeLabel = g.append("g").selectAll("text")
-      .data(graph.nodes).join("text")
-      .attr("class", "node-label")
-      .text(function(d) {
-        var parts = d.id.split(":");
-        var name = parts.length > 1 ? parts[1] : parts[0];
-        return name.length > 30 ? name.slice(0, 28) + ".." : name;
-      })
-      .attr("dy", function(d) { return rScale(d.conns) + 12; });
+    items.sort(function(a, b) { return a.name.localeCompare(b.name); });
 
-    var adjSrc = {};
-    var adjTgt = {};
-    graph.links.forEach(function(l, i) {
-      var sid = typeof l.source === "object" ? l.source.id : l.source;
-      var tid = typeof l.target === "object" ? l.target.id : l.target;
-      if (!adjSrc[sid]) adjSrc[sid] = [];
-      adjSrc[sid].push(i);
-      if (!adjTgt[tid]) adjTgt[tid] = [];
-      adjTgt[tid].push(i);
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var div = document.createElement("div");
+      div.className = "node-item" + (item.fqn === selectedNode ? " selected" : "");
+      div.setAttribute("data-fqn", item.fqn);
+      div.innerHTML = '<div>' + escapeHtml(item.name) + '</div>' +
+        '<div class="node-meta">' + escapeHtml(item.meta) + '</div>';
+      div.addEventListener("click", (function(fqn) {
+        return function() { onNodeClick(fqn); };
+      })(item.fqn));
+      nodeList.appendChild(div);
+    }
+  }
+
+  function onNodeClick(fqn) {
+    selectedNode = fqn;
+    // Update selection highlight
+    document.querySelectorAll(".node-item").forEach(function(el) {
+      el.classList.toggle("selected", el.getAttribute("data-fqn") === fqn);
     });
+    queryNode(fqn);
+  }
 
-    function getUpstream(nodeId, visited) {
-      visited = visited || {};
-      if (visited[nodeId]) return [];
-      visited[nodeId] = true;
-      var indices = adjTgt[nodeId] || [];
-      var result = indices.slice();
-      for (var j = 0; j < indices.length; j++) {
-        var l = graph.links[indices[j]];
-        var sid = typeof l.source === "object" ? l.source.id : l.source;
-        result = result.concat(getUpstream(sid, visited));
-      }
-      return result;
+  // -- Query API --
+  function getDirection() {
+    var radios = document.querySelectorAll('input[name="direction"]');
+    for (var i = 0; i < radios.length; i++) {
+      if (radios[i].checked) return radios[i].value;
     }
+    return "upstream";
+  }
 
-    function getDownstream(nodeId, visited) {
-      visited = visited || {};
-      if (visited[nodeId]) return [];
-      visited[nodeId] = true;
-      var indices = adjSrc[nodeId] || [];
-      var result = indices.slice();
-      for (var j = 0; j < indices.length; j++) {
-        var l = graph.links[indices[j]];
-        var tid = typeof l.target === "object" ? l.target.id : l.target;
-        result = result.concat(getDownstream(tid, visited));
-      }
-      return result;
-    }
+  function getDepth() {
+    return parseInt(depthSlider.value, 10) || 3;
+  }
 
-    var selectedNode = null;
+  function queryNode(fqn) {
+    var direction = getDirection();
+    var depth = getDepth();
 
-    node.on("click", function(event, d) {
-      event.stopPropagation();
-      if (selectedNode === d.id) {
-        selectedNode = null;
-        resetHighlight();
+    placeholder.style.display = "none";
+    mermaidOutput.innerHTML = "";
+    loading.style.display = "block";
+    exportBtns.style.display = "none";
+    mainStats.textContent = "";
+    diagramTitle.textContent = direction.charAt(0).toUpperCase() + direction.slice(1) +
+      " of " + fqn + ", depth " + depth;
+
+    // Fetch both query data and mermaid in parallel
+    var queryUrl = "/api/query?node=" + encodeURIComponent(fqn) +
+      "&direction=" + direction + "&depth=" + depth;
+    var mermaidUrl = "/api/mermaid?node=" + encodeURIComponent(fqn) +
+      "&direction=" + direction + "&depth=" + depth;
+
+    Promise.all([
+      fetch(queryUrl).then(function(r) { return r.json(); }),
+      fetch(mermaidUrl).then(function(r) { return r.text(); })
+    ]).then(function(results) {
+      var queryResult = results[0];
+      var mermaidCode = results[1];
+      loading.style.display = "none";
+
+      if (queryResult.error) {
+        mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">' +
+          escapeHtml(queryResult.error) + '</p>';
         return;
       }
-      selectedNode = d.id;
-      var upIdx = {};
-      getUpstream(d.id).forEach(function(idx) { upIdx[idx] = true; });
-      var downIdx = {};
-      getDownstream(d.id).forEach(function(idx) { downIdx[idx] = true; });
 
-      link.attr("stroke", function(l, i) {
-        if (upIdx[i]) return "#ef5350";
-        if (downIdx[i]) return "#42a5f5";
-        return "#333";
-      }).attr("stroke-opacity", function(l, i) {
-        return (upIdx[i] || downIdx[i]) ? 0.85 : 0.1;
-      }).attr("marker-end", function(l, i) {
-        if (upIdx[i]) return "url(#arrow-upstream)";
-        if (downIdx[i]) return "url(#arrow-downstream)";
-        return "url(#arrow-dimmed)";
-      });
+      lastQueryResult = queryResult;
+      lastMermaidCode = mermaidCode;
 
-      var connectedNodes = {};
-      connectedNodes[d.id] = true;
-      var allIdx = Object.keys(upIdx).concat(Object.keys(downIdx));
-      allIdx.forEach(function(i) {
-        var l = graph.links[i];
-        var sid = typeof l.source === "object" ? l.source.id : l.source;
-        var tid = typeof l.target === "object" ? l.target.id : l.target;
-        connectedNodes[sid] = true;
-        connectedNodes[tid] = true;
-      });
-
-      node.attr("opacity", function(n) { return connectedNodes[n.id] ? 1 : 0.15; })
-        .attr("stroke", function(n) {
-          if (n.id === d.id) return "#ffeb3b";
-          return n.type === "table" ? "#29b6f6" : "#66bb6a";
-        })
-        .attr("stroke-width", function(n) { return n.id === d.id ? 3 : 1.5; });
-      nodeLabel.attr("opacity", function(n) { return connectedNodes[n.id] ? 1 : 0.1; });
-      linkLabel.attr("opacity", function(l, i) {
-        return (upIdx[i] || downIdx[i]) ? 1 : 0.05;
-      });
-    });
-
-    svg.on("click", function() { selectedNode = null; resetHighlight(); });
-
-    function resetHighlight() {
-      link.attr("stroke", function(d) { return d.crossProject ? "#ff8a65" : "#555"; })
-        .attr("stroke-opacity", 0.4)
-        .attr("marker-end", function(d) {
-          return "url(#arrow-" + (d.crossProject ? "cross" : "normal") + ")";
-        });
-      node.attr("opacity", 1)
-        .attr("stroke", function(d) { return d.type === "table" ? "#29b6f6" : "#66bb6a"; })
-        .attr("stroke-width", 1.5);
-      nodeLabel.attr("opacity", 1);
-      linkLabel.attr("opacity", 1);
-    }
-
-    node.on("mouseenter", function(event, d) {
-      var tt = tooltip.style("display", "block");
-      var body = '<div class="tt-row">Type: ' + d.type + "</div>";
-      body += '<div class="tt-row">Connections: ' + d.conns + "</div>";
-      if (d.meta.project) {
-        body += '<div class="tt-row">Project: ' + d.meta.project + "</div>";
+      var edges = queryResult.edges || [];
+      // Count unique nodes in edges
+      var nodeSet = {};
+      if (queryResult.node) nodeSet[queryResult.node] = true;
+      for (var i = 0; i < edges.length; i++) {
+        nodeSet[edges[i].source] = true;
+        nodeSet[edges[i].target] = true;
       }
-      if (d.type === "table") {
-        body += '<div class="tt-row">Columns: ' + (d.meta.columns || 0) + "</div>";
-        body += '<div class="tt-row">Rows: '
-          + (d.meta.rows || 0).toLocaleString() + "</div>";
-      } else {
-        if (d.meta.name) {
-          body += '<div class="tt-row">Name: ' + d.meta.name + "</div>";
-        }
-        if (d.meta.component) {
-          body += '<div class="tt-row">Component: ' + d.meta.component + "</div>";
-        }
-        if (d.meta.component_type) {
-          body += '<div class="tt-row">Type: ' + d.meta.component_type + "</div>";
-        }
+      var nodeCount = Object.keys(nodeSet).length;
+      mainStats.textContent = nodeCount + " nodes, " + edges.length + " edges";
+      exportBtns.style.display = "flex";
+
+      if (edges.length === 0) {
+        mermaidOutput.innerHTML = '<p style="color:#888;padding:20px">No ' +
+          direction + ' dependencies found.</p>';
+        return;
       }
-      tt.select(".tt-title").text(d.id);
-      tt.select(".tt-body").html(body);
-    }).on("mousemove", function(event) {
-      tooltip.style("left", (event.clientX + 14) + "px")
-        .style("top", (event.clientY - 10) + "px");
-    }).on("mouseleave", function() { tooltip.style("display", "none"); });
 
-    searchInput.on("input", function() {
-      var q = this.value.toLowerCase().trim();
-      if (!q) { resetHighlight(); return; }
-      node.attr("opacity", function(d) {
-        return d.id.toLowerCase().indexOf(q) >= 0 ? 1 : 0.12;
-      }).attr("stroke", function(d) {
-        if (d.id.toLowerCase().indexOf(q) >= 0) return "#ffeb3b";
-        return d.type === "table" ? "#29b6f6" : "#66bb6a";
-      }).attr("stroke-width", function(d) {
-        return d.id.toLowerCase().indexOf(q) >= 0 ? 3 : 1.5;
-      });
-      nodeLabel.attr("opacity", function(d) {
-        return d.id.toLowerCase().indexOf(q) >= 0 ? 1 : 0.08;
-      });
-      link.attr("stroke-opacity", 0.12);
-      linkLabel.attr("opacity", 0.08);
+      // Render mermaid
+      renderMermaid(mermaidCode);
+    }).catch(function(err) {
+      loading.style.display = "none";
+      mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">Query failed: ' +
+        escapeHtml(err.message) + '</p>';
     });
+  }
 
-    sim.on("tick", function() {
-      link.attr("x1", function(d) { return d.source.x; })
-        .attr("y1", function(d) { return d.source.y; })
-        .attr("x2", function(d) { return d.target.x; })
-        .attr("y2", function(d) { return d.target.y; });
-      linkLabel
-        .attr("x", function(d) { return (d.source.x + d.target.x) / 2; })
-        .attr("y", function(d) { return (d.source.y + d.target.y) / 2; });
-      node.each(function(d) {
-        var el = d3.select(this);
-        if (d.type === "table") {
-          el.attr("cx", d.x).attr("cy", d.y);
-        } else {
-          var r = rScale(d.conns);
-          el.attr("x", d.x - r).attr("y", d.y - r);
-        }
-      });
-      nodeLabel.attr("x", function(d) { return d.x; })
-        .attr("y", function(d) { return d.y; });
+  function renderMermaid(code) {
+    renderCounter++;
+    var id = "mermaid-diagram-" + renderCounter;
+    mermaidOutput.innerHTML = "";
+    mermaid.render(id, code).then(function(result) {
+      mermaidOutput.innerHTML = result.svg;
+    }).catch(function(err) {
+      mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">' +
+        'Mermaid render error: ' + escapeHtml(err.message) + '</p>' +
+        '<pre style="padding:12px;background:#f5f5f5;border-radius:4px;' +
+        'font-size:11px;overflow:auto;max-height:300px">' +
+        escapeHtml(code) + '</pre>';
     });
+  }
+
+  // -- Helpers --
+  function escapeHtml(text) {
+    var div = document.createElement("div");
+    div.appendChild(document.createTextNode(text || ""));
+    return div.innerHTML;
+  }
+
+  function downloadFile(filename, content, mimeType) {
+    var blob = new Blob([content], { type: mimeType });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function buildStandaloneHtml(mermaidCode, title) {
+    return '<!DOCTYPE html>\n<html>\n<head>\n' +
+      '  <title>' + escapeHtml(title) + '</title>\n' +
+      '  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"><' + '/script>\n' +
+      '  <style>\n' +
+      '    body { font-family: system-ui, -apple-system, sans-serif;\n' +
+      '           max-width: 100%; padding: 20px; color: #333; }\n' +
+      '    h2 { margin-bottom: 12px; }\n' +
+      '    .mermaid { text-align: center; margin-top: 16px; }\n' +
+      '    .legend { margin: 16px 0; padding: 12px 16px; background: #f5f5f5;\n' +
+      '             border-radius: 8px; font-size: 13px; display: inline-block; }\n' +
+      '    .legend-swatch { display: inline-block; width: 14px; height: 14px;\n' +
+      '                     border-radius: 3px; vertical-align: middle; margin-right: 4px; }\n' +
+      '  </style>\n</head>\n<body>\n' +
+      '  <h2>' + escapeHtml(title) + '</h2>\n' +
+      '  <div class="legend">\n' +
+      '    <strong>Legend</strong><br/>\n' +
+      '    <span class="legend-swatch" style="background:#e1f5fe;border:2px solid #0288d1"></span> Table\n' +
+      '    &nbsp;&nbsp;\n' +
+      '    <span class="legend-swatch" style="background:#e8f5e9;border:2px solid #388e3c"></span> Configuration\n' +
+      '    <br/><span style="color:#888;font-size:12px">' +
+      '    Edge labels: input_mapping / output_mapping | sql_tokenizer | bucket_sharing | ai</span>\n' +
+      '  </div>\n' +
+      '  <div class="mermaid">\n' + mermaidCode + '\n  </div>\n' +
+      '  <script>mermaid.initialize({startOnLoad:true, theme:"default", ' +
+      'flowchart:{useMaxWidth:false,htmlLabels:true}, securityLevel:"loose"});<' + '/script>\n' +
+      '</body>\n</html>';
   }
 })();
 </script>
@@ -936,18 +1032,73 @@ marker { overflow: visible; }
 
 
 class _LineageHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP handler that serves the lineage visualization page and data."""
+    """HTTP handler for the lineage browser - serves HTML, data JSON, and query APIs."""
 
     html_content: str = ""
     json_content: str = ""
+    service = None  # DeepLineageService instance
+    graph = None  # LineageGraph instance
 
     def do_GET(self) -> None:
-        if self.path == "/" or self.path == "/index.html":
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/" or path == "/index.html":
             self._serve(self.html_content, "text/html")
-        elif self.path == "/data.json":
+        elif path == "/data.json":
             self._serve(self.json_content, "application/json")
+        elif path == "/api/query":
+            self._handle_query(parsed)
+        elif path == "/api/mermaid":
+            self._handle_mermaid(parsed)
         else:
             self.send_error(404)
+
+    def _handle_query(self, parsed) -> None:
+        """Handle /api/query?node=FQN&direction=upstream&depth=3."""
+        params = parse_qs(parsed.query)
+        node = params.get("node", [""])[0]
+        direction = params.get("direction", ["downstream"])[0]
+        depth = int(params.get("depth", ["3"])[0])
+
+        if not node:
+            self._serve(json.dumps({"error": "Missing 'node' parameter"}), "application/json")
+            return
+
+        if direction == "upstream":
+            result = self.service.query_upstream(self.graph, node, depth=depth)
+        else:
+            result = self.service.query_downstream(self.graph, node, depth=depth)
+
+        self._serve(json.dumps(result), "application/json")
+
+    def _handle_mermaid(self, parsed) -> None:
+        """Handle /api/mermaid?node=FQN&direction=upstream&depth=3."""
+        from ..services.deep_lineage_service import DeepLineageService
+
+        params = parse_qs(parsed.query)
+        node = params.get("node", [""])[0]
+        direction = params.get("direction", ["downstream"])[0]
+        depth = int(params.get("depth", ["3"])[0])
+
+        if not node:
+            self._serve("graph LR\n  empty[No node specified]", "text/plain")
+            return
+
+        if direction == "upstream":
+            result = self.service.query_upstream(self.graph, node, depth=depth)
+        else:
+            result = self.service.query_downstream(self.graph, node, depth=depth)
+
+        if "error" in result:
+            self._serve(
+                "graph LR\n  error[" + result["error"].replace('"', "'") + "]", "text/plain"
+            )
+            return
+
+        edges = result.get("edges", [])
+        mermaid_code = DeepLineageService.render_mermaid(edges, self.graph, direction, node)
+        self._serve(mermaid_code, "text/plain")
 
     def _serve(self, content: str, content_type: str) -> None:
         encoded = content.encode("utf-8")
@@ -982,16 +1133,17 @@ def lineage_serve(
         help="Host to bind to.",
     ),
 ) -> None:
-    """Start a local web server with interactive D3.js lineage visualization.
+    """Start a local web server with interactive lineage browser.
 
-    Serves an interactive force-directed graph from a cached lineage file.
-    Nodes represent tables (circles) and configurations (squares).
-    Click a node to highlight upstream (red) and downstream (blue) paths.
+    Serves an interactive lineage browser from a cached lineage file.
+    Browse projects, tables, and configurations in the sidebar, then
+    click a node to query and visualize its upstream or downstream
+    dependencies as a mermaid diagram.
 
     Example:
 
-      kbagent lineage serve -l lineage.json
-      kbagent lineage serve -l lineage.json --port 9000
+      kbagent lineage server -l lineage.json
+      kbagent lineage server -l lineage.json --port 9000
     """
     formatter = get_formatter(ctx)
 
@@ -1005,9 +1157,15 @@ def lineage_serve(
         formatter.error(message=f"Cannot read lineage file: {exc}", error_code="READ_ERROR")
         raise typer.Exit(code=1) from None
 
-    # Attach content to the handler class
+    # Load the graph via the service for API queries
+    service = get_service(ctx, "deep_lineage_service")
+    graph = service.load_from_cache(load)
+
+    # Attach content + service/graph to the handler class
     _LineageHandler.html_content = _LINEAGE_HTML_TEMPLATE
     _LineageHandler.json_content = json.dumps(raw_data)
+    _LineageHandler.service = service
+    _LineageHandler.graph = graph
 
     server = http.server.HTTPServer((host, port), _LineageHandler)
     url = f"http://{host}:{port}"
@@ -1015,7 +1173,7 @@ def lineage_serve(
     if formatter.json_mode:
         formatter.output({"url": url, "host": host, "port": port})
     else:
-        formatter.console.print("\n[bold]Lineage visualization server[/bold]")
+        formatter.console.print("\n[bold]Lineage browser server[/bold]")
         formatter.console.print(f"  URL: {url}")
         formatter.console.print(f"  Data: {load.resolve()}")
         formatter.console.print("  Press Ctrl+C to stop.\n")

@@ -22,9 +22,6 @@ from ..config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
-# Snowflake qualified table reference pattern: "KBC_USE4_{project_id}"."bucket_id"."table_name"
-KBC_DB_PATTERN = re.compile(r'"KBC_USE4_(\d+)"\.?"([^"]+)"\.?"([^"]+)"')
-
 SQL_COMPONENTS = {
     "keboola.snowflake-transformation",
     "keboola.synapse-transformation",
@@ -62,6 +59,163 @@ AI_PYTHON_PROMPT = (
     '"external":[{{"system":"name","op":"read|write"}}]}}\n\n'
     "Python:\n{python_code}"
 )
+
+
+# ---------------------------------------------------------------------------
+# SQL tokenizer for table reference extraction
+# ---------------------------------------------------------------------------
+
+# Matches: "KBC_USE4_123"."bucket"."table" OR "bucket"."table"
+_QUALIFIED_3 = re.compile(r'"KBC_USE4_(\d+)"\s*\.\s*"([^"]+)"\s*\.\s*"([^"]+)"')
+_QUALIFIED_2 = re.compile(r'"([^"]+)"\s*\.\s*"([^"]+)"')
+
+
+def extract_sql_table_refs(sql: str, project_id: int) -> list[tuple[int, str, str]]:
+    """Extract table references from Snowflake SQL using a state machine.
+
+    Strips comments and string literals first, then finds qualified table
+    references in FROM/JOIN context. Returns list of (project_id, bucket, table).
+
+    Catches two patterns:
+    - 3-part: "KBC_USE4_{pid}"."bucket"."table"  (cross-project or explicit)
+    - 2-part: "bucket"."table"                     (same-project, implicit)
+
+    Filters out:
+    - References inside comments (-- and /* */)
+    - References inside string literals ('...')
+    - CTE names (WITH x AS ...)
+    - CREATE TABLE targets (output tables, not inputs)
+    """
+    cleaned = _strip_comments_and_strings(sql)
+    cte_names = _collect_cte_names(cleaned)
+    create_targets = _collect_create_targets(cleaned)
+
+    refs: list[tuple[int, str, str]] = []
+    seen: set[tuple[int, str, str]] = set()
+
+    # Pass 1: 3-part references (explicit project)
+    for match in _QUALIFIED_3.finditer(cleaned):
+        pid, bucket, table = int(match.group(1)), match.group(2), match.group(3)
+        key = (pid, bucket, table)
+        if key not in seen:
+            seen.add(key)
+            refs.append(key)
+
+    # Pass 2: 2-part references in FROM/JOIN context (same project)
+    # Find all FROM/JOIN keywords and scan what follows
+    for kw_match in re.finditer(r"\b(?:FROM|JOIN)\s+", cleaned, re.IGNORECASE):
+        after = cleaned[kw_match.end() :]
+        m2 = _QUALIFIED_2.match(after)
+        if not m2:
+            continue
+        part1, part2 = m2.group(1), m2.group(2)
+        # Skip if this is actually a 3-part ref (already captured)
+        if part1.startswith("KBC_USE4_"):
+            continue
+        # Skip CTE aliases and CREATE TABLE targets
+        if part1.lower() in cte_names or part2.lower() in cte_names:
+            continue
+        if (part1, part2) in create_targets:
+            continue
+        # Only accept bucket-shaped first part (in.c-* or out.c-*)
+        if not (part1.startswith("in.") or part1.startswith("out.")):
+            continue
+        key = (project_id, part1, part2)
+        if key not in seen:
+            seen.add(key)
+            refs.append(key)
+
+    return refs
+
+
+def _strip_comments_and_strings(sql: str) -> str:
+    """Remove SQL comments and string literals, replacing with spaces."""
+    result: list[str] = []
+    i = 0
+    length = len(sql)
+    while i < length:
+        # Line comment
+        if sql[i : i + 2] == "--":
+            end = sql.find("\n", i)
+            if end == -1:
+                break
+            result.append(" " * (end - i))
+            i = end
+        # Block comment
+        elif sql[i : i + 2] == "/*":
+            end = sql.find("*/", i + 2)
+            if end == -1:
+                break
+            result.append(" " * (end + 2 - i))
+            i = end + 2
+        # String literal
+        elif sql[i] == "'":
+            j = i + 1
+            while j < length:
+                if sql[j] == "'" and (j + 1 >= length or sql[j + 1] != "'"):
+                    break
+                if sql[j] == "'" and j + 1 < length and sql[j + 1] == "'":
+                    j += 2  # escaped quote
+                    continue
+                j += 1
+            result.append(" " * (j + 1 - i))
+            i = j + 1
+        else:
+            result.append(sql[i])
+            i += 1
+    return "".join(result)
+
+
+def _collect_cte_names(sql: str) -> set[str]:
+    """Collect CTE names from WITH clauses."""
+    names: set[str] = set()
+    for m in re.finditer(r"\bWITH\s+", sql, re.IGNORECASE):
+        rest = sql[m.end() :]
+        # Parse: name AS (, name AS (, ...
+        while True:
+            nm = re.match(r'\s*"?(\w+)"?\s+AS\s*\(', rest, re.IGNORECASE)
+            if not nm:
+                break
+            names.add(nm.group(1).lower())
+            # Skip past the balanced parens to find next CTE or main query
+            depth = 0
+            j = nm.end() - 1  # start at the opening paren
+            while j < len(rest):
+                if rest[j] == "(":
+                    depth += 1
+                elif rest[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            rest = rest[j + 1 :]
+            # Check for comma (another CTE) or end
+            rest = rest.lstrip()
+            if rest.startswith(","):
+                rest = rest[1:]
+            else:
+                break
+    return names
+
+
+def _collect_create_targets(sql: str) -> set[tuple[str, str]]:
+    """Collect CREATE TABLE / INSERT INTO target tables (outputs, not inputs)."""
+    targets: set[tuple[str, str]] = set()
+    for m in re.finditer(
+        r"\b(?:CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP\s+|TEMPORARY\s+)?TABLE|INSERT\s+(?:INTO|OVERWRITE))\s+",
+        sql,
+        re.IGNORECASE,
+    ):
+        after = sql[m.end() :]
+        # Match "part1"."part2" or just "name"
+        m2 = _QUALIFIED_2.match(after)
+        if m2:
+            targets.add((m2.group(1), m2.group(2)))
+        else:
+            m1 = re.match(r'"([^"]+)"', after)
+            if m1:
+                targets.add(("", m1.group(1)))
+    return targets
 
 
 # ---------------------------------------------------------------------------
@@ -502,16 +656,10 @@ class DeepLineageService:
                     )
                 )
 
-            # SQL regex: find KBC_USE4_XXX references
+            # SQL tokenizer: extract table references from code
             if config.code_type == "sql" and config.code:
-                matches = KBC_DB_PATTERN.findall(config.code)
-                seen: set[tuple[int, str, str]] = set()
-                for ref_pid_str, ref_bucket, ref_table in matches:
-                    ref_pid = int(ref_pid_str)
-                    key = (ref_pid, ref_bucket, ref_table)
-                    if key in seen:
-                        continue
-                    seen.add(key)
+                refs = extract_sql_table_refs(config.code, config.project_id)
+                for ref_pid, ref_bucket, ref_table in refs:
                     ref_alias = project_id_to_alias.get(ref_pid, f"unknown-{ref_pid}")
                     table_id = f"{ref_bucket}.{ref_table}"
                     table_fqn = f"{ref_alias}:{table_id}"
@@ -520,7 +668,9 @@ class DeepLineageService:
                     table = graph.tables.get(table_fqn)
                     columns = table.columns if table else []
                     detection = (
-                        "sql_regex_cross_project" if ref_pid != config.project_id else "sql_regex"
+                        "sql_tokenizer_cross_project"
+                        if ref_pid != config.project_id
+                        else "sql_tokenizer"
                     )
                     graph.add_edge(
                         Edge(

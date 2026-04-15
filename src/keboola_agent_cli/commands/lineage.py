@@ -746,7 +746,7 @@ body {
   <div id="legend" style="display:none;padding:4px 16px;font-size:11px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;gap:16px;flex-wrap:wrap;align-items:center">
     <span><span style="display:inline-block;width:12px;height:12px;background:#e1f5fe;border:2px solid #0288d1;border-radius:2px;vertical-align:middle"></span> Table</span>
     <span><span style="display:inline-block;width:12px;height:12px;background:#e8f5e9;border:2px solid #388e3c;border-radius:2px;vertical-align:middle"></span> Configuration</span>
-    <span><span style="display:inline-block;width:12px;height:12px;background:#f3e5f5;border:2px solid #7b1fa2;border-radius:2px;vertical-align:middle"></span> Cross-project table</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#f3e5f5;border:2px solid #7b1fa2;border-radius:2px;vertical-align:middle"></span> Table from another project</span>
     <span style="color:#888">Edges: input_mapping | output_mapping | sql_tokenizer | bucket_sharing | ai</span>
   </div>
   <div id="diagram-area">
@@ -1023,6 +1023,9 @@ body {
     var direction = getDirection();
     var depth = getDepth();
 
+    var showCols = document.getElementById("show-columns").checked;
+    var cp = showCols ? "&columns=true" : "";
+
     placeholder.style.display = "none";
     mermaidOutput.innerHTML = "";
     loading.style.display = "block";
@@ -1032,11 +1035,12 @@ body {
     if (direction === "both") {
       // Fetch both directions and merge
       diagramTitle.textContent = "Both directions of " + fqn + ", depth " + depth;
+      var enc = encodeURIComponent(fqn);
       Promise.all([
-        fetch("/api/query?node=" + encodeURIComponent(fqn) + "&direction=upstream&depth=" + depth).then(function(r){return r.json();}),
-        fetch("/api/query?node=" + encodeURIComponent(fqn) + "&direction=downstream&depth=" + depth).then(function(r){return r.json();}),
-        fetch("/api/mermaid?node=" + encodeURIComponent(fqn) + "&direction=upstream&depth=" + depth).then(function(r){return r.text();}),
-        fetch("/api/mermaid?node=" + encodeURIComponent(fqn) + "&direction=downstream&depth=" + depth).then(function(r){return r.text();})
+        fetch("/api/query?node=" + enc + "&direction=upstream&depth=" + depth).then(function(r){return r.json();}),
+        fetch("/api/query?node=" + enc + "&direction=downstream&depth=" + depth).then(function(r){return r.json();}),
+        fetch("/api/mermaid?node=" + enc + "&direction=upstream&depth=" + depth + cp).then(function(r){return r.text();}),
+        fetch("/api/mermaid?node=" + enc + "&direction=downstream&depth=" + depth + cp).then(function(r){return r.text();})
       ]).then(function(res) {
         loading.style.display = "none";
         var upQ = res[0], downQ = res[1], upM = res[2], downM = res[3];
@@ -1064,12 +1068,10 @@ body {
     diagramTitle.textContent = direction.charAt(0).toUpperCase() + direction.slice(1) +
       " of " + fqn + ", depth " + depth;
 
-    var showCols = document.getElementById("show-columns").checked;
-    var colsParam = showCols ? "&columns=true" : "";
     var queryUrl = "/api/query?node=" + encodeURIComponent(fqn) +
       "&direction=" + direction + "&depth=" + depth;
     var mermaidUrl = "/api/mermaid?node=" + encodeURIComponent(fqn) +
-      "&direction=" + direction + "&depth=" + depth + colsParam;
+      "&direction=" + direction + "&depth=" + depth + cp;
 
     Promise.all([
       fetch(queryUrl).then(function(r) { return r.json(); }),

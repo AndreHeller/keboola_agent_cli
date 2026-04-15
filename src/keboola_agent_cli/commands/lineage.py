@@ -81,18 +81,29 @@ def lineage_deep(
     upstream: str | None = typer.Option(
         None,
         "--upstream",
-        help="Show upstream dependencies of a table or config",
+        help="Show upstream dependencies. Use full FQN 'project:table_id' or just 'table_id'.",
     ),
     downstream: str | None = typer.Option(
         None,
         "--downstream",
-        help="Show downstream dependents of a table or config",
+        help="Show downstream dependents. Use full FQN 'project:table_id' or just 'table_id'.",
+    ),
+    column: str | None = typer.Option(
+        None,
+        "--column",
+        "-c",
+        help="Trace a specific column through the lineage (use with --upstream/--downstream).",
+    ),
+    columns: bool = typer.Option(
+        False,
+        "--columns",
+        help="Show column-level mapping detail on edges (AI-detected).",
     ),
     project: str | None = typer.Option(
         None,
         "--project",
         "-p",
-        help="Project alias filter for queries",
+        help="Project alias filter for queries.",
     ),
     depth: int = typer.Option(10, "--depth", help="Max traversal depth (default: 10)"),
     ai: bool = typer.Option(False, "--ai", help="Enable AI analysis of SQL/Python code"),
@@ -108,10 +119,23 @@ def lineage_deep(
     Scans all sync'd projects (from `sync pull --all-projects`), builds a
     comprehensive dependency graph, and supports upstream/downstream queries.
 
+    Node identifiers for --upstream/--downstream:
+
+      Full FQN:   project-alias:bucket_id.table_name
+
+      Table only:  bucket_id.table_name  (auto-resolves, warns if ambiguous)
+
     Workflow:
-      1. Build and cache:  kbagent lineage deep -d /path --output lineage.json
-      2. Fast query:       kbagent lineage deep --load lineage.json --downstream "table_id"
-      3. With AI:          kbagent lineage deep -d /path -o lineage.json --ai
+
+      1. Build + cache:   kbagent lineage deep -d /path -o lineage.json
+
+      2. Query:           kbagent lineage deep -l lineage.json --downstream "project:table"
+
+      3. Column detail:   kbagent lineage deep -l lineage.json --upstream "project:table" --columns
+
+      4. Trace a column:  kbagent lineage deep -l lineage.json --upstream "project:table" -c "col_name"
+
+      5. With AI:         kbagent lineage deep -d /path -o lineage.json --ai
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "deep_lineage_service")
@@ -146,6 +170,8 @@ def lineage_deep(
         graph = service._graph_from_dict(result)
 
     # Query mode
+    display_opts = {"show_columns": columns, "filter_column": column}
+
     if upstream:
         query_result = service.query_upstream(graph, upstream, project or "", depth)
         if "error" in query_result:
@@ -157,9 +183,11 @@ def lineage_deep(
             raise typer.Exit(code=1)
 
         if formatter.json_mode:
+            if column:
+                query_result = _filter_column_json(query_result, column)
             formatter.output(query_result)
         else:
-            _format_lineage_tree(formatter, graph, query_result, "upstream")
+            _format_lineage_tree(formatter, graph, query_result, "upstream", **display_opts)
 
     if downstream:
         query_result = service.query_downstream(graph, downstream, project or "", depth)
@@ -172,9 +200,11 @@ def lineage_deep(
             raise typer.Exit(code=1)
 
         if formatter.json_mode:
+            if column:
+                query_result = _filter_column_json(query_result, column)
             formatter.output(query_result)
         else:
-            _format_lineage_tree(formatter, graph, query_result, "downstream")
+            _format_lineage_tree(formatter, graph, query_result, "downstream", **display_opts)
 
     # If no query, show summary
     if not upstream and not downstream and not formatter.json_mode:
@@ -195,7 +225,43 @@ def lineage_deep(
             formatter.console.print(f"\n  Saved to: {output}")
 
 
-def _format_lineage_tree(formatter, graph, result: dict, direction: str) -> None:
+def _filter_column_json(result: dict, column_name: str) -> dict:
+    """Filter JSON query result to only edges relevant to a specific column."""
+    filtered_edges = []
+    col_lower = column_name.lower()
+    for edge in result.get("edges", []):
+        col_map = edge.get("column_mapping", {})
+        columns = edge.get("columns", [])
+        # Match: column is in the mapping keys/values, or in the columns list
+        mapped_keys = [k for k in col_map if k.lower() == col_lower]
+        mapped_vals = [k for k, v in col_map.items() if v.lower().endswith(f".{col_lower}")]
+        col_match = any(c.lower() == col_lower for c in columns)
+        if mapped_keys or mapped_vals or col_match:
+            # Keep only the relevant mappings
+            relevant_map = {
+                k: v for k, v in col_map.items() if k in mapped_keys or k in mapped_vals
+            }
+            edge_copy = dict(edge)
+            if relevant_map:
+                edge_copy["column_mapping"] = relevant_map
+            filtered_edges.append(edge_copy)
+        elif not col_map and not columns:
+            # Keep structural edges (output_mapping etc.) that have no column info
+            filtered_edges.append(edge)
+    result_copy = dict(result)
+    result_copy["edges"] = filtered_edges
+    result_copy["column_filter"] = column_name
+    return result_copy
+
+
+def _format_lineage_tree(
+    formatter,
+    graph,
+    result: dict,
+    direction: str,
+    show_columns: bool = False,
+    filter_column: str | None = None,
+) -> None:
     """Format lineage query result as a human-readable tree."""
     from ..services.deep_lineage_service import LineageGraph
 
@@ -209,21 +275,40 @@ def _format_lineage_tree(formatter, graph, result: dict, direction: str) -> None
     # Describe the root node
     node_type = node_info.get("type", "unknown")
     if node_type == "table":
-        cols = node_info.get("columns", 0)
+        n_cols = node_info.get("columns", 0)
         rows = node_info.get("rows", 0)
-        desc = f"[table] {node_fqn} ({cols} cols, {rows:,} rows)"
+        desc = f"[table] {node_fqn} ({n_cols} cols, {rows:,} rows)"
     elif node_info.get("name"):
         desc = f"[{node_type}] {node_info['name']} ({node_info.get('component', '')})"
     else:
         desc = f"[{node_type}] {node_fqn}"
 
-    formatter.console.print(f"\n[bold]{label} of {desc}[/bold]\n")
+    header = f"\n[bold]{label} of {desc}[/bold]"
+    if filter_column:
+        header += f"  [dim](column: {filter_column})[/dim]"
+    formatter.console.print(header + "\n")
 
     if not edges:
         formatter.console.print("  (none found)")
         return
 
+    col_lower = filter_column.lower() if filter_column else None
+
     for edge in sorted(edges, key=lambda e: e["depth"]):
+        col_map = edge.get("column_mapping", {})
+        columns = edge.get("columns", [])
+
+        # When filtering by column, skip edges that don't mention it
+        if col_lower:
+            has_in_map = any(
+                k.lower() == col_lower or v.lower().endswith(f".{col_lower}")
+                for k, v in col_map.items()
+            )
+            has_in_cols = any(c.lower() == col_lower for c in columns)
+            is_structural = not col_map and not columns
+            if not has_in_map and not has_in_cols and not is_structural:
+                continue
+
         indent = "  " * edge["depth"]
         target_fqn = edge["source"] if direction == "upstream" else edge["target"]
 
@@ -242,21 +327,27 @@ def _format_lineage_tree(formatter, graph, result: dict, direction: str) -> None
         else:
             node_desc = target_fqn
 
-        cols = ""
-        if edge.get("columns"):
-            col_list = edge["columns"][:5]
-            suffix = f"... +{len(edge['columns']) - 5}" if len(edge["columns"]) > 5 else ""
-            cols = f" [{', '.join(col_list)}{suffix}]"
+        # Show column list summary (unless --columns expands them)
+        col_hint = ""
+        if not show_columns and columns:
+            col_list = columns[:5]
+            suffix = f"... +{len(columns) - 5}" if len(columns) > 5 else ""
+            col_hint = f" [{', '.join(col_list)}{suffix}]"
 
-        formatter.console.print(f"{indent}{arrow} ({edge['detection']}) {node_desc}{cols}")
+        formatter.console.print(f"{indent}{arrow} ({edge['detection']}) {node_desc}{col_hint}")
 
-        # Show column-level mapping if available
-        col_map = edge.get("column_mapping", {})
-        if col_map:
+        # --columns: show full column mapping
+        if show_columns and col_map:
             map_indent = "  " * (edge["depth"] + 1)
             items = list(col_map.items())
-            for out_col, src_expr in items[:6]:
-                # Shorten source expression for readability
+            if col_lower:
+                # Only show mappings for the filtered column
+                items = [
+                    (k, v)
+                    for k, v in items
+                    if k.lower() == col_lower or v.lower().endswith(f".{col_lower}")
+                ]
+            for out_col, src_expr in items:
                 src_short = src_expr.split(".")[-1] if "." in src_expr else src_expr
                 src_table = ".".join(src_expr.split(".")[:-1]) if "." in src_expr else ""
                 if src_table:
@@ -265,10 +356,16 @@ def _format_lineage_tree(formatter, graph, result: dict, direction: str) -> None
                     )
                 else:
                     formatter.console.print(f"{map_indent}[dim]{out_col}[/dim] <- {src_expr}")
-            if len(items) > 6:
-                formatter.console.print(
-                    f"{map_indent}[dim]... +{len(items) - 6} more columns[/dim]"
-                )
+        elif show_columns and columns:
+            # No AI mapping but we have column list from input mapping
+            map_indent = "  " * (edge["depth"] + 1)
+            show_cols = columns
+            if col_lower:
+                show_cols = [c for c in columns if c.lower() == col_lower]
+            for c in show_cols[:10]:
+                formatter.console.print(f"{map_indent}[dim]{c}[/dim]")
+            if len(show_cols) > 10:
+                formatter.console.print(f"{map_indent}[dim]... +{len(show_cols) - 10} more[/dim]")
 
 
 @lineage_app.callback(invoke_without_command=True)

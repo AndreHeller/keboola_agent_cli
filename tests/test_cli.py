@@ -3739,8 +3739,8 @@ def _make_list_buckets_client(buckets: list[dict]) -> MagicMock:
     return mock_client
 
 
-class TestLineageShowIntegration:
-    """Tests for `kbagent lineage show` command with real LineageService."""
+class TestSharingEdgesIntegration:
+    """Tests for `kbagent sharing edges` command with real LineageService."""
 
     def test_lineage_json_output(self, tmp_path: Path) -> None:
         """lineage show --json returns structured JSON with edges and summary."""
@@ -3775,7 +3775,7 @@ class TestLineageShowIntegration:
             )
             MockLineageService.return_value = lineage_service
 
-            result = runner.invoke(app, ["--json", "lineage", "show"])
+            result = runner.invoke(app, ["--json", "sharing", "edges"])
 
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
         output = json.loads(result.output)
@@ -3818,7 +3818,7 @@ class TestLineageShowIntegration:
             )
             MockLineageService.return_value = lineage_service
 
-            result = runner.invoke(app, ["lineage", "show"])
+            result = runner.invoke(app, ["sharing", "edges"])
 
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
         assert "Data Flow Edges" in result.output
@@ -3858,7 +3858,7 @@ class TestLineageShowIntegration:
             )
             MockLineageService.return_value = lineage_service
 
-            result = runner.invoke(app, ["--json", "lineage", "show"])
+            result = runner.invoke(app, ["--json", "sharing", "edges"])
 
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
         output = json.loads(result.output)
@@ -3902,7 +3902,7 @@ class TestLineageShowIntegration:
 
             result = runner.invoke(
                 app,
-                ["--json", "lineage", "show", "--project", "prod"],
+                ["--json", "sharing", "edges", "--project", "prod"],
             )
 
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
@@ -3940,7 +3940,7 @@ class TestLineageShowIntegration:
 
             result = runner.invoke(
                 app,
-                ["--json", "lineage", "show", "--project", "nonexistent"],
+                ["--json", "sharing", "edges", "--project", "nonexistent"],
             )
 
         assert result.exit_code == 5
@@ -3948,45 +3948,18 @@ class TestLineageShowIntegration:
         assert output["status"] == "error"
         assert output["error"]["code"] == "CONFIG_ERROR"
 
-    def test_lineage_default_subcommand(self, tmp_path: Path) -> None:
-        """lineage without 'show' subcommand defaults to lineage show."""
+    def test_lineage_no_subcommand_shows_help(self, tmp_path: Path) -> None:
+        """lineage without subcommand shows help text."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
 
-        mock_client = _make_list_buckets_client(SAMPLE_BUCKETS_SHARED)
-        store = _setup_config_test(
-            config_dir,
-            {
-                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
-            },
-        )
+        with patch("keboola_agent_cli.cli.ConfigStore") as MockStore:
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            result = runner.invoke(app, ["lineage"])
 
-        with (
-            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
-            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
-            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
-            patch("keboola_agent_cli.cli.JobService") as MockJobService,
-            patch("keboola_agent_cli.cli.LineageService") as MockLineageService,
-            patch("keboola_agent_cli.cli.McpService") as MockMcpService,
-        ):
-            MockStore.return_value = store
-            MockProjService.return_value = ProjectService(config_store=store)
-            MockCfgService.return_value = ConfigService(config_store=store)
-            MockJobService.return_value = JobService(config_store=store)
-            MockMcpService.return_value = MagicMock()
-
-            lineage_service = LineageService(
-                config_store=store,
-                client_factory=lambda url, token: mock_client,
-            )
-            MockLineageService.return_value = lineage_service
-
-            result = runner.invoke(app, ["--json", "lineage"])
-
-        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
-        output = json.loads(result.output)
-        assert output["status"] == "ok"
-        assert "edges" in output["data"]
+        assert result.exit_code == 0
+        assert "build" in result.output
+        assert "show" in result.output
 
 
 class TestOrgSetupBasic:
@@ -4406,8 +4379,8 @@ SAMPLE_LINEAGE_RESULT = {
 }
 
 
-class TestLineageShow:
-    """Tests for `kbagent lineage` and `kbagent lineage show` commands."""
+class TestSharingEdges:
+    """Tests for `kbagent sharing edges` command."""
 
     def test_lineage_show_json(self, tmp_path: Path) -> None:
         """lineage show --json returns structured JSON with lineage data."""
@@ -4433,7 +4406,7 @@ class TestLineageShow:
             mock_service.get_lineage.return_value = SAMPLE_LINEAGE_RESULT
             MockLineageService.return_value = mock_service
 
-            result = runner.invoke(app, ["--json", "lineage", "show"])
+            result = runner.invoke(app, ["--json", "sharing", "edges"])
 
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
         output = json.loads(result.output)
@@ -4468,7 +4441,7 @@ class TestLineageShow:
             mock_service.get_lineage.return_value = SAMPLE_LINEAGE_RESULT
             MockLineageService.return_value = mock_service
 
-            result = runner.invoke(app, ["lineage", "show"])
+            result = runner.invoke(app, ["sharing", "edges"])
 
         assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
         # Verify human output contains key information
@@ -4477,37 +4450,18 @@ class TestLineageShow:
         assert "in.c-shared" in result.output
         assert "organization" in result.output
 
-    def test_lineage_default_subcommand(self, tmp_path: Path) -> None:
-        """kbagent lineage (without 'show') invokes the show subcommand."""
+    def test_lineage_no_subcommand_shows_help(self, tmp_path: Path) -> None:
+        """kbagent lineage (without subcommand) shows help with build/show."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
 
-        store = _setup_config_test(
-            config_dir,
-            {
-                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
-            },
-        )
+        with patch("keboola_agent_cli.cli.ConfigStore") as MockStore:
+            MockStore.return_value = ConfigStore(config_dir=config_dir)
+            result = runner.invoke(app, ["lineage"])
 
-        with (
-            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
-            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
-            patch("keboola_agent_cli.cli.LineageService") as MockLineageService,
-        ):
-            MockStore.return_value = store
-            MockProjService.return_value = ProjectService(config_store=store)
-
-            mock_service = MagicMock()
-            mock_service.get_lineage.return_value = SAMPLE_LINEAGE_RESULT
-            MockLineageService.return_value = mock_service
-
-            result = runner.invoke(app, ["--json", "lineage"])
-
-        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
-        output = json.loads(result.output)
-        assert output["status"] == "ok"
-        assert "edges" in output["data"]
-        assert len(output["data"]["edges"]) == 1
+        assert result.exit_code == 0
+        assert "build" in result.output
+        assert "show" in result.output
 
     def test_lineage_config_error_exit_code_5(self, tmp_path: Path) -> None:
         """lineage with nonexistent project alias returns exit code 5."""
@@ -4530,7 +4484,7 @@ class TestLineageShow:
 
             result = runner.invoke(
                 app,
-                ["--json", "lineage", "show", "--project", "nonexistent"],
+                ["--json", "sharing", "edges", "--project", "nonexistent"],
             )
 
         assert result.exit_code == 5
@@ -4582,7 +4536,7 @@ class TestLineageShow:
             mock_service.get_lineage.return_value = result_with_errors
             MockLineageService.return_value = mock_service
 
-            result = runner.invoke(app, ["lineage", "show"])
+            result = runner.invoke(app, ["sharing", "edges"])
 
         assert result.exit_code == 0
         assert "bad" in result.output

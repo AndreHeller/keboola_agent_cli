@@ -98,8 +98,9 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Disable sharing on a bucket | `kbagent sharing unshare --project PROJECT --bucket-id BUCKET-ID` |
 | Link a shared bucket into a project | `kbagent sharing link --project PROJECT --source-project-id SOURCE-PROJECT-ID --bucket-id BUCKET-ID` |
 | Remove a linked bucket from a project | `kbagent sharing unlink --project PROJECT --bucket-id BUCKET-ID` |
-| Show cross-project data lineage via bucket sharing | `kbagent lineage show` |
-| Column-level lineage from sync'd data on disk | `kbagent lineage deep` |
+| Show cross-project data flow edges via bucket sharing | `kbagent sharing edges` |
+| Build column-level lineage graph from sync'd data | `kbagent lineage build --output OUTPUT` |
+| Query upstream/downstream dependencies from a cached lineage graph | `kbagent lineage show --load LOAD` |
 | Check Kai server health and MCP connection status | `kbagent kai ping` |
 | Ask Kai a one-shot question and get the full response | `kbagent kai ask --message MESSAGE` |
 | Send a message to Kai in a chat session | `kbagent kai chat --message MESSAGE` |

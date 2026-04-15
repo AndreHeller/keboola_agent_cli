@@ -151,3 +151,32 @@ HintRegistry.register(
         notes=["Service layer validates the bucket is linked before deleting."],
     )
 )
+
+# ── sharing edges ─────────────────────────────────────────────────
+
+HintRegistry.register(
+    CommandHint(
+        cli_command="sharing.edges",
+        description="Show cross-project data flow edges via bucket sharing",
+        steps=[
+            HintStep(
+                comment="Get cross-project data flow edges",
+                client=ClientCall(
+                    method="list_buckets",
+                    args={"include": '"linkedBuckets"'},
+                    result_var="buckets",
+                    result_hint="list[dict]",
+                ),
+                service=ServiceCall(
+                    service_class="LineageService",
+                    service_module="lineage_service",
+                    method="get_lineage",
+                    args={"aliases": "{project}"},
+                ),
+            ),
+        ],
+        notes=[
+            "For column-level lineage, use `lineage build` + `lineage show` instead.",
+        ],
+    )
+)

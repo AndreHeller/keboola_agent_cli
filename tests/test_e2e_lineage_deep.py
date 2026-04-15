@@ -1,4 +1,4 @@
-"""End-to-end tests for `kbagent lineage deep` against real sync'd data.
+"""End-to-end tests for `kbagent lineage build/show` against real sync'd data.
 
 Requires a pre-configured workspace directory with sync'd projects.
 Set E2E_LINEAGE_DIR to the path (e.g. /tmp/lineage-ro).
@@ -108,7 +108,7 @@ def _step(num: int, title: str) -> None:
 @skip_without_lineage_dir
 @pytest.mark.e2e
 class TestE2ELineageDeep:
-    """E2E tests for lineage deep against real sync'd data."""
+    """E2E tests for lineage build/show against real sync'd data."""
 
     @pytest.fixture(autouse=True)
     def setup(self) -> None:
@@ -127,7 +127,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "build",
                 "-d",
                 str(self.lineage_dir),
                 "-o",
@@ -164,7 +164,7 @@ class TestE2ELineageDeep:
             self.config_dir,
             [
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
             ],
@@ -185,7 +185,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--downstream",
@@ -214,7 +214,7 @@ class TestE2ELineageDeep:
             self.config_dir,
             [
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--downstream",
@@ -237,7 +237,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--upstream",
@@ -268,7 +268,7 @@ class TestE2ELineageDeep:
             self.config_dir,
             [
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--upstream",
@@ -292,7 +292,7 @@ class TestE2ELineageDeep:
             self.config_dir,
             [
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--upstream",
@@ -320,7 +320,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--upstream",
@@ -340,7 +340,7 @@ class TestE2ELineageDeep:
             self.config_dir,
             [
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--downstream",
@@ -360,7 +360,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 "/tmp/does_not_exist_lineage.json",
             ],
@@ -379,17 +379,16 @@ class TestE2ELineageDeep:
                 "--hint",
                 "service",
                 "lineage",
-                "deep",
+                "build",
                 "-d",
                 str(self.lineage_dir),
-                "--upstream",
-                "engg-cloud-costs:out.c-Vertex-AI-Usage---Last-7-Days.vertex_ai_weekly_comparison",
+                "-o",
+                "lineage.json",
             ],
         )
         assert result.exit_code == 0
         assert "DeepLineageService" in result.output
         assert "build_lineage" in result.output
-        assert "query_upstream" in result.output
 
     # ── FQN resolution ─────────────────────────────────────────────
 
@@ -402,7 +401,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--downstream",
@@ -426,7 +425,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--downstream",
@@ -440,7 +439,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
                 "--downstream",
@@ -463,7 +462,7 @@ class TestE2ELineageDeep:
     # ── Permission check ───────────────────────────────────────────
 
     def test_14_permission_registered(self) -> None:
-        """lineage.deep is registered in the permission system."""
+        """lineage.build/lineage.show is registered in the permission system."""
         _step(14, "Permission registration check")
 
         result = _invoke(
@@ -471,7 +470,7 @@ class TestE2ELineageDeep:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "-l",
                 str(self.cache_file),
             ],

@@ -33,10 +33,11 @@ OPERATION_REGISTRY: dict[str, str] = {
     "job.detail": "read",
     "job.run": "write",
     # Lineage
+    "lineage.build": "read",
     "lineage.show": "read",
-    "lineage.deep": "read",
     # Sharing
     "sharing.list": "read",
+    "sharing.edges": "read",
     "sharing.share": "write",
     "sharing.unshare": "write",
     "sharing.link": "write",

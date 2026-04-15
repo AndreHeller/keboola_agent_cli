@@ -688,7 +688,7 @@ class DeepLineageService:
     def _add_cross_project_lineage(self, graph: LineageGraph, root: Path) -> None:
         try:
             result = subprocess.run(
-                ["kbagent", "--json", "lineage"],
+                ["kbagent", "--json", "sharing", "edges"],
                 capture_output=True,
                 text=True,
                 cwd=str(root),

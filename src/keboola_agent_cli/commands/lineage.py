@@ -1,7 +1,11 @@
-"""Lineage commands - analyze cross-project data flow via bucket sharing.
+"""Lineage commands - column-level dependency analysis across projects.
 
-Thin CLI layer: parses arguments, calls LineageService, formats output.
+Thin CLI layer: parses arguments, calls DeepLineageService, formats output.
 No business logic belongs here.
+
+Two subcommands:
+  build -- scan sync'd projects, build lineage graph, save cache
+  show  -- query upstream/downstream from cached graph
 """
 
 import json
@@ -9,95 +13,164 @@ from pathlib import Path
 
 import typer
 
-from ..errors import ConfigError
-from ..output import format_lineage_table
 from ._helpers import (
     check_cli_permission,
     emit_hint,
-    emit_project_warnings,
     get_formatter,
     get_service,
     should_hint,
 )
 
-lineage_app = typer.Typer(help="Analyze cross-project data lineage via bucket sharing")
+lineage_app = typer.Typer(
+    help="Column-level data lineage across projects.\n\n"
+    "Build a dependency graph from sync'd data, then query upstream/downstream."
+)
 
 
 @lineage_app.callback(invoke_without_command=True)
-def _lineage_permission_check(ctx: typer.Context) -> None:
+def _lineage_callback(ctx: typer.Context) -> None:
     check_cli_permission(ctx, "lineage")
+    if ctx.invoked_subcommand is None:
+        # No subcommand -> show help
+        click_cmd = typer.main.get_command(lineage_app)
+        ctx_help = click_cmd.make_context("lineage", [])
+        typer.echo(click_cmd.get_help(ctx_help))
 
 
-@lineage_app.command("show")
-def lineage_show(
-    ctx: typer.Context,
-    project: list[str] | None = typer.Option(
-        None,
-        "--project",
-        help="Project alias to query (can be repeated for multiple projects)",
-    ),
-) -> None:
-    """Show cross-project data lineage via bucket sharing."""
-    if should_hint(ctx):
-        emit_hint(ctx, "lineage.show", project=project)
-        return
-    formatter = get_formatter(ctx)
-    service = get_service(ctx, "lineage_service")
-
-    try:
-        result = service.get_lineage(aliases=project)
-    except ConfigError as exc:
-        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
-        raise typer.Exit(code=5) from None
-
-    if formatter.json_mode:
-        formatter.output(result)
-    else:
-        format_lineage_table(formatter.console, result)
-        emit_project_warnings(formatter, result)
+# ── lineage build ──────────────────��──────────────────────────────
 
 
-@lineage_app.command("deep")
-def lineage_deep(
+@lineage_app.command("build")
+def lineage_build(
     ctx: typer.Context,
     directory: Path = typer.Option(
         Path("."),
         "--directory",
         "-d",
-        help="Root directory with sync'd projects (default: current directory)",
+        help="Root directory with sync'd projects (default: current directory).",
     ),
-    output: Path | None = typer.Option(
-        None,
+    output: Path = typer.Option(
+        ...,
         "--output",
         "-o",
-        help="Save lineage graph to JSON file (cache for fast queries)",
+        help="Output JSON file for the lineage graph (required).",
     ),
-    load: Path | None = typer.Option(
-        None,
+    ai: bool = typer.Option(False, "--ai", help="Enable AI analysis of SQL/Python code."),
+    ai_model: str = typer.Option(
+        "haiku",
+        "--ai-model",
+        help="AI model: haiku (fast/cheap) or sonnet (better quality).",
+    ),
+    ai_workers: int = typer.Option(4, "--ai-workers", help="Parallel AI workers (default: 4)."),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Sync pull all projects first, then rebuild.",
+    ),
+) -> None:
+    """Build column-level lineage graph from sync'd data.
+
+    Scans all sync'd projects (from `sync pull --all-projects`), detects
+    table dependencies via config mappings and SQL parsing, and saves the
+    graph to a JSON cache file for fast queries with `lineage show`.
+
+    Workflow:
+
+      kbagent lineage build -d /path -o lineage.json
+
+      kbagent lineage build -d /path -o lineage.json --ai
+
+      kbagent lineage build -d /path -o lineage.json --refresh --ai
+    """
+    if should_hint(ctx):
+        emit_hint(
+            ctx,
+            "lineage.build",
+            directory=str(directory),
+            ai=ai,
+            ai_model=ai_model,
+            ai_workers=ai_workers,
+        )
+        return
+
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "deep_lineage_service")
+
+    root = directory.resolve()
+    if not root.is_dir():
+        formatter.error(message=f"Directory not found: {root}", error_code="DIR_NOT_FOUND")
+        raise typer.Exit(code=1)
+
+    # --refresh: sync pull all projects first
+    if refresh:
+        if not formatter.json_mode:
+            formatter.console.print("[bold]Syncing all projects...[/bold]")
+        sync_service = get_service(ctx, "sync_service")
+        sync_result = sync_service.pull_all(base_dir=root)
+        summary = sync_result.get("summary", {})
+        if not formatter.json_mode:
+            formatter.console.print(
+                f"  Synced {summary.get('success', 0)}/{summary.get('total', 0)} projects"
+                f" ({summary.get('failed', 0)} failed)\n"
+            )
+
+    result = service.build_lineage(
+        root,
+        include_ai=ai,
+        ai_model=ai_model,
+        ai_workers=ai_workers,
+    )
+
+    with open(output, "w") as f:
+        json.dump(result, f, indent=2)
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        summary = result.get("summary", {})
+        formatter.console.print("\n[bold]Lineage graph built[/bold]")
+        formatter.console.print(f"  Tables: {summary.get('tables', 0)}")
+        formatter.console.print(f"  Configurations: {summary.get('configurations', 0)}")
+        formatter.console.print(f"  Edges: {summary.get('edges', 0)}")
+        if summary.get("detection_methods"):
+            formatter.console.print("\n  Detection methods:")
+            for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
+                formatter.console.print(f"    {k}: {v}")
+        formatter.console.print(f"\n  Saved to: {output}")
+
+
+# ── lineage show ──────────────────────────────────────────────────
+
+
+@lineage_app.command("show")
+def lineage_show(
+    ctx: typer.Context,
+    load: Path = typer.Option(
+        ...,
         "--load",
         "-l",
-        help="Load from cached lineage JSON (skip scan)",
+        help="Lineage JSON cache file (from `lineage build`).",
     ),
     upstream: str | None = typer.Option(
         None,
         "--upstream",
-        help="Show upstream dependencies. Use full FQN 'project:table_id' or just 'table_id'.",
+        help="Show upstream dependencies. Use 'project:table_id' or just 'table_id'.",
     ),
     downstream: str | None = typer.Option(
         None,
         "--downstream",
-        help="Show downstream dependents. Use full FQN 'project:table_id' or just 'table_id'.",
+        help="Show downstream dependents. Use 'project:table_id' or just 'table_id'.",
     ),
     column: str | None = typer.Option(
         None,
         "--column",
         "-c",
-        help="Trace a specific column through the lineage (use with --upstream/--downstream).",
+        help="Trace a specific column (use with --upstream/--downstream).",
     ),
     columns: bool = typer.Option(
         False,
         "--columns",
-        help="Show column-level mapping detail on edges (AI-detected).",
+        help="Show column-level mapping detail on edges.",
     ),
     project: str | None = typer.Option(
         None,
@@ -105,107 +178,66 @@ def lineage_deep(
         "-p",
         help="Project alias filter for queries.",
     ),
-    depth: int = typer.Option(10, "--depth", help="Max traversal depth (default: 10)"),
-    ai: bool = typer.Option(False, "--ai", help="Enable AI analysis of SQL/Python code"),
-    ai_model: str = typer.Option(
-        "haiku",
-        "--ai-model",
-        help="AI model for analysis: haiku (fast/cheap) or sonnet (better quality)",
-    ),
-    ai_workers: int = typer.Option(4, "--ai-workers", help="Parallel AI workers (default: 4)"),
-    refresh: bool = typer.Option(
-        False,
-        "--refresh",
-        help="Sync pull all projects first, then rebuild lineage. One-command update.",
-    ),
+    depth: int = typer.Option(10, "--depth", help="Max traversal depth (default: 10)."),
 ) -> None:
-    """Column-level lineage from sync'd data on disk.
+    """Query upstream/downstream dependencies from a cached lineage graph.
 
-    Scans all sync'd projects (from `sync pull --all-projects`), builds a
-    comprehensive dependency graph, and supports upstream/downstream queries.
+    Requires a lineage cache file built with `lineage build`.
 
     Node identifiers for --upstream/--downstream:
 
-      Full FQN:   project-alias:bucket_id.table_name
+      Full FQN:    project-alias:bucket_id.table_name
 
       Table only:  bucket_id.table_name  (auto-resolves, warns if ambiguous)
 
-    Workflow:
+    Examples:
 
-      1. Build + cache:   kbagent lineage deep -d /path -o lineage.json
+      kbagent lineage show -l lineage.json --downstream "project:table"
 
-      2. Query:           kbagent lineage deep -l lineage.json --downstream "project:table"
+      kbagent lineage show -l lineage.json --upstream "project:table" --columns
 
-      3. Column detail:   kbagent lineage deep -l lineage.json --upstream "project:table" --columns
-
-      4. Trace a column:  kbagent lineage deep -l lineage.json --upstream "project:table" -c "col_name"
-
-      5. With AI:         kbagent lineage deep -d /path -o lineage.json --ai
-
-      6. Update:          kbagent lineage deep -d /path -o lineage.json --refresh --ai
-
-      7. Python code:     kbagent --hint service lineage deep -d /path --upstream "project:table"
+      kbagent lineage show -l lineage.json --upstream "project:table" -c "col_name"
     """
     if should_hint(ctx):
         emit_hint(
             ctx,
-            "lineage.deep",
-            directory=str(directory),
+            "lineage.show",
             upstream=upstream,
             downstream=downstream,
             project=project,
             depth=depth,
-            ai=ai,
-            ai_model=ai_model,
-            ai_workers=ai_workers,
         )
         return
+
     formatter = get_formatter(ctx)
     service = get_service(ctx, "deep_lineage_service")
 
-    # Build or load graph
-    if load:
-        if not load.exists():
-            formatter.error(message=f"Cache file not found: {load}", error_code="FILE_NOT_FOUND")
-            raise typer.Exit(code=1)
-        graph = service.load_from_cache(load)
-    else:
-        root = directory.resolve()
-        if not root.is_dir():
-            formatter.error(message=f"Directory not found: {root}", error_code="DIR_NOT_FOUND")
-            raise typer.Exit(code=1)
+    if not load.exists():
+        formatter.error(message=f"Cache file not found: {load}", error_code="FILE_NOT_FOUND")
+        raise typer.Exit(code=1)
 
-        # --refresh: sync pull all projects first
-        if refresh:
-            if not formatter.json_mode:
-                formatter.console.print("[bold]Syncing all projects...[/bold]")
-            sync_service = get_service(ctx, "sync_service")
-            sync_result = sync_service.pull_all(base_dir=root)
-            summary = sync_result.get("summary", {})
-            if not formatter.json_mode:
-                formatter.console.print(
-                    f"  Synced {summary.get('success', 0)}/{summary.get('total', 0)} projects"
-                    f" ({summary.get('failed', 0)} failed)\n"
-                )
+    graph = service.load_from_cache(load)
 
-        result = service.build_lineage(
-            root,
-            include_ai=ai,
-            ai_model=ai_model,
-            ai_workers=ai_workers,
-        )
+    if not upstream and not downstream:
+        # No query -> show summary
+        if formatter.json_mode:
+            formatter.output(graph.to_dict())
+        else:
+            summary = graph.summary()
+            formatter.console.print("\n[bold]Lineage Graph Summary[/bold]")
+            formatter.console.print(f"  Tables: {summary.get('tables', 0)}")
+            formatter.console.print(f"  Configurations: {summary.get('configurations', 0)}")
+            formatter.console.print(f"  Edges: {summary.get('edges', 0)}")
+            if summary.get("edge_types"):
+                formatter.console.print("\n  Edge types:")
+                for k, v in sorted(summary["edge_types"].items(), key=lambda x: -x[1]):
+                    formatter.console.print(f"    {k}: {v}")
+            if summary.get("detection_methods"):
+                formatter.console.print("\n  Detection methods:")
+                for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
+                    formatter.console.print(f"    {k}: {v}")
+        return
 
-        if output:
-            with open(output, "w") as f:
-                json.dump(result, f, indent=2)
-
-        if formatter.json_mode and not upstream and not downstream:
-            formatter.output(result)
-            return
-
-        graph = service._graph_from_dict(result)
-
-    # Query mode
     display_opts = {"show_columns": columns, "filter_column": column}
 
     if upstream:
@@ -242,23 +274,8 @@ def lineage_deep(
         else:
             _format_lineage_tree(formatter, graph, query_result, "downstream", **display_opts)
 
-    # If no query, show summary
-    if not upstream and not downstream and not formatter.json_mode:
-        summary = graph.summary() if hasattr(graph, "summary") else {}
-        formatter.console.print("\n[bold]Lineage Graph Summary[/bold]")
-        formatter.console.print(f"  Tables: {summary.get('tables', 0)}")
-        formatter.console.print(f"  Configurations: {summary.get('configurations', 0)}")
-        formatter.console.print(f"  Edges: {summary.get('edges', 0)}")
-        if summary.get("edge_types"):
-            formatter.console.print("\n  Edge types:")
-            for k, v in sorted(summary["edge_types"].items(), key=lambda x: -x[1]):
-                formatter.console.print(f"    {k}: {v}")
-        if summary.get("detection_methods"):
-            formatter.console.print("\n  Detection methods:")
-            for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
-                formatter.console.print(f"    {k}: {v}")
-        if output:
-            formatter.console.print(f"\n  Saved to: {output}")
+
+# ── Output formatting helpers ─────────────────────────────────────
 
 
 def _filter_column_json(result: dict, column_name: str) -> dict:
@@ -267,13 +284,11 @@ def _filter_column_json(result: dict, column_name: str) -> dict:
     col_lower = column_name.lower()
     for edge in result.get("edges", []):
         col_map = edge.get("column_mapping", {})
-        columns = edge.get("columns", [])
-        # Match: column is in the mapping keys/values, or in the columns list
+        edge_columns = edge.get("columns", [])
         mapped_keys = [k for k in col_map if k.lower() == col_lower]
         mapped_vals = [k for k, v in col_map.items() if v.lower().endswith(f".{col_lower}")]
-        col_match = any(c.lower() == col_lower for c in columns)
+        col_match = any(c.lower() == col_lower for c in edge_columns)
         if mapped_keys or mapped_vals or col_match:
-            # Keep only the relevant mappings
             relevant_map = {
                 k: v for k, v in col_map.items() if k in mapped_keys or k in mapped_vals
             }
@@ -281,8 +296,7 @@ def _filter_column_json(result: dict, column_name: str) -> dict:
             if relevant_map:
                 edge_copy["column_mapping"] = relevant_map
             filtered_edges.append(edge_copy)
-        elif not col_map and not columns:
-            # Keep structural edges (output_mapping etc.) that have no column info
+        elif not col_map and not edge_columns:
             filtered_edges.append(edge)
     result_copy = dict(result)
     result_copy["edges"] = filtered_edges
@@ -308,7 +322,6 @@ def _format_lineage_tree(
     arrow = "<-" if direction == "upstream" else "->"
     label = "Upstream dependencies" if direction == "upstream" else "Downstream dependents"
 
-    # Describe the root node
     node_type = node_info.get("type", "unknown")
     if node_type == "table":
         n_cols = node_info.get("columns", 0)
@@ -332,23 +345,21 @@ def _format_lineage_tree(
 
     for edge in sorted(edges, key=lambda e: e["depth"]):
         col_map = edge.get("column_mapping", {})
-        columns = edge.get("columns", [])
+        edge_columns = edge.get("columns", [])
 
-        # When filtering by column, skip edges that don't mention it
         if col_lower:
             has_in_map = any(
                 k.lower() == col_lower or v.lower().endswith(f".{col_lower}")
                 for k, v in col_map.items()
             )
-            has_in_cols = any(c.lower() == col_lower for c in columns)
-            is_structural = not col_map and not columns
+            has_in_cols = any(c.lower() == col_lower for c in edge_columns)
+            is_structural = not col_map and not edge_columns
             if not has_in_map and not has_in_cols and not is_structural:
                 continue
 
         indent = "  " * edge["depth"]
         target_fqn = edge["source"] if direction == "upstream" else edge["target"]
 
-        # Describe the linked node
         if isinstance(graph, LineageGraph):
             if target_fqn in graph.tables:
                 t = graph.tables[target_fqn]
@@ -363,21 +374,18 @@ def _format_lineage_tree(
         else:
             node_desc = target_fqn
 
-        # Show column list summary (unless --columns expands them)
         col_hint = ""
-        if not show_columns and columns:
-            col_list = columns[:5]
-            suffix = f"... +{len(columns) - 5}" if len(columns) > 5 else ""
+        if not show_columns and edge_columns:
+            col_list = edge_columns[:5]
+            suffix = f"... +{len(edge_columns) - 5}" if len(edge_columns) > 5 else ""
             col_hint = f" [{', '.join(col_list)}{suffix}]"
 
         formatter.console.print(f"{indent}{arrow} ({edge['detection']}) {node_desc}{col_hint}")
 
-        # --columns: show full column mapping
         if show_columns and col_map:
             map_indent = "  " * (edge["depth"] + 1)
             items = list(col_map.items())
             if col_lower:
-                # Only show mappings for the filtered column
                 items = [
                     (k, v)
                     for k, v in items
@@ -392,20 +400,12 @@ def _format_lineage_tree(
                     )
                 else:
                     formatter.console.print(f"{map_indent}[dim]{out_col}[/dim] <- {src_expr}")
-        elif show_columns and columns:
-            # No AI mapping but we have column list from input mapping
+        elif show_columns and edge_columns:
             map_indent = "  " * (edge["depth"] + 1)
-            show_cols = columns
+            show_cols = edge_columns
             if col_lower:
-                show_cols = [c for c in columns if c.lower() == col_lower]
+                show_cols = [c for c in edge_columns if c.lower() == col_lower]
             for c in show_cols[:10]:
                 formatter.console.print(f"{map_indent}[dim]{c}[/dim]")
             if len(show_cols) > 10:
                 formatter.console.print(f"{map_indent}[dim]... +{len(show_cols) - 10} more[/dim]")
-
-
-@lineage_app.callback(invoke_without_command=True)
-def lineage_callback(ctx: typer.Context) -> None:
-    """Default to 'show' when no subcommand is given."""
-    if ctx.invoked_subcommand is None:
-        ctx.invoke(lineage_show, ctx=ctx, project=None)

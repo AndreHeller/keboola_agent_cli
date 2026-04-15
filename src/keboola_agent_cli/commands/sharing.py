@@ -336,3 +336,40 @@ def sharing_unlink(
         formatter.output(result)
     else:
         formatter.success(result["message"])
+
+
+@sharing_app.command("edges")
+def sharing_edges(
+    ctx: typer.Context,
+    project: list[str] | None = typer.Option(
+        None,
+        "--project",
+        help="Project alias to query (can be repeated for multiple projects).",
+    ),
+) -> None:
+    """Show cross-project data flow edges via bucket sharing.
+
+    Lists how data flows between projects through shared and linked buckets.
+    Each edge represents a source bucket shared to a target project.
+
+    For column-level lineage, use `lineage build` + `lineage show`.
+    """
+    if should_hint(ctx):
+        emit_hint(ctx, "sharing.edges", project=project)
+        return
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "lineage_service")
+
+    try:
+        result = service.get_lineage(aliases=project)
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        from ..output import format_lineage_table
+
+        format_lineage_table(formatter.console, result)
+        emit_project_warnings(formatter, result)

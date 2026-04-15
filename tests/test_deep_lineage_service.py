@@ -536,12 +536,20 @@ class TestLineageDeepCli:
         from keboola_agent_cli.cli import app
 
         runner_local = __import__("typer.testing", fromlist=["CliRunner"]).CliRunner()
-        result = runner_local.invoke(app, ["lineage", "deep", "--help"])
+        # Test build help
+        result = runner_local.invoke(app, ["lineage", "build", "--help"])
         assert result.exit_code == 0
-        assert "Column-level lineage" in result.output
-        assert "--upstream" in result.output
-        assert "--columns" in result.output
+        assert "Build column-level lineage" in result.output
+        assert "--output" in result.output
         assert "--refresh" in result.output
+        assert "--ai" in result.output
+
+        # Test show help
+        result = runner_local.invoke(app, ["lineage", "show", "--help"])
+        assert result.exit_code == 0
+        assert "--upstream" in result.output
+        assert "--downstream" in result.output
+        assert "--columns" in result.output
         assert "project-alias:bucket_id.table_name" in result.output
 
     def test_load_and_query_json(self, tmp_path: Path) -> None:
@@ -562,7 +570,7 @@ class TestLineageDeepCli:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "--load",
                 str(cache_path),
                 "--upstream",
@@ -583,7 +591,7 @@ class TestLineageDeepCli:
             [
                 "--json",
                 "lineage",
-                "deep",
+                "show",
                 "--load",
                 "/nonexistent/lineage.json",
             ],

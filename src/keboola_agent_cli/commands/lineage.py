@@ -37,7 +37,7 @@ def _lineage_callback(ctx: typer.Context) -> None:
         typer.echo(click_cmd.get_help(ctx_help))
 
 
-# ── lineage build ──────────────────��──────────────────────────────
+# -- lineage build ---------------------------------------------------------
 
 
 @lineage_app.command("build")
@@ -121,8 +121,15 @@ def lineage_build(
         ai_workers=ai_workers,
     )
 
-    with open(output, "w") as f:
-        json.dump(result, f, indent=2)
+    try:
+        with open(output, "w") as f:
+            json.dump(result, f, indent=2)
+    except OSError as exc:
+        formatter.error(
+            message=f"Cannot write output file '{output}': {exc}",
+            error_code="WRITE_ERROR",
+        )
+        raise typer.Exit(code=1) from None
 
     if formatter.json_mode:
         formatter.output(result)
@@ -139,7 +146,7 @@ def lineage_build(
         formatter.console.print(f"\n  Saved to: {output}")
 
 
-# ── lineage show ──────────────────────────────────────────────────
+# -- lineage show ----------------------------------------------------------
 
 
 @lineage_app.command("show")
@@ -236,6 +243,16 @@ def lineage_show(
                 formatter.console.print("\n  Detection methods:")
                 for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
                     formatter.console.print(f"    {k}: {v}")
+            # Show example table FQNs so the user knows what to query
+            table_fqns = sorted(graph.tables.keys()) if graph.tables else []
+            if table_fqns:
+                show_limit = 10
+                formatter.console.print("\n  Example tables (use with --upstream or --downstream):")
+                for fqn in table_fqns[:show_limit]:
+                    formatter.console.print(f"    {fqn}")
+                remaining = len(table_fqns) - show_limit
+                if remaining > 0:
+                    formatter.console.print(f"    ... and {remaining} more")
         return
 
     display_opts = {"show_columns": columns, "filter_column": column}
@@ -275,7 +292,7 @@ def lineage_show(
             _format_lineage_tree(formatter, graph, query_result, "downstream", **display_opts)
 
 
-# ── Output formatting helpers ─────────────────────────────────────
+# -- Output formatting helpers ----------------------------------------------
 
 
 def _filter_column_json(result: dict, column_name: str) -> dict:

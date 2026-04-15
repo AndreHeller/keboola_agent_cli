@@ -125,7 +125,9 @@ tests/
   test_ai_client.py        # AI Service client tests
   test_component_service.py # Component service tests
   test_component_cli.py    # Component CLI tests via CliRunner
+  test_deep_lineage_service.py # Deep lineage service tests (column-level lineage, SQL parsing)
   test_e2e.py              # E2E tests against real API (make test-e2e)
+  test_e2e_lineage_deep.py # E2E tests for deep lineage (build + show against real data)
   test_integration.py      # Integration tests (edge cases, linting)
 ```
 
@@ -260,7 +262,7 @@ kbagent storage create-table --project NAME --bucket-id ID --name NAME --column 
 kbagent storage upload-table --project NAME --table-id ID --file PATH [--incremental] [--branch ID]
 kbagent storage download-table --project NAME --table-id ID [--output FILE] [--columns COL ...] [--limit N] [--branch ID]
 kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]
-kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--dry-run] [--yes] [--branch ID]
+kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--force] [--dry-run] [--yes] [--branch ID]
 kbagent storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]
 kbagent storage files --project NAME [--tag TAG ...] [--limit N] [--offset N] [--query Q] [--branch ID]
 kbagent storage file-upload --project NAME --file PATH [--name NAME] [--tag TAG ...] [--permanent] [--branch ID]

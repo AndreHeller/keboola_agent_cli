@@ -887,6 +887,7 @@ def storage_delete_column(
             project=project,
             table_id=table_id,
             column=column,
+            force=force,
             dry_run=dry_run,
             branch=branch,
         )

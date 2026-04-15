@@ -1047,12 +1047,65 @@ body {
         return;
       }
 
-      // Render mermaid
+      // Build ID map for click traversal, then render
+      buildIdMap(queryResult);
       renderMermaid(mermaidCode);
     }).catch(function(err) {
       loading.style.display = "none";
       mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">Query failed: ' +
         escapeHtml(err.message) + '</p>';
+    });
+  }
+
+  // Map sanitized mermaid node IDs back to FQNs for click traversal
+  var lastIdToFqn = {};
+
+  function sanitizeFqn(fqn) {
+    return fqn.replace(/[^a-zA-Z0-9_]/g, "_");
+  }
+
+  function buildIdMap(queryResult) {
+    lastIdToFqn = {};
+    if (!queryResult || !queryResult.edges) return;
+    var fqns = {};
+    if (queryResult.node) fqns[queryResult.node] = true;
+    queryResult.edges.forEach(function(e) {
+      fqns[e.source] = true;
+      fqns[e.target] = true;
+    });
+    for (var fqn in fqns) {
+      lastIdToFqn[sanitizeFqn(fqn)] = fqn;
+    }
+  }
+
+  function attachDiagramClickHandlers() {
+    var nodes = mermaidOutput.querySelectorAll(".node");
+    nodes.forEach(function(el) {
+      el.style.cursor = "pointer";
+      el.addEventListener("click", function() {
+        // Extract the mermaid node ID from the element
+        var nodeId = el.id || "";
+        // Mermaid wraps IDs: "flowchart-{id}-{n}" or just the id
+        for (var sid in lastIdToFqn) {
+          if (nodeId.indexOf(sid) >= 0) {
+            var fqn = lastIdToFqn[sid];
+            // Navigate to this node
+            selectedNode = fqn;
+            queryNode(fqn);
+            // Update sidebar selection
+            var proj = fqn.split(":")[0] || "";
+            if (proj !== selectedProject) {
+              projectSelect.value = proj;
+              selectedProject = proj;
+              renderNodeList();
+            }
+            document.querySelectorAll(".node-item").forEach(function(item) {
+              item.classList.toggle("selected", item.getAttribute("data-fqn") === fqn);
+            });
+            break;
+          }
+        }
+      });
     });
   }
 
@@ -1064,6 +1117,7 @@ body {
       mermaidOutput.innerHTML = result.svg;
       currentZoom = 1;
       document.getElementById("zoom-controls").style.display = "block";
+      attachDiagramClickHandlers();
     }).catch(function(err) {
       mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">' +
         'Mermaid render error: ' + escapeHtml(err.message) + '</p>' +

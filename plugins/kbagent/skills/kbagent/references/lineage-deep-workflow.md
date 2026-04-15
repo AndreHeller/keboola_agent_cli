@@ -57,18 +57,35 @@ kbagent lineage build -d /path/to/sync-dir -o lineage.json --refresh
 
 This runs `sync pull` first, then rebuilds the lineage graph.
 
-## AI-enhanced analysis
+## AI-enhanced analysis (2-step flow)
 
 For ambiguous SQL or Python code where deterministic parsing cannot resolve
-column mappings, use the `--ai` flag:
+column mappings, use the `--ai` flag in a 2-step workflow:
+
+**Step 1: Generate AI task file**
 
 ```bash
 kbagent lineage build -d /path/to/sync-dir -o lineage.json --ai
 ```
 
-AI analysis uses the Claude CLI haiku model and caches results keyed by
-code hash. Changed code is re-analyzed on the next `--ai` run; unchanged
-code uses the cached result.
+This writes `.lineage_ai_tasks.json` alongside the output file, containing
+tasks for each code block that needs AI analysis. Each task includes the
+source code, context, and a code hash for cache invalidation.
+
+**Step 2: AI agent processes the tasks**
+
+An AI agent reads `.lineage_ai_tasks.json`, analyzes each code block, and
+writes results back to `.lineage_ai_results.json`.
+
+**Step 3: Re-build to apply AI results**
+
+```bash
+kbagent lineage build -d /path/to/sync-dir -o lineage.json --ai
+```
+
+On re-build, the CLI reads `.lineage_ai_results.json` and merges AI-derived
+column mappings into the lineage graph. Tasks whose code hash has not changed
+reuse existing results; only modified code needs re-analysis.
 
 ## Node identifiers
 
@@ -97,8 +114,8 @@ projects contain tables with the same name.
 
 - **Non-sync'd projects**: cross-project references to projects not in the sync
   directory appear as `unknown-{project_id}` in the graph
-- **AI cache**: keyed by code hash -- only changed code is re-analyzed on
-  subsequent `--ai` runs
+- **AI task/result files**: `.lineage_ai_tasks.json` and `.lineage_ai_results.json`
+  are keyed by code hash -- only changed code needs re-analysis on subsequent runs
 - **`--refresh`**: runs sync pull before rebuilding, so the graph reflects the
   latest remote state
 - **Cache file**: the `-o` / `-l` JSON file is the single source of truth for

@@ -273,7 +273,7 @@ kbagent storage file-tag --project NAME --file-id ID [--add TAG ...] [--remove T
 kbagent storage load-file --project NAME --file-id ID --table-id ID [--incremental] [--delimiter D] [--enclosure E] [--branch ID]
 kbagent storage unload-table --project NAME --table-id ID [--columns COL ...] [--limit N] [--tag TAG ...] [--download] [--output FILE] [--branch ID]
 
-kbagent lineage build --directory PATH --output PATH [--ai] [--ai-model MODEL] [--ai-workers N] [--refresh]
+kbagent lineage build --directory PATH --output PATH [--ai] [--refresh]
 kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N]
 
 kbagent sharing list [--project NAME]

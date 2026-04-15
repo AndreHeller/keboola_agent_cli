@@ -215,11 +215,11 @@ Use `kbagent <command> --help` for full flag details and examples.
 
 ### Data Lineage
 
-  kbagent lineage build --directory PATH --output PATH [--ai] [--ai-model MODEL]
-      [--ai-workers N] [--refresh]
+  kbagent lineage build --directory PATH --output PATH [--ai] [--refresh]
     Build column-level lineage graph from sync'd data. Scans all sync'd projects,
     detects dependencies via config mappings and SQL parsing, saves to cache file.
-    --refresh runs sync pull first. --ai enables AI analysis of SQL/Python code.
+    --refresh runs sync pull first. --ai generates .lineage_ai_tasks.json with
+    AI analysis tasks for an AI agent to process (2-step flow).
 
   kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE]
       [--column COL] [--columns] [--project ALIAS] [--depth N]

@@ -735,10 +735,19 @@ body {
     <h2 id="diagram-title">Select a node to explore lineage</h2>
     <span id="main-stats"></span>
     <div id="export-buttons" style="display:none">
+      <label style="font-size:12px;margin-right:12px;cursor:pointer">
+        <input type="checkbox" id="show-columns"> Show columns
+      </label>
       <button id="btn-mermaid">Download Mermaid</button>
       <button id="btn-json">Download JSON</button>
       <button id="btn-html">Download HTML</button>
     </div>
+  </div>
+  <div id="legend" style="display:none;padding:4px 16px;font-size:11px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;gap:16px;flex-wrap:wrap;align-items:center">
+    <span><span style="display:inline-block;width:12px;height:12px;background:#e1f5fe;border:2px solid #0288d1;border-radius:2px;vertical-align:middle"></span> Table</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#e8f5e9;border:2px solid #388e3c;border-radius:2px;vertical-align:middle"></span> Configuration</span>
+    <span><span style="display:inline-block;width:12px;height:12px;background:#f3e5f5;border:2px solid #7b1fa2;border-radius:2px;vertical-align:middle"></span> Cross-project table</span>
+    <span style="color:#888">Edges: input_mapping | output_mapping | sql_tokenizer | bucket_sharing | ai</span>
   </div>
   <div id="diagram-area">
     <div id="placeholder">
@@ -887,6 +896,9 @@ body {
       var html = buildStandaloneHtml(lastMermaidCode, diagramTitle.textContent);
       downloadFile("lineage.html", html, "text/html");
     }
+  });
+  document.getElementById("show-columns").addEventListener("change", function() {
+    if (selectedNode) queryNode(selectedNode);
   });
 
   // -- Render node list (grouped by bucket / component type) --
@@ -1052,10 +1064,12 @@ body {
     diagramTitle.textContent = direction.charAt(0).toUpperCase() + direction.slice(1) +
       " of " + fqn + ", depth " + depth;
 
+    var showCols = document.getElementById("show-columns").checked;
+    var colsParam = showCols ? "&columns=true" : "";
     var queryUrl = "/api/query?node=" + encodeURIComponent(fqn) +
       "&direction=" + direction + "&depth=" + depth;
     var mermaidUrl = "/api/mermaid?node=" + encodeURIComponent(fqn) +
-      "&direction=" + direction + "&depth=" + depth;
+      "&direction=" + direction + "&depth=" + depth + colsParam;
 
     Promise.all([
       fetch(queryUrl).then(function(r) { return r.json(); }),
@@ -1170,6 +1184,7 @@ body {
       mermaidOutput.innerHTML = result.svg;
       currentZoom = 1;
       document.getElementById("zoom-controls").style.display = "block";
+      document.getElementById("legend").style.display = "flex";
       attachDiagramClickHandlers();
     }).catch(function(err) {
       mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">' +
@@ -1307,7 +1322,14 @@ class _LineageHandler(http.server.BaseHTTPRequestHandler):
             return
 
         edges = result.get("edges", [])
-        mermaid_code = DeepLineageService.render_mermaid(edges, self.graph, direction, node)
+        show_cols = params.get("columns", [""])[0] == "true"
+        mermaid_code = DeepLineageService.render_mermaid(
+            edges,
+            self.graph,
+            direction,
+            node,
+            show_columns=show_cols,
+        )
         self._serve(mermaid_code, "text/plain")
 
     def _serve(self, content: str, content_type: str) -> None:

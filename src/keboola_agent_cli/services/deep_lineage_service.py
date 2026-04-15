@@ -962,6 +962,7 @@ class DeepLineageService:
         graph: LineageGraph,
         direction: str,
         node_fqn: str,
+        show_columns: bool = False,
     ) -> str:
         """Render lineage edges as a mermaid flowchart.
 
@@ -970,6 +971,7 @@ class DeepLineageService:
             graph: The lineage graph (for node metadata).
             direction: "upstream" or "downstream".
             node_fqn: The FQN of the queried node.
+            show_columns: If True, include column names in table labels.
 
         Returns:
             Mermaid flowchart source code.
@@ -980,6 +982,9 @@ class DeepLineageService:
         graph_dir = "RL" if direction == "upstream" else "LR"
         lines: list[str] = [f"graph {graph_dir}"]
 
+        # Determine the root node's project for cross-project detection
+        root_project = node_fqn.split(":")[0] if ":" in node_fqn else ""
+
         # Collect all unique node FQNs (including the root node)
         node_fqns: set[str] = {node_fqn}
         for edge in edges:
@@ -989,19 +994,30 @@ class DeepLineageService:
         # Emit node definitions with labels and classes
         for fqn in sorted(node_fqns):
             node_id = sanitize(fqn)
+            node_project = fqn.split(":")[0] if ":" in fqn else ""
+            is_cross = node_project and root_project and node_project != root_project
+
             if fqn in graph.tables:
                 t = graph.tables[fqn]
-                label = escape(
-                    f"{t.project_alias}:{t.table_id}<br/>{len(t.columns)} cols, {t.rows_count:,} rows"
-                )
-                lines.append(f'  {node_id}["{label}"]:::table')
+                label_parts = [f"{t.project_alias}:{t.table_id}"]
+                label_parts.append(f"{len(t.columns)} cols, {t.rows_count:,} rows")
+                if show_columns and t.columns:
+                    col_display = t.columns[:8]
+                    col_text = ", ".join(col_display)
+                    if len(t.columns) > 8:
+                        col_text += f", +{len(t.columns) - 8} more"
+                    label_parts.append(col_text)
+                label = escape("<br/>".join(label_parts))
+                css_class = "cross_table" if is_cross else "table"
+                lines.append(f'  {node_id}["{label}"]:::{css_class}')
             elif fqn in graph.configurations:
                 c = graph.configurations[fqn]
                 label = escape(f"{c.project_alias}:{c.config_name}<br/>{c.component_id}")
                 lines.append(f'  {node_id}["{label}"]:::config')
             else:
                 label = escape(fqn)
-                lines.append(f'  {node_id}["{label}"]')
+                css_class = "cross_table" if is_cross else "table"
+                lines.append(f'  {node_id}["{label}"]:::{css_class}')
 
         # Emit edges
         seen_edges: set[tuple[str, str]] = set()
@@ -1019,6 +1035,7 @@ class DeepLineageService:
         lines.append("")
         lines.append("  classDef table fill:#e1f5fe,stroke:#0288d1")
         lines.append("  classDef config fill:#e8f5e9,stroke:#388e3c")
+        lines.append("  classDef cross_table fill:#f3e5f5,stroke:#7b1fa2")
 
         return "\n".join(lines)
 

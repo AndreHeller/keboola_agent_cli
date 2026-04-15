@@ -536,20 +536,28 @@ class TestLineageDeepCli:
         from keboola_agent_cli.cli import app
 
         runner_local = __import__("typer.testing", fromlist=["CliRunner"]).CliRunner()
+        # Strip ANSI helper
+        import re as _re
+
+        def _strip_ansi(s: str) -> str:
+            return _re.sub(r"\x1b\[[0-9;]*m", "", s)
+
         # Test build help
         result = runner_local.invoke(app, ["lineage", "build", "--help"])
         assert result.exit_code == 0
-        assert "Build column-level lineage" in result.output
-        assert "--output" in result.output
-        assert "--refresh" in result.output
-        assert "--ai" in result.output
+        output = _strip_ansi(result.output)
+        assert "Build column-level lineage" in output
+        assert "--output" in output
+        assert "--refresh" in output
+        assert "--ai" in output
 
         # Test show help
         result = runner_local.invoke(app, ["lineage", "show", "--help"])
         assert result.exit_code == 0
-        assert "--upstream" in result.output
-        assert "--downstream" in result.output
-        assert "--columns" in result.output
+        output = _strip_ansi(result.output)
+        assert "--upstream" in output
+        assert "--downstream" in output
+        assert "--columns" in output
         assert "project-alias:bucket_id.table_name" in result.output
 
     def test_load_and_query_json(self, tmp_path: Path) -> None:

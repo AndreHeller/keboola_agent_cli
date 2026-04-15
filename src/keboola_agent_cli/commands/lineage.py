@@ -149,11 +149,11 @@ def lineage_deep(
     if upstream:
         query_result = service.query_upstream(graph, upstream, project or "", depth)
         if "error" in query_result:
-            formatter.error(
-                message=query_result["error"],
-                error_code="NODE_NOT_FOUND",
-                details={"suggestions": query_result.get("suggestions", [])},
-            )
+            suggestions = query_result.get("suggestions", [])
+            msg = query_result["error"]
+            if suggestions:
+                msg += "\nDid you mean: " + ", ".join(suggestions[:5])
+            formatter.error(message=msg, error_code="NODE_NOT_FOUND")
             raise typer.Exit(code=1)
 
         if formatter.json_mode:
@@ -164,11 +164,11 @@ def lineage_deep(
     if downstream:
         query_result = service.query_downstream(graph, downstream, project or "", depth)
         if "error" in query_result:
-            formatter.error(
-                message=query_result["error"],
-                error_code="NODE_NOT_FOUND",
-                details={"suggestions": query_result.get("suggestions", [])},
-            )
+            suggestions = query_result.get("suggestions", [])
+            msg = query_result["error"]
+            if suggestions:
+                msg += "\nDid you mean: " + ", ".join(suggestions[:5])
+            formatter.error(message=msg, error_code="NODE_NOT_FOUND")
             raise typer.Exit(code=1)
 
         if formatter.json_mode:

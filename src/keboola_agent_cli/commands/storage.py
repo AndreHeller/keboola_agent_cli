@@ -853,6 +853,11 @@ def storage_delete_column(
         "--column",
         help="Column name to delete. Can be repeated.",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Force delete even if column is referenced by table aliases",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -873,6 +878,7 @@ def storage_delete_column(
     """Delete one or more columns from a storage table.
 
     Supports batch deletion with multiple --column flags.
+    Use --force when a column is referenced by table aliases.
     """
     if should_hint(ctx):
         emit_hint(
@@ -927,6 +933,7 @@ def storage_delete_column(
             alias=project,
             table_id=table_id,
             columns=column,
+            force=force,
             branch_id=effective_branch,
         )
     except ConfigError as exc:

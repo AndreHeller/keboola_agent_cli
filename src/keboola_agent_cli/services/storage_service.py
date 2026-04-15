@@ -701,18 +701,20 @@ class StorageService(BaseService):
         table_id: str,
         columns: list[str],
         dry_run: bool = False,
+        force: bool = False,
         branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Delete one or more columns from a storage table.
 
         Batch-tolerant: accumulates errors per column, one failure does not
-        stop other deletes.
+        stop other deletes. Each delete is async and waits for completion.
 
         Args:
             alias: Project alias.
             table_id: Full table ID (e.g. "in.c-bucket.table").
             columns: List of column names to delete.
             dry_run: If True, only report what would be deleted.
+            force: If True, also delete from aliased tables.
             branch_id: If set, target a specific dev branch.
 
         Returns:
@@ -741,7 +743,7 @@ class StorageService(BaseService):
         try:
             for col in columns:
                 try:
-                    client.delete_column(table_id, col, branch_id=branch_id)
+                    client.delete_column(table_id, col, branch_id=branch_id, force=force)
                     deleted.append(col)
                 except KeboolaApiError as exc:
                     failed.append({"column": col, "error": exc.message})

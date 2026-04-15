@@ -1114,19 +1114,28 @@ class KeboolaClient(BaseHttpClient):
         )
         return job.get("results", {})
 
-    def delete_table(self, table_id: str, branch_id: int | None = None) -> dict[str, Any]:
+    def delete_table(
+        self,
+        table_id: str,
+        branch_id: int | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
         """Delete a storage table (async, waits for completion).
 
         Args:
             table_id: Full table ID (e.g. "in.c-bucket.table").
             branch_id: If set, target a specific dev branch.
+            force: If True, cascade-delete the table and all its aliases.
 
         Returns:
             Completed storage job dict.
         """
         prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         safe_id = quote(table_id, safe="")
-        response = self._request("DELETE", f"{prefix}/tables/{safe_id}", params={"async": "true"})
+        params: dict[str, str] = {"async": "true"}
+        if force:
+            params["force"] = "true"
+        response = self._request("DELETE", f"{prefix}/tables/{safe_id}", params=params)
         return self._wait_for_storage_job(response.json())
 
     def delete_column(

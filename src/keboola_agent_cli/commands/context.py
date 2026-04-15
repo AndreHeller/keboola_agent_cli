@@ -153,8 +153,8 @@ Use `kbagent <command> --help` for full flag details and examples.
     Default filename: TABLE_NAME.csv. Use --columns to select columns (see table-detail for names).
     Use --limit to cap row count. Handles sliced files and gzip decompression transparently. Branch-aware.
 
-  kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]
-    Delete one or more tables. Batch: repeat --table-id. --dry-run to preview. Branch-aware.
+  kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--force] [--dry-run] [--yes] [--branch ID]
+    Delete one or more tables. Batch: repeat --table-id. --force to cascade-delete aliased tables. --dry-run to preview. Branch-aware.
 
   kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--force] [--dry-run] [--yes] [--branch ID]
     Delete one or more columns from a table. Batch: repeat --column. --force when column is referenced by aliases. --dry-run to preview. Branch-aware.

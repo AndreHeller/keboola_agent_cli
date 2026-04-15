@@ -747,6 +747,11 @@ def storage_delete_table(
         "--table-id",
         help="Table ID to delete (e.g. 'in.c-bucket.table'). Can be repeated.",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Force-delete tables that have aliases in other projects (cascade).",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -768,6 +773,10 @@ def storage_delete_table(
 
     Supports batch deletion with multiple --table-id flags.
     All deletes are async and wait for completion.
+
+    Use --force to cascade-delete tables that have aliases linked
+    into other projects (shared buckets). Without --force, the API
+    rejects deletion of aliased tables.
     """
     if should_hint(ctx):
         emit_hint(
@@ -775,6 +784,7 @@ def storage_delete_table(
             "storage.delete-table",
             project=project,
             table_id=table_id,
+            force=force,
             dry_run=dry_run,
             branch=branch,
         )
@@ -803,11 +813,13 @@ def storage_delete_table(
                 formatter.console.print(f"[bold blue]Would delete:[/bold blue] {tid}")
         return
 
-    if (
-        not yes
-        and not formatter.json_mode
-        and not typer.confirm(f"Delete {len(table_id)} table(s) from project '{project}'?")
-    ):
+    confirm_msg = f"Delete {len(table_id)} table(s) from project '{project}'?"
+    if force:
+        confirm_msg = (
+            f"FORCE-delete {len(table_id)} table(s) from project '{project}'?"
+            " This will also delete all aliases in downstream projects."
+        )
+    if not yes and not formatter.json_mode and not typer.confirm(confirm_msg):
         formatter.console.print("Aborted.")
         raise typer.Exit(code=0)
 
@@ -815,6 +827,7 @@ def storage_delete_table(
         result = service.delete_tables(
             alias=project,
             table_ids=table_id,
+            force=force,
             branch_id=effective_branch,
         )
     except ConfigError as exc:

@@ -33,9 +33,13 @@ OPERATION_REGISTRY: dict[str, str] = {
     "job.detail": "read",
     "job.run": "write",
     # Lineage
+    "lineage.build": "read",
+    "lineage.info": "read",
     "lineage.show": "read",
+    "lineage.server": "read",
     # Sharing
     "sharing.list": "read",
+    "sharing.edges": "read",
     "sharing.share": "write",
     "sharing.unshare": "write",
     "sharing.link": "write",
@@ -95,8 +99,8 @@ OPERATION_REGISTRY: dict[str, str] = {
     # Encryption
     "encrypt.values": "write",
     # Sync / git workflow
-    "sync.init": "write",
-    "sync.pull": "write",
+    "sync.init": "read",
+    "sync.pull": "read",
     "sync.status": "read",
     "sync.diff": "read",
     "sync.push": "write",

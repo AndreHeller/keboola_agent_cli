@@ -96,6 +96,7 @@ src/keboola_agent_cli/
     branch_service.py   # LAYER 2: Branch lifecycle (create/use/reset/delete/merge, async job polling)
     workspace_service.py # LAYER 2: Workspace lifecycle (CRUD, table load, SQL query via Query Service)
     component_service.py # LAYER 2: Component discovery, schema fetch, scaffold generation
+    deep_lineage_service.py # LAYER 2: Column-level lineage analysis (SQL parsing, AI enrichment)
     doctor_service.py   # LAYER 2: Health check business logic
 
 tests/
@@ -124,7 +125,9 @@ tests/
   test_ai_client.py        # AI Service client tests
   test_component_service.py # Component service tests
   test_component_cli.py    # Component CLI tests via CliRunner
+  test_deep_lineage_service.py # Deep lineage service tests (column-level lineage, SQL parsing)
   test_e2e.py              # E2E tests against real API (make test-e2e)
+  test_e2e_lineage_deep.py # E2E tests for deep lineage (build + show against real data)
   test_integration.py      # Integration tests (edge cases, linting)
 ```
 
@@ -259,7 +262,7 @@ kbagent storage create-table --project NAME --bucket-id ID --name NAME --column 
 kbagent storage upload-table --project NAME --table-id ID --file PATH [--incremental] [--branch ID]
 kbagent storage download-table --project NAME --table-id ID [--output FILE] [--columns COL ...] [--limit N] [--branch ID]
 kbagent storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]
-kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--dry-run] [--yes] [--branch ID]
+kbagent storage delete-column --project NAME --table-id ID --column COL [--column ...] [--force] [--dry-run] [--yes] [--branch ID]
 kbagent storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]
 kbagent storage files --project NAME [--tag TAG ...] [--limit N] [--offset N] [--query Q] [--branch ID]
 kbagent storage file-upload --project NAME --file PATH [--name NAME] [--tag TAG ...] [--permanent] [--branch ID]
@@ -270,13 +273,17 @@ kbagent storage file-tag --project NAME --file-id ID [--add TAG ...] [--remove T
 kbagent storage load-file --project NAME --file-id ID --table-id ID [--incremental] [--delimiter D] [--enclosure E] [--branch ID]
 kbagent storage unload-table --project NAME --table-id ID [--columns COL ...] [--limit N] [--tag TAG ...] [--download] [--output FILE] [--branch ID]
 
-kbagent lineage show [--project NAME]   # also works as just: kbagent lineage
+kbagent lineage build --directory PATH --output PATH [--ai] [--refresh]
+kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N] [--format text|mermaid|html|er]
+kbagent lineage info --load PATH
+kbagent lineage server --load PATH [--port N] [--host HOST]
 
 kbagent sharing list [--project NAME]
 kbagent sharing share --project ALIAS --bucket-id ID --type TYPE [--target-project-ids IDs] [--target-users EMAILS]
 kbagent sharing unshare --project ALIAS --bucket-id ID
 kbagent sharing link --project ALIAS --source-project-id ID --bucket-id ID [--name NAME]
 kbagent sharing unlink --project ALIAS --bucket-id ID
+kbagent sharing edges [--project NAME]
 
 kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]
 kbagent org setup --project-ids 1,2,3 --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]

@@ -416,7 +416,9 @@ class TestDeleteColumnsService:
         assert result["failed"] == []
         assert result["dry_run"] is False
         assert result["table_id"] == "in.c-data.users"
-        mock_client.delete_column.assert_called_once_with("in.c-data.users", "age", branch_id=None)
+        mock_client.delete_column.assert_called_once_with(
+            "in.c-data.users", "age", branch_id=None, force=False
+        )
 
     def test_batch_multiple_columns(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -859,7 +861,9 @@ class TestDeleteColumnBranch:
         )
 
         assert result["deleted"] == ["age"]
-        mock_client.delete_column.assert_called_once_with("in.c-data.users", "age", branch_id=42)
+        mock_client.delete_column.assert_called_once_with(
+            "in.c-data.users", "age", branch_id=42, force=False
+        )
 
     def test_cli_branch_flag_json(self, tmp_path: Path) -> None:
         """storage delete-column --branch 42 passes branch_id to service."""

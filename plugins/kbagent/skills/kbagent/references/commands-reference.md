@@ -49,11 +49,16 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `storage upload-table --project NAME --table-id ID --file PATH [--incremental] [--branch ID]` -- upload CSV (branch-aware)
 - `storage download-table --project NAME --table-id ID [--output FILE] [--columns COL ...] [--limit N] [--branch ID]` -- export table to CSV (branch-aware)
 - `storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]` -- delete tables (branch-aware)
-- `storage delete-column --project NAME --table-id ID --column COL [--column ...] [--dry-run] [--yes] [--branch ID]` -- delete columns from a table (branch-aware)
+- `storage delete-column --project NAME --table-id ID --column COL [--column ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete columns from a table (branch-aware)
 - `storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete buckets (branch-aware)
 
 ## Data Lineage
-- `lineage [--project NAME]` -- cross-project data flow via bucket sharing
+- `lineage build -d DIR -o FILE [--refresh] [--ai]` -- build column-level lineage graph from sync'd data
+- `lineage show -l FILE --downstream "project:table" [--columns] [-c COL] [--format text|mermaid|html|er]` -- query downstream dependencies from cache
+- `lineage show -l FILE --upstream "project:table" [--columns] [-c COL] [--format text|mermaid|html|er]` -- query upstream dependencies from cache
+- `lineage info -l FILE` -- show graph contents: projects, tables, most connected nodes
+- `lineage server -l FILE [--port N]` -- interactive lineage browser in web browser
+- `sharing edges [--project NAME]` -- cross-project data flow edges via bucket sharing
 
 ## Development Branches
 - `branch list [--project NAME]` -- list dev branches

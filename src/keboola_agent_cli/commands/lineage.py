@@ -1212,11 +1212,14 @@ body {
     mermaidOutput.innerHTML = "";
     mermaid.render(id, code).then(function(result) {
       mermaidOutput.innerHTML = result.svg;
-      // Make SVG fill available space and be scrollable
+      // Force SVG to render at full natural size (mermaid shrinks it)
       var svg = mermaidOutput.querySelector("svg");
       if (svg) {
-        svg.style.maxWidth = "none";
-        svg.style.minWidth = "max-content";
+        svg.removeAttribute("width");
+        svg.removeAttribute("height");
+        svg.removeAttribute("style");
+        svg.style.width = "max-content";
+        svg.style.minWidth = "100%";
         svg.style.height = "auto";
       }
       currentZoom = 1;

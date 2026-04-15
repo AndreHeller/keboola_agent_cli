@@ -76,7 +76,8 @@ kbagent workspace query --project prod --workspace-id WS_ID \
 | **Sync & GitOps** | Pull configs as YAML, edit in IDE, push back. SQL/Python extracted as real files. Diff and status tracking. |
 | **MCP tools** | Call `keboola-mcp-server` tools with auto-expand, multi-project fan-out, branch propagation, schema validation. |
 | **Workspaces** | Create Snowflake/BQ workspace, load tables, run SQL. Create from transformation config for instant debugging. |
-| **Sharing & lineage** | Cross-project data lineage via bucket sharing. Share/link/unlink with org/project/user access control. |
+| **Sharing** | Cross-project bucket sharing with org/project/user access control. Share, link, unlink. |
+| **Lineage** | Column-level dependency analysis across projects. SQL/Python parsing, AI-enhanced detection, interactive web browser, Mermaid/HTML/ER export. |
 | **Kai (AI Assistant)** | Ask Keboola's built-in AI questions about your project. One-shot or chat sessions with full MCP context. |
 | **Encryption** | Encrypt secrets (`#password`, `#api_token`) via Keboola Encryption API. Works with sync push and MCP. |
 | **Permissions** | Firewall for AI agents: read-only, deny-writes, deny-destructive. Code-level enforcement, not prompt tricks. |
@@ -118,7 +119,7 @@ kbagent storage     buckets | bucket-detail | create-bucket | delete-bucket
                     files | file-detail | file-upload | file-download | file-tag | file-delete
                     load-file | unload-table
 kbagent sharing     list | share | unshare | link | unlink
-kbagent lineage     show
+kbagent lineage     build | show | info | server
 kbagent branch      list | create | use | reset | delete | merge
 kbagent workspace   create | list | detail | delete | password | load | query | from-transformation
 kbagent tool        list | call

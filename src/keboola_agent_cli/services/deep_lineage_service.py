@@ -7,6 +7,7 @@ and optionally uses AI to parse SQL/Python code for hidden dependencies.
 Architecture: reads from disk only, no API calls. Requires sync'd data.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -745,20 +746,27 @@ class DeepLineageService:
             for c in graph.configurations.values()
             if c.code and ((c.code_type == "sql" and not c.input_tables) or c.code_type == "python")
         ]
-        uncached = [c for c in configs_needing_ai if c.fqn not in ai_cache]
+
+        # Check cache: valid if FQN exists AND code hash matches
+        uncached = []
         for c in configs_needing_ai:
-            if c.fqn in ai_cache:
-                self._apply_ai_result(graph, c, ai_cache[c.fqn], project_id_to_alias)
+            code_hash = hashlib.sha256(c.code.encode()).hexdigest()[:16]
+            cached = ai_cache.get(c.fqn)
+            if cached and cached.get("_code_hash") == code_hash:
+                self._apply_ai_result(graph, c, cached, project_id_to_alias)
+            else:
+                uncached.append(c)
 
         if not uncached:
             return
 
-        def _analyze_one(config: Configuration) -> tuple[str, dict | None]:
+        def _analyze_one(config: Configuration) -> tuple[str, str, dict | None]:
+            code_hash = hashlib.sha256(config.code.encode()).hexdigest()[:16]
             if config.code_type == "sql":
-                return config.fqn, self._ai_analyze_sql(config, model)
+                return config.fqn, code_hash, self._ai_analyze_sql(config, model)
             elif config.code_type == "python":
-                return config.fqn, self._ai_analyze_python(config, model)
-            return config.fqn, None
+                return config.fqn, code_hash, self._ai_analyze_python(config, model)
+            return config.fqn, code_hash, None
 
         workers = min(max_workers, len(uncached)) or 1
         completed = 0
@@ -768,8 +776,9 @@ class DeepLineageService:
                 config = futures[future]
                 completed += 1
                 try:
-                    fqn, result = future.result()
+                    fqn, code_hash, result = future.result()
                     if result:
+                        result["_code_hash"] = code_hash
                         ai_cache[fqn] = result
                         self._apply_ai_result(graph, config, result, project_id_to_alias)
                 except Exception:

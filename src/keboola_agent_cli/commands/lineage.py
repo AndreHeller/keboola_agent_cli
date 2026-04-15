@@ -113,6 +113,11 @@ def lineage_deep(
         help="AI model for analysis: haiku (fast/cheap) or sonnet (better quality)",
     ),
     ai_workers: int = typer.Option(4, "--ai-workers", help="Parallel AI workers (default: 4)"),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Sync pull all projects first, then rebuild lineage. One-command update.",
+    ),
 ) -> None:
     """Column-level lineage from sync'd data on disk.
 
@@ -136,6 +141,8 @@ def lineage_deep(
       4. Trace a column:  kbagent lineage deep -l lineage.json --upstream "project:table" -c "col_name"
 
       5. With AI:         kbagent lineage deep -d /path -o lineage.json --ai
+
+      6. Update:          kbagent lineage deep -d /path -o lineage.json --refresh --ai
     """
     formatter = get_formatter(ctx)
     service = get_service(ctx, "deep_lineage_service")
@@ -151,6 +158,19 @@ def lineage_deep(
         if not root.is_dir():
             formatter.error(message=f"Directory not found: {root}", error_code="DIR_NOT_FOUND")
             raise typer.Exit(code=1)
+
+        # --refresh: sync pull all projects first
+        if refresh:
+            if not formatter.json_mode:
+                formatter.console.print("[bold]Syncing all projects...[/bold]")
+            sync_service = get_service(ctx, "sync_service")
+            sync_result = sync_service.pull_all(base_dir=root)
+            summary = sync_result.get("summary", {})
+            if not formatter.json_mode:
+                formatter.console.print(
+                    f"  Synced {summary.get('success', 0)}/{summary.get('total', 0)} projects"
+                    f" ({summary.get('failed', 0)} failed)\n"
+                )
 
         result = service.build_lineage(
             root,

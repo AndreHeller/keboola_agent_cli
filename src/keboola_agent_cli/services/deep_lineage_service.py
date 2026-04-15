@@ -1089,6 +1089,8 @@ class DeepLineageService:
             lines.append(f'    "{safe_name}" {{')
             pk_cols = set(t.primary_key) if t.primary_key else set()
             for col in t.columns[:30]:
+                # Sanitize column name for mermaid ER (alphanumeric + underscore only)
+                safe_col = re.sub(r"[^a-zA-Z0-9_]", "_", col)
                 pk_marker = " PK" if col in pk_cols else ""
                 # Check if any config maps to/from this column
                 comment = ""
@@ -1097,13 +1099,14 @@ class DeepLineageService:
                         if src_expr.endswith(f".{col}") and fqn in src_expr.replace(f".{col}", ""):
                             cfg = graph.configurations.get(cfg_fqn)
                             cfg_label = cfg.config_name if cfg else cfg_fqn.split("/")[-1]
-                            comment = f' "-> {out_col} via {cfg_label}"'
+                            safe_label = cfg_label.replace('"', "'")
+                            comment = f' "to {out_col} via {safe_label}"'
                             break
                         if out_col == col:
                             src_short = src_expr.split(".")[-1]
                             comment = f' "from {src_short}"'
                             break
-                lines.append(f"        string {col}{pk_marker}{comment}")
+                lines.append(f"        string {safe_col}{pk_marker}{comment}")
             if len(t.columns) > 30:
                 lines.append(f'        string _more_ "+{len(t.columns) - 30} more columns"')
             lines.append("    }")

@@ -1061,14 +1061,27 @@ body {
         var upQ = res[0], downQ = res[1], upM = res[2], downM = res[3];
         var allEdges = (upQ.edges || []).concat(downQ.edges || []);
         var merged = {node: fqn, edges: allEdges};
-        // Dedupe mermaid: take upstream lines, add downstream-only node/edge lines
-        var upLines = upM.split("\n"); var downLines = downM.split("\n");
-        var seen = {}; upLines.forEach(function(l){seen[l.trim()]=true;});
-        var extra = downLines.filter(function(l){return l.trim() && !seen[l.trim()] && !l.trim().startsWith("graph ") && !l.trim().startsWith("classDef ");});
-        var combined = upLines.slice(0,-2).concat(extra).concat(upLines.slice(-2));
-        // Change direction to LR for combined view
-        combined[0] = "graph LR";
-        var mermaidCode = combined.join("\n");
+        // Merge mermaid from both directions
+        var mermaidCode;
+        if (viewMode === "er") {
+          // ER: merge entity/relationship lines, deduplicate
+          var allL = (upM + "\n" + downM).split("\n");
+          var seenER = {}; var erL = ["erDiagram"];
+          allL.forEach(function(l) {
+            var t = l.trim();
+            if (!t || t === "erDiagram") return;
+            if (!seenER[t]) { seenER[t] = true; erL.push(l); }
+          });
+          mermaidCode = erL.join("\n");
+        } else {
+          // Flowchart: merge node/edge lines, deduplicate
+          var upLines = upM.split("\n"); var downLines = downM.split("\n");
+          var seen = {}; upLines.forEach(function(l){seen[l.trim()]=true;});
+          var extra = downLines.filter(function(l){return l.trim() && !seen[l.trim()] && !l.trim().startsWith("graph ") && !l.trim().startsWith("classDef ");});
+          var combined = upLines.slice(0,-2).concat(extra).concat(upLines.slice(-2));
+          combined[0] = "graph LR";
+          mermaidCode = combined.join("\n");
+        }
         lastQueryResult = merged; lastMermaidCode = mermaidCode;
         var nodeSet = {}; if(merged.node) nodeSet[merged.node]=true;
         allEdges.forEach(function(e){nodeSet[e.source]=true;nodeSet[e.target]=true;});
@@ -1199,6 +1212,13 @@ body {
     mermaidOutput.innerHTML = "";
     mermaid.render(id, code).then(function(result) {
       mermaidOutput.innerHTML = result.svg;
+      // Make SVG fill available space and be scrollable
+      var svg = mermaidOutput.querySelector("svg");
+      if (svg) {
+        svg.style.maxWidth = "none";
+        svg.style.minWidth = "max-content";
+        svg.style.height = "auto";
+      }
       currentZoom = 1;
       document.getElementById("zoom-controls").style.display = "block";
       document.getElementById("legend").style.display = "flex";

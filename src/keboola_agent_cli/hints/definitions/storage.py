@@ -330,7 +330,11 @@ HintRegistry.register(
                 comment="Delete table(s)",
                 client=ClientCall(
                     method="delete_table",
-                    args={"table_id": "{table_id}", "branch_id": "{branch}"},
+                    args={
+                        "table_id": "{table_id}",
+                        "branch_id": "{branch}",
+                        "force": "{force}",
+                    },
                     result_var="result",
                 ),
                 service=ServiceCall(
@@ -340,13 +344,17 @@ HintRegistry.register(
                     args={
                         "alias": "{project}",
                         "table_ids": "{table_id}",
+                        "force": "{force}",
                         "dry_run": "{dry_run}",
                         "branch_id": "{branch}",
                     },
                 ),
             ),
         ],
-        notes=["Client layer deletes one table at a time. Loop for batch."],
+        notes=[
+            "Client layer deletes one table at a time. Loop for batch.",
+            "Use force=True to cascade-delete aliased tables in downstream projects.",
+        ],
     )
 )
 

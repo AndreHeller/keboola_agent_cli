@@ -55,7 +55,23 @@ class TestDeleteTablesService:
         assert result["deleted"] == ["in.c-data.users"]
         assert result["failed"] == []
         assert result["dry_run"] is False
-        mock_client.delete_table.assert_called_once_with("in.c-data.users", branch_id=None)
+        mock_client.delete_table.assert_called_once_with(
+            "in.c-data.users", branch_id=None, force=False
+        )
+
+    def test_force_flag(self, tmp_path: Path) -> None:
+        store = _make_store(tmp_path)
+        mock_client = MagicMock()
+        mock_client.delete_table.return_value = {"id": 1, "status": "success"}
+        service = _make_service(store, mock_client)
+
+        result = service.delete_tables(alias="test", table_ids=["in.c-data.users"], force=True)
+
+        assert result["deleted"] == ["in.c-data.users"]
+        assert result["failed"] == []
+        mock_client.delete_table.assert_called_once_with(
+            "in.c-data.users", branch_id=None, force=True
+        )
 
     def test_batch_partial_failure(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -264,6 +280,44 @@ class TestDeleteTableCLI:
                 ],
             )
         assert result.exit_code == 0
+
+    def test_delete_table_force_json(self, tmp_path: Path) -> None:
+        store = _make_store(tmp_path)
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.StorageService") as MockSvc,
+        ):
+            MockStore.return_value = store
+            svc = MockSvc.return_value
+            svc.delete_tables.return_value = {
+                "deleted": ["out.c-shared.users"],
+                "failed": [],
+                "dry_run": False,
+                "project_alias": "test",
+            }
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "storage",
+                    "delete-table",
+                    "--project",
+                    "test",
+                    "--table-id",
+                    "out.c-shared.users",
+                    "--force",
+                    "--yes",
+                ],
+            )
+        assert result.exit_code == 0
+        data = json.loads(result.output)["data"]
+        assert data["deleted"] == ["out.c-shared.users"]
+        svc.delete_tables.assert_called_once_with(
+            alias="test",
+            table_ids=["out.c-shared.users"],
+            force=True,
+            branch_id=None,
+        )
 
     def test_delete_table_exit_1_on_failure(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path)
@@ -639,7 +693,9 @@ class TestDeleteTableBranch:
         result = service.delete_tables(alias="test", table_ids=["in.c-data.users"], branch_id=42)
 
         assert result["deleted"] == ["in.c-data.users"]
-        mock_client.delete_table.assert_called_once_with("in.c-data.users", branch_id=42)
+        mock_client.delete_table.assert_called_once_with(
+            "in.c-data.users", branch_id=42, force=False
+        )
 
     def test_cli_branch_flag_json(self, tmp_path: Path) -> None:
         """storage delete-table --branch 42 passes branch_id to service."""

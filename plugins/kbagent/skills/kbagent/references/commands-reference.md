@@ -53,10 +53,10 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete buckets (branch-aware)
 
 ## Data Lineage
-- `lineage [--project NAME]` -- cross-project data flow via bucket sharing
-- `lineage deep -d DIR -o FILE [--refresh] [--ai]` -- build column-level lineage graph from sync'd data
-- `lineage deep -l FILE --downstream "project:table" [--columns] [-c COL]` -- query downstream dependencies from cache
-- `lineage deep -l FILE --upstream "project:table" [--columns] [-c COL]` -- query upstream dependencies from cache
+- `lineage build -d DIR -o FILE [--refresh] [--ai]` -- build column-level lineage graph from sync'd data
+- `lineage show -l FILE --downstream "project:table" [--columns] [-c COL]` -- query downstream dependencies from cache
+- `lineage show -l FILE --upstream "project:table" [--columns] [-c COL]` -- query upstream dependencies from cache
+- `sharing edges [--project NAME]` -- cross-project data flow edges via bucket sharing
 
 ## Development Branches
 - `branch list [--project NAME]` -- list dev branches

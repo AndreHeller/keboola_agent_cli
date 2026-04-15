@@ -1,4 +1,4 @@
-# Lineage Deep Workflow -- Column-Level Lineage Analysis
+# Lineage Workflow -- Column-Level Lineage Analysis
 
 Lineage deep builds a full dependency graph from sync'd project data on disk.
 It detects table-level and column-level relationships by parsing config files,
@@ -19,7 +19,7 @@ The sync'd directory structure is the input for lineage analysis.
 
 ```bash
 # Build from sync'd data and save to cache file
-kbagent lineage deep -d /path/to/sync-dir -o lineage.json
+kbagent lineage build -d /path/to/sync-dir -o lineage.json
 ```
 
 This scans all project directories, parses configs, and writes the full
@@ -31,20 +31,20 @@ Once built, query the graph without re-scanning:
 
 ```bash
 # Show downstream dependencies of a table
-kbagent lineage deep -l lineage.json --downstream "my-project:in.c-main.users"
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users"
 
 # Show upstream dependencies
-kbagent lineage deep -l lineage.json --upstream "my-project:out.c-analytics.report"
+kbagent lineage show -l lineage.json --upstream "my-project:out.c-analytics.report"
 ```
 
 ## Column-level detail
 
 ```bash
 # Show column-level mappings for all tables in the result
-kbagent lineage deep -l lineage.json --downstream "my-project:in.c-main.users" --columns
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users" --columns
 
 # Trace a single column through the lineage
-kbagent lineage deep -l lineage.json --downstream "my-project:in.c-main.users" -c user_id
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users" -c user_id
 ```
 
 ## Refresh in one step
@@ -52,7 +52,7 @@ kbagent lineage deep -l lineage.json --downstream "my-project:in.c-main.users" -
 Combine sync pull + rebuild into a single command:
 
 ```bash
-kbagent lineage deep -d /path/to/sync-dir -o lineage.json --refresh
+kbagent lineage build -d /path/to/sync-dir -o lineage.json --refresh
 ```
 
 This runs `sync pull` first, then rebuilds the lineage graph.
@@ -63,7 +63,7 @@ For ambiguous SQL or Python code where deterministic parsing cannot resolve
 column mappings, use the `--ai` flag:
 
 ```bash
-kbagent lineage deep -d /path/to/sync-dir -o lineage.json --ai
+kbagent lineage build -d /path/to/sync-dir -o lineage.json --ai
 ```
 
 AI analysis uses the Claude CLI haiku model and caches results keyed by

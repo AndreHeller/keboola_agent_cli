@@ -210,20 +210,22 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent sharing unlink --project ALIAS --bucket-id ID
     Remove a linked bucket from a project. Uses regular token.
 
+  kbagent sharing edges [--project NAME]
+    Show cross-project data flow edges via bucket sharing. --project repeatable.
+
 ### Data Lineage
 
-  kbagent lineage [--project NAME]
-    Cross-project data lineage via bucket sharing. --project repeatable.
+  kbagent lineage build --directory PATH --output PATH [--ai] [--ai-model MODEL]
+      [--ai-workers N] [--refresh]
+    Build column-level lineage graph from sync'd data. Scans all sync'd projects,
+    detects dependencies via config mappings and SQL parsing, saves to cache file.
+    --refresh runs sync pull first. --ai enables AI analysis of SQL/Python code.
 
-  kbagent lineage deep [--directory PATH] [--output PATH] [--load PATH]
-      [--upstream NODE] [--downstream NODE] [--column COL] [--columns]
-      [--project ALIAS] [--depth N] [--ai] [--ai-model MODEL] [--ai-workers N]
-      [--refresh]
-    Column-level lineage from sync'd data on disk. Scans all sync'd projects,
-    builds dependency graph with table and column-level granularity.
-    Supports upstream/downstream queries.
+  kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE]
+      [--column COL] [--columns] [--project ALIAS] [--depth N]
+    Query upstream/downstream from cached lineage graph (from lineage build).
     Node identifiers: full FQN project-alias:bucket_id.table_name or just table_id.
-    Workflow: 1) Build + cache graph, 2) Query from cache, 3) --refresh to rebuild.
+    --columns shows column-level mapping. -c COL traces one column.
 
 ### Organization Management
 

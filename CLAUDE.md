@@ -271,14 +271,15 @@ kbagent storage file-tag --project NAME --file-id ID [--add TAG ...] [--remove T
 kbagent storage load-file --project NAME --file-id ID --table-id ID [--incremental] [--delimiter D] [--enclosure E] [--branch ID]
 kbagent storage unload-table --project NAME --table-id ID [--columns COL ...] [--limit N] [--tag TAG ...] [--download] [--output FILE] [--branch ID]
 
-kbagent lineage show [--project NAME]   # also works as just: kbagent lineage
-kbagent lineage deep [--directory PATH] [--output PATH] [--load PATH] [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N] [--ai] [--ai-model MODEL] [--ai-workers N] [--refresh]
+kbagent lineage build --directory PATH --output PATH [--ai] [--ai-model MODEL] [--ai-workers N] [--refresh]
+kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N]
 
 kbagent sharing list [--project NAME]
 kbagent sharing share --project ALIAS --bucket-id ID --type TYPE [--target-project-ids IDs] [--target-users EMAILS]
 kbagent sharing unshare --project ALIAS --bucket-id ID
 kbagent sharing link --project ALIAS --source-project-id ID --bucket-id ID [--name NAME]
 kbagent sharing unlink --project ALIAS --bucket-id ID
+kbagent sharing edges [--project NAME]
 
 kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]
 kbagent org setup --project-ids 1,2,3 --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]

@@ -8,6 +8,15 @@ from __future__ import annotations
 
 # Ordered newest-first.  Each value is a list of brief one-line descriptions.
 CHANGELOG: dict[str, list[str]] = {
+    "0.20.0": [
+        "New: lineage build -- column-level lineage graph from sync'd data (SQL tokenizer + AI analysis)",
+        "New: lineage show -- query upstream/downstream dependencies with --columns and -c column trace",
+        "New: sharing edges -- cross-project data flow edges (moved from lineage show)",
+        "New: --refresh flag on lineage build -- one-command sync + rebuild",
+        "New: AI-assisted SQL/Python parsing for hidden table dependencies (--ai flag)",
+        "New: storage delete-column --force for alias-referenced columns (#169)",
+        "Fix: storage delete-column now waits for async job completion (#168)",
+    ],
     "0.19.0": [
         "New: Kai (Keboola AI Assistant) -- kai ping, ask, chat, history (BETA) (#164)",
         "New: config rename -- rename via API + auto-rename local sync directory (#160)",

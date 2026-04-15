@@ -1212,15 +1212,13 @@ body {
     mermaidOutput.innerHTML = "";
     mermaid.render(id, code).then(function(result) {
       mermaidOutput.innerHTML = result.svg;
-      // Force SVG to render at full natural size (mermaid shrinks it)
+      // Override mermaid's tiny default size - let SVG use its natural size
       var svg = mermaidOutput.querySelector("svg");
       if (svg) {
-        svg.removeAttribute("width");
+        svg.setAttribute("width", "100%");
         svg.removeAttribute("height");
-        svg.removeAttribute("style");
-        svg.style.width = "max-content";
-        svg.style.minWidth = "100%";
-        svg.style.height = "auto";
+        svg.style.minWidth = "800px";
+        svg.style.maxWidth = "none";
       }
       currentZoom = 1;
       document.getElementById("zoom-controls").style.display = "block";

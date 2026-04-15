@@ -96,6 +96,7 @@ src/keboola_agent_cli/
     branch_service.py   # LAYER 2: Branch lifecycle (create/use/reset/delete/merge, async job polling)
     workspace_service.py # LAYER 2: Workspace lifecycle (CRUD, table load, SQL query via Query Service)
     component_service.py # LAYER 2: Component discovery, schema fetch, scaffold generation
+    deep_lineage_service.py # LAYER 2: Column-level lineage analysis (SQL parsing, AI enrichment)
     doctor_service.py   # LAYER 2: Health check business logic
 
 tests/
@@ -271,6 +272,7 @@ kbagent storage load-file --project NAME --file-id ID --table-id ID [--increment
 kbagent storage unload-table --project NAME --table-id ID [--columns COL ...] [--limit N] [--tag TAG ...] [--download] [--output FILE] [--branch ID]
 
 kbagent lineage show [--project NAME]   # also works as just: kbagent lineage
+kbagent lineage deep [--directory PATH] [--output PATH] [--load PATH] [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N] [--ai] [--ai-model MODEL] [--ai-workers N] [--refresh]
 
 kbagent sharing list [--project NAME]
 kbagent sharing share --project ALIAS --bucket-id ID --type TYPE [--target-project-ids IDs] [--target-users EMAILS]

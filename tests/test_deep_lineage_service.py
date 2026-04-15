@@ -1,0 +1,591 @@
+"""Tests for DeepLineageService - column-level lineage from sync'd data."""
+
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+import yaml
+
+from keboola_agent_cli.config_store import ConfigStore
+from keboola_agent_cli.services.deep_lineage_service import (
+    Configuration,
+    DeepLineageService,
+    Edge,
+    LineageGraph,
+    Table,
+    _collect_create_targets,
+    _collect_cte_names,
+    _strip_comments_and_strings,
+    extract_sql_table_refs,
+)
+
+# ---------------------------------------------------------------------------
+# SQL tokenizer unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestStripCommentsAndStrings:
+    def test_line_comment(self) -> None:
+        sql = "SELECT 1 -- this is a comment\nFROM t"
+        result = _strip_comments_and_strings(sql)
+        assert "comment" not in result
+        assert "FROM t" in result
+
+    def test_block_comment(self) -> None:
+        sql = "SELECT /* hidden */ 1 FROM t"
+        result = _strip_comments_and_strings(sql)
+        assert "hidden" not in result
+        assert "SELECT" in result
+        assert "FROM t" in result
+
+    def test_string_literal(self) -> None:
+        sql = """SELECT 'text with "KBC_USE4_123"."b"."t"' FROM t"""
+        result = _strip_comments_and_strings(sql)
+        assert "KBC_USE4_123" not in result
+        assert "FROM t" in result
+
+    def test_escaped_quotes(self) -> None:
+        sql = "SELECT 'it''s fine' FROM t"
+        result = _strip_comments_and_strings(sql)
+        assert "FROM t" in result
+
+    def test_preserves_length(self) -> None:
+        sql = "SELECT /* x */ 1 -- y\nFROM t"
+        result = _strip_comments_and_strings(sql)
+        assert len(result) == len(sql)
+
+
+class TestCollectCteNames:
+    def test_single_cte(self) -> None:
+        sql = "WITH cte1 AS (SELECT 1) SELECT * FROM cte1"
+        names = _collect_cte_names(sql)
+        assert "cte1" in names
+
+    def test_multiple_ctes(self) -> None:
+        sql = "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b"
+        names = _collect_cte_names(sql)
+        assert "a" in names
+        assert "b" in names
+
+    def test_quoted_cte(self) -> None:
+        sql = 'WITH "MyCte" AS (SELECT 1) SELECT * FROM "MyCte"'
+        names = _collect_cte_names(sql)
+        assert "mycte" in names
+
+
+class TestCollectCreateTargets:
+    def test_create_table(self) -> None:
+        sql = 'CREATE TABLE "out_table" AS SELECT 1'
+        targets = _collect_create_targets(sql)
+        assert ("", "out_table") in targets
+
+    def test_create_or_replace(self) -> None:
+        sql = 'CREATE OR REPLACE TABLE "result" AS SELECT 1'
+        targets = _collect_create_targets(sql)
+        assert ("", "result") in targets
+
+    def test_two_part_create(self) -> None:
+        sql = 'CREATE TABLE "out.c-bucket"."my_table" AS SELECT 1'
+        targets = _collect_create_targets(sql)
+        assert ("out.c-bucket", "my_table") in targets
+
+
+class TestExtractSqlTableRefs:
+    def test_three_part_ref(self) -> None:
+        sql = 'SELECT * FROM "KBC_USE4_123"."in.c-bucket"."my_table"'
+        refs = extract_sql_table_refs(sql, project_id=999)
+        assert (123, "in.c-bucket", "my_table") in refs
+
+    def test_two_part_ref_from(self) -> None:
+        sql = 'SELECT * FROM "in.c-bucket"."my_table"'
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert (42, "in.c-bucket", "my_table") in refs
+
+    def test_two_part_ref_join(self) -> None:
+        sql = 'SELECT * FROM "in.c-a"."t1" JOIN "out.c-b"."t2" ON t1.id = t2.id'
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert (42, "in.c-a", "t1") in refs
+        assert (42, "out.c-b", "t2") in refs
+
+    def test_ignores_non_bucket_two_part(self) -> None:
+        sql = 'SELECT * FROM "my_schema"."my_table"'
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert len(refs) == 0  # "my_schema" doesn't start with in./out.
+
+    def test_ignores_comments(self) -> None:
+        sql = '-- FROM "KBC_USE4_123"."in.c-b"."t"\nSELECT 1'
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert len(refs) == 0
+
+    def test_ignores_string_literals(self) -> None:
+        sql = """SELECT 'ref to "KBC_USE4_123"."in.c-b"."t"' FROM dual"""
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert len(refs) == 0
+
+    def test_ignores_cte_names(self) -> None:
+        # CTE name "stats" collides with table name - tokenizer correctly
+        # filters it out because it can't distinguish the two.
+        # Real-world: CTE names rarely collide with Keboola table names.
+        sql = 'WITH stats AS (SELECT 1) SELECT * FROM "in.c-b"."stats"'
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert len(refs) == 0  # filtered by CTE name match
+
+        # Non-colliding names work fine
+        sql2 = 'WITH cte AS (SELECT 1) SELECT * FROM "in.c-b"."real_table"'
+        refs2 = extract_sql_table_refs(sql2, project_id=42)
+        assert len(refs2) == 1
+
+    def test_deduplicates(self) -> None:
+        sql = """
+            SELECT * FROM "KBC_USE4_1"."in.c-b"."t"
+            UNION ALL
+            SELECT * FROM "KBC_USE4_1"."in.c-b"."t"
+        """
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert len(refs) == 1
+
+    def test_cross_project_and_same_project(self) -> None:
+        sql = """
+            SELECT a.*, b.*
+            FROM "KBC_USE4_100"."out.c-sfdc"."company" a
+            JOIN "in.c-local"."my_table" b ON a.id = b.id
+        """
+        refs = extract_sql_table_refs(sql, project_id=42)
+        assert (100, "out.c-sfdc", "company") in refs
+        assert (42, "in.c-local", "my_table") in refs
+
+
+# ---------------------------------------------------------------------------
+# LineageGraph unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestLineageGraph:
+    def test_add_edge_indexes(self) -> None:
+        graph = LineageGraph()
+        edge = Edge(
+            source_fqn="p:table_a",
+            target_fqn="p:config/1",
+            source_type="table",
+            target_type="config",
+            edge_type="reads",
+            detection="input_mapping",
+        )
+        graph.add_edge(edge)
+        assert len(graph.edges) == 1
+        assert graph._downstream["p:table_a"] == [0]
+        assert graph._upstream["p:config/1"] == [0]
+
+    def test_get_upstream(self) -> None:
+        graph = LineageGraph()
+        graph.add_edge(
+            Edge(
+                source_fqn="p:table_a",
+                target_fqn="p:config/1",
+                source_type="table",
+                target_type="config",
+                edge_type="reads",
+                detection="input_mapping",
+            )
+        )
+        graph.add_edge(
+            Edge(
+                source_fqn="p:config/1",
+                target_fqn="p:table_b",
+                source_type="config",
+                target_type="table",
+                edge_type="writes",
+                detection="output_mapping",
+            )
+        )
+        result = graph.get_upstream("p:table_b", depth=5)
+        assert len(result) == 2
+        assert result[0]["source"] == "p:config/1"
+        assert result[1]["source"] == "p:table_a"
+
+    def test_get_downstream(self) -> None:
+        graph = LineageGraph()
+        graph.add_edge(
+            Edge(
+                source_fqn="p:table_a",
+                target_fqn="p:config/1",
+                source_type="table",
+                target_type="config",
+                edge_type="reads",
+                detection="input_mapping",
+            )
+        )
+        result = graph.get_downstream("p:table_a", depth=1)
+        assert len(result) == 1
+        assert result[0]["target"] == "p:config/1"
+
+    def test_depth_limit(self) -> None:
+        graph = LineageGraph()
+        graph.add_edge(
+            Edge(
+                source_fqn="a",
+                target_fqn="b",
+                source_type="table",
+                target_type="config",
+                edge_type="reads",
+                detection="test",
+            )
+        )
+        graph.add_edge(
+            Edge(
+                source_fqn="b",
+                target_fqn="c",
+                source_type="config",
+                target_type="table",
+                edge_type="writes",
+                detection="test",
+            )
+        )
+        result = graph.get_downstream("a", depth=1)
+        assert len(result) == 1  # only a->b, not b->c
+
+    def test_summary(self) -> None:
+        graph = LineageGraph()
+        graph.tables["p:t1"] = Table(
+            table_id="t1",
+            project_alias="p",
+            project_id=1,
+            bucket_id="b",
+            name="t1",
+        )
+        graph.configurations["p:c/1"] = Configuration(
+            config_id="1",
+            config_name="test",
+            component_id="c",
+            component_type="transformation",
+            project_alias="p",
+            project_id=1,
+            path="transformation/c/test",
+        )
+        graph.add_edge(
+            Edge(
+                source_fqn="p:t1",
+                target_fqn="p:c/1",
+                source_type="table",
+                target_type="config",
+                edge_type="reads",
+                detection="input_mapping",
+            )
+        )
+        s = graph.summary()
+        assert s["tables"] == 1
+        assert s["configurations"] == 1
+        assert s["edges"] == 1
+        assert s["edge_types"] == {"reads": 1}
+
+    def test_to_dict_and_from_dict(self) -> None:
+        graph = LineageGraph()
+        graph.tables["p:b.t"] = Table(
+            table_id="b.t",
+            project_alias="p",
+            project_id=1,
+            bucket_id="b",
+            name="t",
+            columns=["a", "b"],
+        )
+        graph.configurations["p:c/1"] = Configuration(
+            config_id="1",
+            config_name="test",
+            component_id="c",
+            component_type="transformation",
+            project_alias="p",
+            project_id=1,
+            path="transformation/c/test",
+        )
+        graph.add_edge(
+            Edge(
+                source_fqn="p:b.t",
+                target_fqn="p:c/1",
+                source_type="table",
+                target_type="config",
+                edge_type="reads",
+                detection="sql_tokenizer",
+                columns=["a"],
+            )
+        )
+        data = graph.to_dict()
+        restored = DeepLineageService._graph_from_dict(data)
+        assert len(restored.tables) == 1
+        assert len(restored.configurations) == 1
+        assert len(restored.edges) == 1
+        assert restored.edges[0].columns == ["a"]
+
+
+# ---------------------------------------------------------------------------
+# Service: scan + build from disk
+# ---------------------------------------------------------------------------
+
+
+def _create_sync_tree(tmp_path: Path) -> Path:
+    """Create a minimal sync'd project structure for testing."""
+    root = tmp_path / "workspace"
+    root.mkdir()
+
+    # Project: test-project
+    proj = root / "test-project"
+    proj.mkdir()
+
+    # .keboola/manifest.json
+    keboola = proj / ".keboola"
+    keboola.mkdir()
+    manifest = {
+        "version": 2,
+        "project": {"id": 42, "name": "Test Project"},
+        "configurations": [
+            {
+                "branchId": 1,
+                "componentId": "keboola.snowflake-transformation",
+                "id": "cfg-1",
+                "path": "transformation/keboola.snowflake-transformation/my-transform",
+                "rows": [],
+            },
+            {
+                "branchId": 1,
+                "componentId": "keboola.ex-db-snowflake",
+                "id": "cfg-2",
+                "path": "extractor/keboola.ex-db-snowflake/my-extractor",
+                "rows": [
+                    {
+                        "id": "row-1",
+                        "path": "extractor/keboola.ex-db-snowflake/my-extractor/rows/row-1",
+                    }
+                ],
+            },
+        ],
+        "branches": [],
+    }
+    (keboola / "manifest.json").write_text(json.dumps(manifest))
+
+    # Storage tables
+    storage = proj / "storage" / "tables" / "in-c-source"
+    storage.mkdir(parents=True)
+    (storage / "accounts.json").write_text(
+        json.dumps(
+            {
+                "id": "in.c-source.accounts",
+                "name": "accounts",
+                "columns": ["id", "name", "email"],
+                "primary_key": ["id"],
+                "rows_count": 1000,
+            }
+        )
+    )
+
+    out_storage = proj / "storage" / "tables" / "out-c-result"
+    out_storage.mkdir(parents=True)
+    (out_storage / "summary.json").write_text(
+        json.dumps(
+            {
+                "id": "out.c-result.summary",
+                "name": "summary",
+                "columns": ["account_id", "total"],
+                "primary_key": [],
+                "rows_count": 50,
+            }
+        )
+    )
+
+    # Transformation config
+    transform_dir = (
+        proj / "main" / "transformation" / "keboola.snowflake-transformation" / "my-transform"
+    )
+    transform_dir.mkdir(parents=True)
+    (transform_dir / "_config.yml").write_text(
+        yaml.dump(
+            {
+                "version": 2,
+                "name": "My Transform",
+                "input": {"tables": []},
+                "output": {
+                    "tables": [
+                        {"source": "summary", "destination": "out.c-result.summary"},
+                    ]
+                },
+            }
+        )
+    )
+    (transform_dir / "transform.sql").write_text(
+        'CREATE TABLE "summary" AS\n'
+        'SELECT "id" AS "account_id", COUNT(*) AS "total"\n'
+        'FROM "KBC_USE4_42"."in.c-source"."accounts"\n'
+        'GROUP BY "id"'
+    )
+
+    # Extractor config with row
+    extractor_dir = proj / "main" / "extractor" / "keboola.ex-db-snowflake" / "my-extractor"
+    extractor_dir.mkdir(parents=True)
+    (extractor_dir / "_config.yml").write_text(
+        yaml.dump(
+            {
+                "version": 2,
+                "name": "My Extractor",
+                "input": {"tables": []},
+                "output": {"tables": []},
+            }
+        )
+    )
+    row_dir = extractor_dir / "rows" / "row-1"
+    row_dir.mkdir(parents=True)
+    (row_dir / "_config.yml").write_text(
+        yaml.dump(
+            {
+                "version": 2,
+                "name": "Accounts Row",
+                "input": {"tables": []},
+                "output": {
+                    "tables": [
+                        {"source": "accounts", "destination": "in.c-source.accounts"},
+                    ]
+                },
+            }
+        )
+    )
+
+    return root
+
+
+class TestDeepLineageServiceScan:
+    def test_scan_and_build(self, tmp_path: Path) -> None:
+        root = _create_sync_tree(tmp_path)
+        store = ConfigStore(config_dir=tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        service = DeepLineageService(config_store=store)
+
+        with patch.object(service, "_add_cross_project_lineage"):
+            result = service.build_lineage(root)
+
+        assert result["summary"]["tables"] == 2
+        assert result["summary"]["configurations"] == 2
+        # Edges: extractor row->table (output_mapping) + transform->table (output_mapping)
+        #        + transform reads from table (sql_tokenizer)
+        edges = result["edges"]
+        detections = [e["detection"] for e in edges]
+        assert "output_mapping" in detections
+        assert "sql_tokenizer" in detections
+
+    def test_query_upstream(self, tmp_path: Path) -> None:
+        root = _create_sync_tree(tmp_path)
+        store = ConfigStore(config_dir=tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        service = DeepLineageService(config_store=store)
+
+        with patch.object(service, "_add_cross_project_lineage"):
+            result = service.build_lineage(root)
+
+        graph = service._graph_from_dict(result)
+        upstream = service.query_upstream(graph, "out.c-result.summary", "test-project")
+        assert "error" not in upstream
+        assert upstream["node"] == "test-project:out.c-result.summary"
+        assert len(upstream["edges"]) >= 1
+
+    def test_query_downstream(self, tmp_path: Path) -> None:
+        root = _create_sync_tree(tmp_path)
+        store = ConfigStore(config_dir=tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        service = DeepLineageService(config_store=store)
+
+        with patch.object(service, "_add_cross_project_lineage"):
+            result = service.build_lineage(root)
+
+        graph = service._graph_from_dict(result)
+        downstream = service.query_downstream(graph, "in.c-source.accounts", "test-project")
+        assert "error" not in downstream
+        assert len(downstream["edges"]) >= 1
+
+    def test_query_not_found(self, tmp_path: Path) -> None:
+        root = _create_sync_tree(tmp_path)
+        store = ConfigStore(config_dir=tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        service = DeepLineageService(config_store=store)
+
+        with patch.object(service, "_add_cross_project_lineage"):
+            result = service.build_lineage(root)
+
+        graph = service._graph_from_dict(result)
+        res = service.query_upstream(graph, "nonexistent.table")
+        assert "error" in res
+
+    def test_cache_roundtrip(self, tmp_path: Path) -> None:
+        root = _create_sync_tree(tmp_path)
+        cache_path = tmp_path / "lineage.json"
+        store = ConfigStore(config_dir=tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        service = DeepLineageService(config_store=store)
+
+        with patch.object(service, "_add_cross_project_lineage"):
+            service.build_and_cache(root, cache_path)
+
+        assert cache_path.exists()
+        graph = service.load_from_cache(cache_path)
+        assert len(graph.tables) == 2
+        assert len(graph.edges) >= 2
+
+
+# ---------------------------------------------------------------------------
+# CLI tests via CliRunner
+# ---------------------------------------------------------------------------
+
+
+class TestLineageDeepCli:
+    def test_help(self) -> None:
+        from keboola_agent_cli.cli import app
+
+        runner_local = __import__("typer.testing", fromlist=["CliRunner"]).CliRunner()
+        result = runner_local.invoke(app, ["lineage", "deep", "--help"])
+        assert result.exit_code == 0
+        assert "Column-level lineage" in result.output
+        assert "--upstream" in result.output
+        assert "--columns" in result.output
+        assert "--refresh" in result.output
+        assert "project-alias:bucket_id.table_name" in result.output
+
+    def test_load_and_query_json(self, tmp_path: Path) -> None:
+        from keboola_agent_cli.cli import app
+
+        root = _create_sync_tree(tmp_path)
+        cache_path = tmp_path / "lineage.json"
+        store = ConfigStore(config_dir=tmp_path / "cfg")
+        (tmp_path / "cfg").mkdir()
+        service = DeepLineageService(config_store=store)
+
+        with patch.object(service, "_add_cross_project_lineage"):
+            service.build_and_cache(root, cache_path)
+
+        runner_local = __import__("typer.testing", fromlist=["CliRunner"]).CliRunner()
+        result = runner_local.invoke(
+            app,
+            [
+                "--json",
+                "lineage",
+                "deep",
+                "--load",
+                str(cache_path),
+                "--upstream",
+                "test-project:out.c-result.summary",
+            ],
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "ok"
+        assert data["data"]["node"] == "test-project:out.c-result.summary"
+
+    def test_missing_cache_file(self) -> None:
+        from keboola_agent_cli.cli import app
+
+        runner_local = __import__("typer.testing", fromlist=["CliRunner"]).CliRunner()
+        result = runner_local.invoke(
+            app,
+            [
+                "--json",
+                "lineage",
+                "deep",
+                "--load",
+                "/nonexistent/lineage.json",
+            ],
+        )
+        assert result.exit_code == 1

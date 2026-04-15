@@ -54,6 +54,9 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 
 ## Data Lineage
 - `lineage [--project NAME]` -- cross-project data flow via bucket sharing
+- `lineage deep -d DIR -o FILE [--refresh] [--ai]` -- build column-level lineage graph from sync'd data
+- `lineage deep -l FILE --downstream "project:table" [--columns] [-c COL]` -- query downstream dependencies from cache
+- `lineage deep -l FILE --upstream "project:table" [--columns] [-c COL]` -- query upstream dependencies from cache
 
 ## Development Branches
 - `branch list [--project NAME]` -- list dev branches

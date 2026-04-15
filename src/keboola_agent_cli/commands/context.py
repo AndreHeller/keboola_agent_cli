@@ -215,6 +215,16 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent lineage [--project NAME]
     Cross-project data lineage via bucket sharing. --project repeatable.
 
+  kbagent lineage deep [--directory PATH] [--output PATH] [--load PATH]
+      [--upstream NODE] [--downstream NODE] [--column COL] [--columns]
+      [--project ALIAS] [--depth N] [--ai] [--ai-model MODEL] [--ai-workers N]
+      [--refresh]
+    Column-level lineage from sync'd data on disk. Scans all sync'd projects,
+    builds dependency graph with table and column-level granularity.
+    Supports upstream/downstream queries.
+    Node identifiers: full FQN project-alias:bucket_id.table_name or just table_id.
+    Workflow: 1) Build + cache graph, 2) Query from cache, 3) --refresh to rebuild.
+
 ### Organization Management
 
   kbagent org setup --org-id ID --url URL [--dry-run] [--yes] [--token-description PREFIX] [--refresh]

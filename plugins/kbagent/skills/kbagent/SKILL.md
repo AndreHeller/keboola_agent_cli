@@ -101,7 +101,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Show cross-project data flow edges via bucket sharing | `kbagent sharing edges` |
 | Build column-level lineage graph from sync'd data | `kbagent lineage build --output OUTPUT` |
 | Query upstream/downstream dependencies from a cached lineage graph | `kbagent lineage show --load LOAD` |
-| Start a local web server with interactive D3.js lineage visualization | `kbagent lineage serve --load LOAD` |
+| Start a local web server with interactive D3.js lineage visualization | `kbagent lineage server --load LOAD` |
 | Check Kai server health and MCP connection status | `kbagent kai ping` |
 | Ask Kai a one-shot question and get the full response | `kbagent kai ask --message MESSAGE` |
 | Send a message to Kai in a chat session | `kbagent kai chat --message MESSAGE` |

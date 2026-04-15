@@ -35,7 +35,7 @@ OPERATION_REGISTRY: dict[str, str] = {
     # Lineage
     "lineage.build": "read",
     "lineage.show": "read",
-    "lineage.serve": "read",
+    "lineage.server": "read",
     # Sharing
     "sharing.list": "read",
     "sharing.edges": "read",

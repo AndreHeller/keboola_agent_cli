@@ -962,7 +962,7 @@ class _LineageHandler(http.server.BaseHTTPRequestHandler):
         """Silence default stderr logging."""
 
 
-@lineage_app.command("serve")
+@lineage_app.command("server")
 def lineage_serve(
     ctx: typer.Context,
     load: Path = typer.Option(

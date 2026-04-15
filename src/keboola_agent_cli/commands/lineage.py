@@ -888,13 +888,14 @@ body {
     }
   });
 
-  // -- Render node list --
+  // -- Render node list (grouped by bucket / component type) --
   function renderNodeList() {
     nodeList.innerHTML = "";
     if (!allData || !selectedProject) return;
 
     var query = (nodeSearch.value || "").toLowerCase().trim();
-    var items = [];
+    // groups: { groupName: [items] }
+    var groups = {};
 
     if (currentTab === "tables") {
       var tables = allData.tables || {};
@@ -903,15 +904,15 @@ body {
         var pa = t.project_alias || fqn.split(":")[0] || "";
         if (pa !== selectedProject) continue;
         var tableId = t.table_id || fqn.split(":").slice(1).join(":") || fqn;
-        var displayName = tableId;
-        if (query && displayName.toLowerCase().indexOf(query) < 0 &&
-            fqn.toLowerCase().indexOf(query) < 0) continue;
+        if (query && tableId.toLowerCase().indexOf(query) < 0) continue;
         var colCount = Array.isArray(t.columns) ? t.columns.length : (t.columns || 0);
         var ec = edgeCounts[fqn] || 0;
-        items.push({
-          fqn: fqn,
-          name: displayName,
-          edges: ec,
+        // Group by bucket: "in.c-bucket" or "out.c-bucket"
+        var bucketId = t.bucket_id || tableId.split(".").slice(0, -1).join(".") || "other";
+        var tableName = t.name || tableId.split(".").pop() || tableId;
+        if (!groups[bucketId]) groups[bucketId] = [];
+        groups[bucketId].push({
+          fqn: fqn, name: tableName, edges: ec,
           meta: ec + " edges, " + colCount + " cols, " + (t.rows_count || 0).toLocaleString() + " rows"
         });
       }
@@ -923,31 +924,51 @@ body {
         if (cpa !== selectedProject) continue;
         var configName = c.config_name || c.name || cfqn;
         if (query && configName.toLowerCase().indexOf(query) < 0 &&
-            cfqn.toLowerCase().indexOf(query) < 0) continue;
+            (c.component_id || "").toLowerCase().indexOf(query) < 0) continue;
         var cec = edgeCounts[cfqn] || 0;
-        items.push({
-          fqn: cfqn,
-          name: configName,
-          edges: cec,
-          meta: cec + " edges, " + (c.component_id || c.component_type || "")
+        // Group by component_id
+        var compId = c.component_id || "other";
+        if (!groups[compId]) groups[compId] = [];
+        groups[compId].push({
+          fqn: cfqn, name: configName, edges: cec,
+          meta: cec + " edges"
         });
       }
     }
 
-    // Sort by edge count descending (most connected first)
-    items.sort(function(a, b) { return (b.edges || 0) - (a.edges || 0) || a.name.localeCompare(b.name); });
+    // Sort groups: by total edges in group descending
+    var groupNames = Object.keys(groups);
+    groupNames.sort(function(a, b) {
+      var sumA = groups[a].reduce(function(s, i) { return s + i.edges; }, 0);
+      var sumB = groups[b].reduce(function(s, i) { return s + i.edges; }, 0);
+      return sumB - sumA || a.localeCompare(b);
+    });
 
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      var div = document.createElement("div");
-      div.className = "node-item" + (item.fqn === selectedNode ? " selected" : "");
-      div.setAttribute("data-fqn", item.fqn);
-      div.innerHTML = '<div>' + escapeHtml(item.name) + '</div>' +
-        '<div class="node-meta">' + escapeHtml(item.meta) + '</div>';
-      div.addEventListener("click", (function(fqn) {
-        return function() { onNodeClick(fqn); };
-      })(item.fqn));
-      nodeList.appendChild(div);
+    for (var g = 0; g < groupNames.length; g++) {
+      var gName = groupNames[g];
+      var gItems = groups[gName];
+      gItems.sort(function(a, b) { return (b.edges || 0) - (a.edges || 0) || a.name.localeCompare(b.name); });
+
+      // Group header
+      var header = document.createElement("div");
+      header.style.cssText = "padding:6px 8px;font-size:11px;font-weight:600;color:#5f6368;" +
+        "background:#f1f3f4;border-bottom:1px solid #e0e0e0;position:sticky;top:0;z-index:1";
+      var totalEdges = gItems.reduce(function(s, i) { return s + i.edges; }, 0);
+      header.textContent = gName + " (" + gItems.length + ", " + totalEdges + " edges)";
+      nodeList.appendChild(header);
+
+      for (var i = 0; i < gItems.length; i++) {
+        var item = gItems[i];
+        var div = document.createElement("div");
+        div.className = "node-item" + (item.fqn === selectedNode ? " selected" : "");
+        div.setAttribute("data-fqn", item.fqn);
+        div.innerHTML = '<div>' + escapeHtml(item.name) + '</div>' +
+          '<div class="node-meta">' + escapeHtml(item.meta) + '</div>';
+        div.addEventListener("click", (function(fqn) {
+          return function() { onNodeClick(fqn); };
+        })(item.fqn));
+        nodeList.appendChild(div);
+      }
     }
   }
 

@@ -161,6 +161,83 @@ def lineage_build(
         formatter.console.print(f"\n  Saved to: {output}")
 
 
+# -- lineage info ----------------------------------------------------------
+
+
+@lineage_app.command("info")
+def lineage_info(
+    ctx: typer.Context,
+    load: Path = typer.Option(
+        ...,
+        "--load",
+        "-l",
+        help="Lineage JSON cache file (from `lineage build`).",
+    ),
+) -> None:
+    """Show what's in a cached lineage graph.
+
+    Displays per-project breakdown (tables, configs) and lists the most
+    connected tables -- good starting points for upstream/downstream queries.
+
+    Example:
+
+      kbagent lineage info -l lineage.json
+    """
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "deep_lineage_service")
+
+    if not load.exists():
+        formatter.error(message=f"Cache file not found: {load}", error_code="FILE_NOT_FOUND")
+        raise typer.Exit(code=1)
+
+    graph = service.load_from_cache(load)
+
+    if formatter.json_mode:
+        formatter.output(graph.to_dict())
+        return
+
+    summary = graph.summary()
+    formatter.console.print("\n[bold]Lineage Graph Contents[/bold]")
+    formatter.console.print(f"  Tables: {summary.get('tables', 0)}")
+    formatter.console.print(f"  Configurations: {summary.get('configurations', 0)}")
+    formatter.console.print(f"  Edges: {summary.get('edges', 0)}")
+    if summary.get("detection_methods"):
+        formatter.console.print("\n  Detection methods:")
+        for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
+            formatter.console.print(f"    {k}: {v}")
+
+    # Per-project breakdown
+    proj_tables: dict[str, int] = {}
+    proj_configs: dict[str, int] = {}
+    for t in graph.tables.values():
+        proj_tables[t.project_alias] = proj_tables.get(t.project_alias, 0) + 1
+    for c in graph.configurations.values():
+        proj_configs[c.project_alias] = proj_configs.get(c.project_alias, 0) + 1
+    all_projects = sorted(set(proj_tables) | set(proj_configs))
+    if all_projects:
+        formatter.console.print("\n  [bold]Projects:[/bold]")
+        for proj in all_projects:
+            nt = proj_tables.get(proj, 0)
+            nc = proj_configs.get(proj, 0)
+            formatter.console.print(f"    {proj:40s} {nt:4d} tables, {nc:4d} configs")
+
+    # Most connected tables
+    edge_counts: dict[str, int] = {}
+    for e in graph.edges:
+        for fqn in (e.source_fqn, e.target_fqn):
+            if fqn in graph.tables:
+                edge_counts[fqn] = edge_counts.get(fqn, 0) + 1
+    top = sorted(edge_counts.items(), key=lambda x: -x[1])[:15]
+    if top:
+        formatter.console.print(
+            "\n  [bold]Most connected tables[/bold]"
+            " (use with [cyan]lineage show --upstream/--downstream[/cyan]):"
+        )
+        for fqn, count in top:
+            t = graph.tables[fqn]
+            formatter.console.print(f"    {fqn:60s} {count:3d} edges, {t.rows_count:>12,} rows")
+
+
 # -- lineage show ----------------------------------------------------------
 
 
@@ -267,52 +344,12 @@ def lineage_show(
     graph = service.load_from_cache(load)
 
     if not upstream and not downstream:
-        # No query -> show detailed summary of what's in the lineage
-        if formatter.json_mode:
-            formatter.output(graph.to_dict())
-        else:
-            summary = graph.summary()
-            formatter.console.print("\n[bold]Lineage Graph Summary[/bold]")
-            formatter.console.print(f"  Tables: {summary.get('tables', 0)}")
-            formatter.console.print(f"  Configurations: {summary.get('configurations', 0)}")
-            formatter.console.print(f"  Edges: {summary.get('edges', 0)}")
-            if summary.get("detection_methods"):
-                formatter.console.print("\n  Detection methods:")
-                for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
-                    formatter.console.print(f"    {k}: {v}")
-
-            # Per-project breakdown
-            proj_tables: dict[str, int] = {}
-            proj_configs: dict[str, int] = {}
-            for t in graph.tables.values():
-                proj_tables[t.project_alias] = proj_tables.get(t.project_alias, 0) + 1
-            for c in graph.configurations.values():
-                proj_configs[c.project_alias] = proj_configs.get(c.project_alias, 0) + 1
-            all_projects = sorted(set(proj_tables) | set(proj_configs))
-            if all_projects:
-                formatter.console.print("\n  [bold]Projects:[/bold]")
-                for proj in all_projects:
-                    nt = proj_tables.get(proj, 0)
-                    nc = proj_configs.get(proj, 0)
-                    formatter.console.print(f"    {proj:40s} {nt:4d} tables, {nc:4d} configs")
-
-            # Most connected tables (best starting points for queries)
-            edge_counts: dict[str, int] = {}
-            for e in graph.edges:
-                for fqn in (e.source_fqn, e.target_fqn):
-                    if fqn in graph.tables:
-                        edge_counts[fqn] = edge_counts.get(fqn, 0) + 1
-            top = sorted(edge_counts.items(), key=lambda x: -x[1])[:15]
-            if top:
-                formatter.console.print(
-                    "\n  [bold]Most connected tables[/bold] (use with --upstream or --downstream):"
-                )
-                for fqn, count in top:
-                    t = graph.tables[fqn]
-                    formatter.console.print(
-                        f"    {fqn:60s} {count:3d} edges, {t.rows_count:>12,} rows"
-                    )
-        return
+        formatter.error(
+            message="Specify --upstream or --downstream to query.\n"
+            "Use `kbagent lineage info -l FILE` to see what's in the graph.",
+            error_code="MISSING_QUERY",
+        )
+        raise typer.Exit(code=2)
 
     display_opts = {"show_columns": columns, "filter_column": column}
 

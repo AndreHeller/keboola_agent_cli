@@ -100,6 +100,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Remove a linked bucket from a project | `kbagent sharing unlink --project PROJECT --bucket-id BUCKET-ID` |
 | Show cross-project data flow edges via bucket sharing | `kbagent sharing edges` |
 | Build column-level lineage graph from sync'd data | `kbagent lineage build --output OUTPUT` |
+| Show what's in a cached lineage graph | `kbagent lineage info --load LOAD` |
 | Query upstream/downstream dependencies from a cached lineage graph | `kbagent lineage show --load LOAD` |
 | Start a local web server with interactive lineage browser | `kbagent lineage server --load LOAD` |
 | Check Kai server health and MCP connection status | `kbagent kai ping` |

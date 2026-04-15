@@ -189,15 +189,16 @@ class TestE2ELineageDeep:
 
     # ── Load from cache ────────────────────────────────────────────
 
-    def test_02_load_cache_summary(self) -> None:
-        """Load from cache and show summary (human mode)."""
-        _step(2, "Load from cache - summary")
+    def test_02_info_summary(self) -> None:
+        """lineage info shows graph contents (projects, top tables)."""
+        _step(2, "Info summary")
 
-        result = _invoke(self.config_dir, ["lineage", "show", "-l", str(self.cache_file)])
+        result = _invoke(self.config_dir, ["lineage", "info", "-l", str(self.cache_file)])
         assert result.exit_code == 0
-        assert "Lineage Graph Summary" in result.output
+        assert "Lineage Graph Contents" in result.output
         assert "Tables:" in result.output
-        assert "Edges:" in result.output
+        assert "Projects:" in result.output
+        assert "Most connected tables" in result.output
 
     # ── Downstream query ───────────────────────────────────────────
 
@@ -358,6 +359,17 @@ class TestE2ELineageDeep:
         )
         assert result.exit_code == 1
 
+    def test_09b_show_without_query(self) -> None:
+        """lineage show without --upstream/--downstream returns usage error."""
+        _step(9, "Show without query -> error")
+
+        result = _invoke(
+            self.config_dir,
+            ["lineage", "show", "-l", str(self.cache_file)],
+        )
+        assert result.exit_code == 2
+        assert "lineage info" in result.output
+
     # ── Missing cache file ─────────────────────────────────────────
 
     def test_10_missing_cache(self) -> None:
@@ -443,12 +455,12 @@ class TestE2ELineageDeep:
     # ── Permission check ───────────────────────────────────────────
 
     def test_13_permission_registered(self) -> None:
-        """lineage.build and lineage.show are registered in the permission system."""
+        """lineage.info is registered in the permission system."""
         _step(13, "Permission registration check")
 
         result = _invoke(
             self.config_dir,
-            ["--json", "lineage", "show", "-l", str(self.cache_file)],
+            ["--json", "lineage", "info", "-l", str(self.cache_file)],
         )
         # If permission was missing, we'd get exit code 6
         assert result.exit_code == 0

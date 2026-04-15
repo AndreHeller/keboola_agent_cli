@@ -110,6 +110,49 @@ projects contain tables with the same name.
 | `sql_ai` | AI analysis of SQL code | Requires `--ai` |
 | `python_ai` | AI analysis of Python code | Requires `--ai` |
 
+## Inspect graph contents
+
+Use `lineage info` to see what's in a cached lineage graph without running
+a full query:
+
+```bash
+kbagent lineage info -l lineage.json
+```
+
+This shows per-project breakdown, table counts, and most connected nodes.
+
+## Output formats
+
+The `--format` option controls how `lineage show` renders the result:
+
+```bash
+# Default text output
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users"
+
+# Mermaid diagram (paste into mermaid.live or GitHub markdown)
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users" --format mermaid
+
+# ER diagram (entity-relationship style with column details)
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users" --format er --columns
+
+# Self-contained HTML page with interactive diagram
+kbagent lineage show -l lineage.json --downstream "my-project:in.c-main.users" --format html
+```
+
+Formats: `text` (default), `mermaid`, `html`, `er`.
+
+## Interactive lineage browser
+
+Start a local web server for interactive lineage exploration:
+
+```bash
+kbagent lineage server -l lineage.json
+kbagent lineage server -l lineage.json --port 8080 --host 0.0.0.0
+```
+
+Opens a sidebar-based node picker with mermaid/ER diagram rendering and
+export capabilities. Useful for exploring large graphs visually.
+
 ## Key details
 
 - **Non-sync'd projects**: cross-project references to projects not in the sync

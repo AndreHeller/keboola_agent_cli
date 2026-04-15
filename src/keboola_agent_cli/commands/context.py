@@ -223,9 +223,17 @@ Use `kbagent <command> --help` for full flag details and examples.
 
   kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE]
       [--column COL] [--columns] [--project ALIAS] [--depth N]
+      [--format text|mermaid|html|er]
     Query upstream/downstream from cached lineage graph (from lineage build).
     Node identifiers: full FQN project-alias:bucket_id.table_name or just table_id.
     --columns shows column-level mapping. -c COL traces one column.
+
+  kbagent lineage info --load PATH
+    Show what's in a cached lineage graph: projects, tables, most connected nodes.
+
+  kbagent lineage server --load PATH [--port N] [--host HOST]
+    Start interactive lineage browser in the web browser. Sidebar-based node
+    picker with mermaid/ER diagram rendering and export.
 
 ### Organization Management
 

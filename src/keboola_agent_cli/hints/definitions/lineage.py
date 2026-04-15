@@ -121,3 +121,33 @@ HintRegistry.register(
         ],
     )
 )
+
+# ── lineage info ─────────────────────────────────────────────────
+
+HintRegistry.register(
+    CommandHint(
+        cli_command="lineage.info",
+        description="Show what's in a cached lineage graph",
+        steps=[
+            HintStep(
+                comment="Load lineage graph and get summary",
+                client=ClientCall(
+                    method="load_from_cache",
+                    args={"cache_path": "{load}"},
+                    result_var="graph",
+                    result_hint="LineageGraph",
+                    client_type="storage",
+                ),
+                service=ServiceCall(
+                    service_class="DeepLineageService",
+                    service_module="deep_lineage_service",
+                    method="load_from_cache",
+                    args={"cache_path": "{load}"},
+                ),
+            ),
+        ],
+        notes=[
+            "Call graph.summary() to get counts, graph.tables for table list.",
+        ],
+    )
+)

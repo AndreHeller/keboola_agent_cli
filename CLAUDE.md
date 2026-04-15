@@ -274,7 +274,9 @@ kbagent storage load-file --project NAME --file-id ID --table-id ID [--increment
 kbagent storage unload-table --project NAME --table-id ID [--columns COL ...] [--limit N] [--tag TAG ...] [--download] [--output FILE] [--branch ID]
 
 kbagent lineage build --directory PATH --output PATH [--ai] [--refresh]
-kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N]
+kbagent lineage show --load PATH [--upstream NODE] [--downstream NODE] [--column COL] [--columns] [--project ALIAS] [--depth N] [--format text|mermaid|html|er]
+kbagent lineage info --load PATH
+kbagent lineage server --load PATH [--port N] [--host HOST]
 
 kbagent sharing list [--project NAME]
 kbagent sharing share --project ALIAS --bucket-id ID --type TYPE [--target-project-ids IDs] [--target-users EMAILS]

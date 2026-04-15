@@ -54,8 +54,10 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 
 ## Data Lineage
 - `lineage build -d DIR -o FILE [--refresh] [--ai]` -- build column-level lineage graph from sync'd data
-- `lineage show -l FILE --downstream "project:table" [--columns] [-c COL]` -- query downstream dependencies from cache
-- `lineage show -l FILE --upstream "project:table" [--columns] [-c COL]` -- query upstream dependencies from cache
+- `lineage show -l FILE --downstream "project:table" [--columns] [-c COL] [--format text|mermaid|html|er]` -- query downstream dependencies from cache
+- `lineage show -l FILE --upstream "project:table" [--columns] [-c COL] [--format text|mermaid|html|er]` -- query upstream dependencies from cache
+- `lineage info -l FILE` -- show graph contents: projects, tables, most connected nodes
+- `lineage server -l FILE [--port N]` -- interactive lineage browser in web browser
 - `sharing edges [--project NAME]` -- cross-project data flow edges via bucket sharing
 
 ## Development Branches

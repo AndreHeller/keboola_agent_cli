@@ -156,6 +156,7 @@ class JobService(BaseService):
         config_row_ids: list[str] | None = None,
         wait: bool = False,
         timeout: float = 300.0,
+        branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Create and optionally wait for a Queue API job.
 
@@ -166,6 +167,8 @@ class JobService(BaseService):
             config_row_ids: Optional row IDs (omit to run entire config).
             wait: If True, poll until job finishes or timeout.
             timeout: Max seconds to wait (only used when wait=True).
+            branch_id: Optional dev branch ID. When set, the job runs
+                on that branch instead of the default (production) branch.
 
         Returns:
             Job dict with project_alias. If wait=True, returns the
@@ -180,6 +183,7 @@ class JobService(BaseService):
                 component_id=component_id,
                 config_id=config_id,
                 config_row_ids=config_row_ids,
+                branch_id=branch_id,
             )
             job_id = str(job.get("id", ""))
 

@@ -2128,3 +2128,82 @@ class TestUploadTableClient:
         ):
             client.upload_table(table_id="in.c-b.users", file_path=str(csv_file))
         assert exc_info.value.error_code == "UPLOAD_FAILED"
+
+
+class TestCreateJob:
+    """Tests for create_job() - Queue API job creation with branch support."""
+
+    def test_create_job_without_branch(self, httpx_mock) -> None:
+        """create_job() without branch_id does not include branchId in body."""
+        job_response = {"id": 555, "status": "waiting", "component": "keboola.ex-http"}
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs",
+            method="POST",
+            json=job_response,
+            status_code=201,
+        )
+
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.create_job(component_id="keboola.ex-http", config_id="42")
+
+        assert result["id"] == 555
+        request = httpx_mock.get_request()
+        import json
+
+        body = json.loads(request.content)
+        assert body["component"] == "keboola.ex-http"
+        assert body["config"] == "42"
+        assert "branchId" not in body
+
+    def test_create_job_with_branch(self, httpx_mock) -> None:
+        """create_job() with branch_id includes branchId in POST body."""
+        job_response = {"id": 556, "status": "waiting", "branchId": "789"}
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs",
+            method="POST",
+            json=job_response,
+            status_code=201,
+        )
+
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.create_job(
+                component_id="keboola.snowflake-transformation",
+                config_id="100",
+                branch_id=789,
+            )
+
+        assert result["id"] == 556
+        assert result["branchId"] == "789"
+        request = httpx_mock.get_request()
+        import json
+
+        body = json.loads(request.content)
+        assert body["branchId"] == "789"
+        assert body["component"] == "keboola.snowflake-transformation"
+        assert body["config"] == "100"
+
+    def test_create_job_with_branch_and_row_ids(self, httpx_mock) -> None:
+        """create_job() with branch_id and config_row_ids includes both in body."""
+        job_response = {"id": 557, "status": "waiting"}
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs",
+            method="POST",
+            json=job_response,
+            status_code=201,
+        )
+
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.create_job(
+                component_id="keboola.ex-http",
+                config_id="42",
+                branch_id=123,
+                config_row_ids=["row1", "row2"],
+            )
+
+        assert result["id"] == 557
+        request = httpx_mock.get_request()
+        import json
+
+        body = json.loads(request.content)
+        assert body["branchId"] == "123"
+        assert body["configRowIds"] == ["row1", "row2"]

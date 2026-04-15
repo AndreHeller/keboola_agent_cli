@@ -1719,6 +1719,137 @@ class TestJobServiceGetJobDetail:
         mock_client.close.assert_called_once()
 
 
+class TestJobServiceRunJob:
+    """Tests for JobService.run_job() - including branch_id support."""
+
+    def test_run_job_without_branch(self, tmp_config_dir: Path) -> None:
+        """run_job without branch_id calls create_job without branch_id."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "prod",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-abc-defghijklmnopqrst",
+                project_name="Production",
+                project_id=1234,
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.create_job.return_value = {
+            "id": 555,
+            "status": "waiting",
+            "component": "keboola.ex-http",
+        }
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.run_job(
+            alias="prod",
+            component_id="keboola.ex-http",
+            config_id="42",
+        )
+
+        assert result["id"] == 555
+        assert result["project_alias"] == "prod"
+        mock_client.create_job.assert_called_once_with(
+            component_id="keboola.ex-http",
+            config_id="42",
+            config_row_ids=None,
+            branch_id=None,
+        )
+        mock_client.close.assert_called_once()
+
+    def test_run_job_with_branch(self, tmp_config_dir: Path) -> None:
+        """run_job with branch_id forwards it to create_job."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "dev",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-abc-defghijklmnopqrst",
+                project_name="Dev",
+                project_id=5678,
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.create_job.return_value = {
+            "id": 556,
+            "status": "waiting",
+            "branchId": "789",
+        }
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.run_job(
+            alias="dev",
+            component_id="keboola.snowflake-transformation",
+            config_id="100",
+            branch_id=789,
+        )
+
+        assert result["id"] == 556
+        assert result["project_alias"] == "dev"
+        mock_client.create_job.assert_called_once_with(
+            component_id="keboola.snowflake-transformation",
+            config_id="100",
+            config_row_ids=None,
+            branch_id=789,
+        )
+
+    def test_run_job_with_branch_and_wait(self, tmp_config_dir: Path) -> None:
+        """run_job with branch_id and wait=True polls until completion."""
+        store = ConfigStore(config_dir=tmp_config_dir)
+        store.add_project(
+            "dev",
+            ProjectConfig(
+                stack_url="https://connection.keboola.com",
+                token="901-abc-defghijklmnopqrst",
+                project_name="Dev",
+                project_id=5678,
+            ),
+        )
+
+        mock_client = MagicMock()
+        mock_client.create_job.return_value = {"id": 557, "status": "waiting"}
+        mock_client.wait_for_queue_job.return_value = {
+            "id": 557,
+            "status": "success",
+            "isFinished": True,
+        }
+
+        service = JobService(
+            config_store=store,
+            client_factory=lambda url, token: mock_client,
+        )
+
+        result = service.run_job(
+            alias="dev",
+            component_id="keboola.ex-http",
+            config_id="42",
+            branch_id=123,
+            wait=True,
+            timeout=60.0,
+        )
+
+        assert result["status"] == "success"
+        assert result["project_alias"] == "dev"
+        mock_client.create_job.assert_called_once_with(
+            component_id="keboola.ex-http",
+            config_id="42",
+            config_row_ids=None,
+            branch_id=123,
+        )
+        mock_client.wait_for_queue_job.assert_called_once_with("557", max_wait=60.0)
+
+
 # ---------------------------------------------------------------------------
 # Parallel-specific tests: deterministic ordering, unexpected exceptions
 # ---------------------------------------------------------------------------

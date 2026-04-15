@@ -1749,6 +1749,28 @@ class TestFullE2E:
         data = self._run_ok("storage", "buckets", "--project", self.alias)
         assert data["data"]["errors"] == []
 
+        # job run should respect active branch (issue #170)
+        # Find any config to run a quick job (no --wait)
+        cfg_data = self._run_ok("config", "list", "--project", self.alias)
+        configs = cfg_data["data"]["configs"]
+        if configs:
+            test_cfg = configs[0]
+            job_data = self._run_ok(
+                "job",
+                "run",
+                "--project",
+                self.alias,
+                "--component-id",
+                test_cfg["component_id"],
+                "--config-id",
+                test_cfg["config_id"],
+            )
+            job = job_data["data"]
+            assert str(job.get("branchId")) == str(branch_id), (
+                f"job run with active branch: expected branchId={branch_id}, "
+                f"got {job.get('branchId')}"
+            )
+
         # branch reset -- deactivate the dev branch
         data = self._run_ok("branch", "reset", "--project", self.alias)
 

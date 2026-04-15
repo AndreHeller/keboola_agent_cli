@@ -1045,10 +1045,17 @@ class DeepLineageService:
             'vertical-align:middle;margin-right:4px"></span> Configuration '
             '<span style="color:#888">(transformation, extractor, writer, app)</span>'
             "<br/>"
-            '<span style="color:#888;font-size:12px">'
-            "Edge labels: input_mapping / output_mapping (deterministic) "
-            "| sql_tokenizer (SQL parsing) | bucket_sharing (cross-project) "
-            "| ai (AI-detected)</span>"
+            "<br/>"
+            '<span style="display:inline-block;width:20px;height:3px;'
+            "background:#7c4dff;vertical-align:middle;margin-right:4px;"
+            'border-radius:2px"></span> Cross-project edge '
+            '<span style="color:#888">'
+            "(sql_tokenizer_cross_project, bucket_sharing, ai_cross_project)</span>"
+            "<br/>"
+            '<span style="color:#888;font-size:12px;margin-top:4px;display:block">'
+            "Edge labels: input_mapping / output_mapping (deterministic from config) "
+            "| sql_tokenizer (parsed from SQL code) | bucket_sharing (shared buckets) "
+            "| ai (AI-detected from code analysis)</span>"
             "</div>"
         )
         return (

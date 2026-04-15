@@ -267,7 +267,7 @@ def lineage_show(
     graph = service.load_from_cache(load)
 
     if not upstream and not downstream:
-        # No query -> show summary
+        # No query -> show detailed summary of what's in the lineage
         if formatter.json_mode:
             formatter.output(graph.to_dict())
         else:
@@ -276,24 +276,42 @@ def lineage_show(
             formatter.console.print(f"  Tables: {summary.get('tables', 0)}")
             formatter.console.print(f"  Configurations: {summary.get('configurations', 0)}")
             formatter.console.print(f"  Edges: {summary.get('edges', 0)}")
-            if summary.get("edge_types"):
-                formatter.console.print("\n  Edge types:")
-                for k, v in sorted(summary["edge_types"].items(), key=lambda x: -x[1]):
-                    formatter.console.print(f"    {k}: {v}")
             if summary.get("detection_methods"):
                 formatter.console.print("\n  Detection methods:")
                 for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
                     formatter.console.print(f"    {k}: {v}")
-            # Show example table FQNs so the user knows what to query
-            table_fqns = sorted(graph.tables.keys()) if graph.tables else []
-            if table_fqns:
-                show_limit = 10
-                formatter.console.print("\n  Example tables (use with --upstream or --downstream):")
-                for fqn in table_fqns[:show_limit]:
-                    formatter.console.print(f"    {fqn}")
-                remaining = len(table_fqns) - show_limit
-                if remaining > 0:
-                    formatter.console.print(f"    ... and {remaining} more")
+
+            # Per-project breakdown
+            proj_tables: dict[str, int] = {}
+            proj_configs: dict[str, int] = {}
+            for t in graph.tables.values():
+                proj_tables[t.project_alias] = proj_tables.get(t.project_alias, 0) + 1
+            for c in graph.configurations.values():
+                proj_configs[c.project_alias] = proj_configs.get(c.project_alias, 0) + 1
+            all_projects = sorted(set(proj_tables) | set(proj_configs))
+            if all_projects:
+                formatter.console.print("\n  [bold]Projects:[/bold]")
+                for proj in all_projects:
+                    nt = proj_tables.get(proj, 0)
+                    nc = proj_configs.get(proj, 0)
+                    formatter.console.print(f"    {proj:40s} {nt:4d} tables, {nc:4d} configs")
+
+            # Most connected tables (best starting points for queries)
+            edge_counts: dict[str, int] = {}
+            for e in graph.edges:
+                for fqn in (e.source_fqn, e.target_fqn):
+                    if fqn in graph.tables:
+                        edge_counts[fqn] = edge_counts.get(fqn, 0) + 1
+            top = sorted(edge_counts.items(), key=lambda x: -x[1])[:15]
+            if top:
+                formatter.console.print(
+                    "\n  [bold]Most connected tables[/bold] (use with --upstream or --downstream):"
+                )
+                for fqn, count in top:
+                    t = graph.tables[fqn]
+                    formatter.console.print(
+                        f"    {fqn:60s} {count:3d} edges, {t.rows_count:>12,} rows"
+                    )
         return
 
     display_opts = {"show_columns": columns, "filter_column": column}

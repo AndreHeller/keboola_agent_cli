@@ -269,9 +269,13 @@ class TestConfigRenameCli:
         result = runner.invoke(app, ["config", "rename", "--help"])
 
         assert result.exit_code == 0
-        assert "Rename a configuration" in result.output
-        assert "--project" in result.output
-        assert "--component-id" in result.output
-        assert "--config-id" in result.output
-        assert "--name" in result.output
-        assert "--directory" in result.output
+        # Strip ANSI escapes for CI where Rich adds color codes
+        import re
+
+        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "Rename a configuration" in output
+        assert "--project" in output
+        assert "--component-id" in output
+        assert "--config-id" in output
+        assert "--name" in output
+        assert "--directory" in output

@@ -5,6 +5,7 @@ Each command is tested in both JSON and human output modes, plus error cases.
 """
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -17,6 +18,11 @@ from keboola_agent_cli.errors import KeboolaApiError
 from keboola_agent_cli.services.kai_service import KaiService
 
 runner = CliRunner()
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes for CI where Rich adds color codes."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 class TestKaiPingCli:
@@ -178,8 +184,9 @@ class TestKaiPingCli:
         result = runner.invoke(app, ["kai", "ping", "--help"])
 
         assert result.exit_code == 0
-        assert "Check Kai server health" in result.output
-        assert "--project" in result.output
+        output = _strip_ansi(result.output)
+        assert "Check Kai server health" in output
+        assert "--project" in output
 
 
 class TestKaiAskCli:
@@ -301,9 +308,10 @@ class TestKaiAskCli:
         result = runner.invoke(app, ["kai", "ask", "--help"])
 
         assert result.exit_code == 0
-        assert "Ask Kai a one-shot question" in result.output
-        assert "--message" in result.output
-        assert "--project" in result.output
+        output = _strip_ansi(result.output)
+        assert "Ask Kai a one-shot question" in output
+        assert "--message" in output
+        assert "--project" in output
 
 
 class TestKaiChatCli:
@@ -430,9 +438,10 @@ class TestKaiChatCli:
         result = runner.invoke(app, ["kai", "chat", "--help"])
 
         assert result.exit_code == 0
-        assert "Send a message to Kai" in result.output
-        assert "--message" in result.output
-        assert "--chat-id" in result.output
+        output = _strip_ansi(result.output)
+        assert "Send a message to Kai" in output
+        assert "--message" in output
+        assert "--chat-id" in output
 
 
 class TestKaiHistoryCli:
@@ -604,9 +613,10 @@ class TestKaiHistoryCli:
         result = runner.invoke(app, ["kai", "history", "--help"])
 
         assert result.exit_code == 0
-        assert "List recent Kai chat sessions" in result.output
-        assert "--project" in result.output
-        assert "--limit" in result.output
+        output = _strip_ansi(result.output)
+        assert "List recent Kai chat sessions" in output
+        assert "--project" in output
+        assert "--limit" in output
 
 
 class TestKaiConfigError:

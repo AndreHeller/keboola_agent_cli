@@ -55,13 +55,11 @@ def lineage_build(
         "-o",
         help="Output JSON file for the lineage graph (required).",
     ),
-    ai: bool = typer.Option(False, "--ai", help="Enable AI analysis of SQL/Python code."),
-    ai_model: str = typer.Option(
-        "haiku",
-        "--ai-model",
-        help="AI model: haiku (fast/cheap) or sonnet (better quality).",
+    ai: bool = typer.Option(
+        False,
+        "--ai",
+        help="Generate AI task file for SQL/Python analysis (2-step: AI processes, then re-build).",
     ),
-    ai_workers: int = typer.Option(4, "--ai-workers", help="Parallel AI workers (default: 4)."),
     refresh: bool = typer.Option(
         False,
         "--refresh",
@@ -74,13 +72,16 @@ def lineage_build(
     table dependencies via config mappings and SQL parsing, and saves the
     graph to a JSON cache file for fast queries with `lineage show`.
 
-    Workflow:
+    AI-enhanced analysis is a 2-step process:
 
-      kbagent lineage build -d /path -o lineage.json
+      1. kbagent lineage build -d /path -o lineage.json --ai
+         (builds deterministic graph + generates .lineage_ai_tasks.json)
 
-      kbagent lineage build -d /path -o lineage.json --ai
+      2. AI agent reads the task file, analyzes each code file from disk,
+         writes results to .lineage_ai_results.json
 
-      kbagent lineage build -d /path -o lineage.json --refresh --ai
+      3. kbagent lineage build -d /path -o lineage.json
+         (automatically applies AI results if .lineage_ai_results.json exists)
     """
     if should_hint(ctx):
         emit_hint(
@@ -88,8 +89,6 @@ def lineage_build(
             "lineage.build",
             directory=str(directory),
             ai=ai,
-            ai_model=ai_model,
-            ai_workers=ai_workers,
         )
         return
 
@@ -114,12 +113,7 @@ def lineage_build(
                 f" ({summary.get('failed', 0)} failed)\n"
             )
 
-    result = service.build_lineage(
-        root,
-        include_ai=ai,
-        ai_model=ai_model,
-        ai_workers=ai_workers,
-    )
+    result = service.build_lineage(root, generate_ai_tasks=ai)
 
     try:
         with open(output, "w") as f:
@@ -143,6 +137,21 @@ def lineage_build(
             formatter.console.print("\n  Detection methods:")
             for k, v in sorted(summary["detection_methods"].items(), key=lambda x: -x[1]):
                 formatter.console.print(f"    {k}: {v}")
+        # AI status
+        ai_status = result.get("ai_status", {})
+        if ai_status.get("ai_results_applied"):
+            formatter.console.print(
+                f"\n  AI results applied: {ai_status.get('ai_edges_added', 0)} edges added"
+            )
+        if ai_status.get("ai_tasks_generated"):
+            formatter.console.print(
+                f"\n  [bold]AI tasks generated: {ai_status['ai_tasks_generated']}[/bold]"
+                f" (already done: {ai_status.get('ai_already_done', 0)})"
+            )
+            formatter.console.print(f"  Task file: {ai_status['ai_tasks_file']}")
+            formatter.console.print(
+                "  Next: let your AI agent process the tasks, then re-run this command."
+            )
         formatter.console.print(f"\n  Saved to: {output}")
 
 

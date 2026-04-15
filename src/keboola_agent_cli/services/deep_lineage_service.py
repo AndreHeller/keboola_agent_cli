@@ -12,7 +12,6 @@ import json
 import logging
 import re
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,31 +34,8 @@ PYTHON_COMPONENTS = {
     "kds-team.app-custom-python",
 }
 
-AI_CACHE_FILE = ".lineage_ai_cache.json"
-
-AI_SQL_PROMPT = (
-    "Extract table dependencies from this Snowflake SQL. "
-    'Tables use format "KBC_USE4_{{pid}}"."bucket"."table" or just "table_alias".\n'
-    "Project: {project_alias} (pid={project_id})\n\n"
-    "Return JSON only:\n"
-    '{{"inputs":[{{"pid":123,"bucket":"x","table":"y","columns":["a","b"]}}],'
-    '"outputs":[{{"table":"local_name","columns":["c","d"]}}],'
-    '"col_map":[{{"out":"c","in_table":"bucket.table","in_col":"a",'
-    '"transform":"direct|expression"}}]}}\n\n'
-    "SQL:\n{sql_code}"
-)
-
-AI_PYTHON_PROMPT = (
-    "Extract Keboola table dependencies from this Python code beyond what "
-    "input/output mapping covers.\n"
-    "Project: {project_alias} (pid={project_id})\n"
-    "Known inputs: {known_inputs}\nKnown outputs: {known_outputs}\n\n"
-    "Return JSON only:\n"
-    '{{"extra_inputs":[{{"table_id":"bucket.table","evidence":"code line"}}],'
-    '"extra_outputs":[{{"table_id":"bucket.table","evidence":"code line"}}],'
-    '"external":[{{"system":"name","op":"read|write"}}]}}\n\n'
-    "Python:\n{python_code}"
-)
+AI_TASKS_FILE = ".lineage_ai_tasks.json"
+AI_RESULTS_FILE = ".lineage_ai_results.json"
 
 
 # ---------------------------------------------------------------------------
@@ -391,22 +367,21 @@ class DeepLineageService:
         self,
         root: Path,
         *,
-        include_ai: bool = False,
-        ai_model: str = "haiku",
-        ai_workers: int = 4,
+        generate_ai_tasks: bool = False,
     ) -> dict[str, Any]:
         """Build comprehensive lineage graph from sync'd data.
 
+        Automatically applies AI results from .lineage_ai_results.json
+        if present. Use generate_ai_tasks=True to write a task file
+        for the AI agent to process.
+
         Args:
             root: Root directory containing sync'd project subdirectories.
-            include_ai: Whether to use AI for SQL/Python analysis.
-            ai_model: Claude model for AI analysis (haiku/sonnet/opus).
-            ai_workers: Number of parallel AI workers.
+            generate_ai_tasks: If True, write .lineage_ai_tasks.json for AI.
 
         Returns:
-            Dict with lineage graph data and summary.
+            Dict with lineage graph data, summary, and ai_status.
         """
-        # Build project_id -> alias mapping from config store
         project_id_to_alias = self._build_project_map()
 
         # Phase 1: Scan
@@ -418,13 +393,17 @@ class DeepLineageService:
         # Phase 3: Cross-project sharing
         self._add_cross_project_lineage(graph, root)
 
-        # Phase 4: AI analysis (optional)
-        if include_ai:
-            self._run_ai_analysis(
-                graph, root, project_id_to_alias, model=ai_model, max_workers=ai_workers
-            )
+        # Phase 4a: Apply existing AI results (if any)
+        ai_status = self._apply_ai_results_file(graph, root, project_id_to_alias)
 
-        return graph.to_dict()
+        # Phase 4b: Generate AI task file (if requested)
+        if generate_ai_tasks:
+            task_status = self._generate_ai_tasks(graph, root)
+            ai_status.update(task_status)
+
+        result = graph.to_dict()
+        result["ai_status"] = ai_status
+        return result
 
     def build_and_cache(
         self,
@@ -727,176 +706,183 @@ class DeepLineageService:
         except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
             pass
 
-    def _run_ai_analysis(
+    def _apply_ai_results_file(
         self,
         graph: LineageGraph,
         root: Path,
         project_id_to_alias: dict[int, str],
-        model: str = "haiku",
-        max_workers: int = 4,
-    ) -> None:
-        cache_path = root / AI_CACHE_FILE
-        ai_cache: dict[str, dict] = {}
-        if cache_path.exists():
-            with open(cache_path) as f:
-                ai_cache = json.load(f)
+    ) -> dict[str, Any]:
+        """Apply AI results from .lineage_ai_results.json if present."""
+        results_path = root / AI_RESULTS_FILE
+        if not results_path.exists():
+            return {"ai_results_applied": False}
 
+        with open(results_path) as f:
+            ai_results = json.load(f)
+
+        applied = 0
+        for entry in ai_results.get("results", []):
+            config_fqn = entry.get("config_fqn", "")
+            config = graph.configurations.get(config_fqn)
+            if not config:
+                continue
+
+            # SQL-style results: inputs with pid/bucket/table
+            for inp in entry.get("inputs", []):
+                ref_pid = inp.get("pid", config.project_id)
+                bucket = inp.get("bucket", "")
+                table = inp.get("table", "")
+                if not bucket or not table:
+                    continue
+                table_id = f"{bucket}.{table}"
+                ref_alias = project_id_to_alias.get(ref_pid, config.project_alias)
+                table_fqn = f"{ref_alias}:{table_id}"
+                if any(
+                    e.source_fqn == table_fqn and e.target_fqn == config_fqn for e in graph.edges
+                ):
+                    continue
+                detection = "ai_cross_project" if ref_pid != config.project_id else "ai"
+                graph.add_edge(
+                    Edge(
+                        source_fqn=table_fqn,
+                        target_fqn=config_fqn,
+                        source_type="table",
+                        target_type="config",
+                        edge_type="reads",
+                        detection=detection,
+                        columns=inp.get("columns", []),
+                    )
+                )
+                applied += 1
+
+            # Python-style results: extra_inputs with table_id
+            for inp in entry.get("extra_inputs", []):
+                table_id = inp.get("table_id", "")
+                if not table_id:
+                    continue
+                table_fqn = f"{config.project_alias}:{table_id}"
+                if any(
+                    e.source_fqn == table_fqn and e.target_fqn == config_fqn for e in graph.edges
+                ):
+                    continue
+                graph.add_edge(
+                    Edge(
+                        source_fqn=table_fqn,
+                        target_fqn=config_fqn,
+                        source_type="table",
+                        target_type="config",
+                        edge_type="reads",
+                        detection="ai",
+                    )
+                )
+                applied += 1
+
+            # Column mappings
+            for cm in entry.get("col_map", []):
+                out_col = cm.get("out", "")
+                in_table = cm.get("in_table", "")
+                in_col = cm.get("in_col", "")
+                if out_col and in_col:
+                    for edge in graph.edges:
+                        if edge.target_fqn == config_fqn and in_table in edge.source_fqn:
+                            edge.column_mapping[out_col] = f"{in_table}.{in_col}"
+
+        return {"ai_results_applied": True, "ai_edges_added": applied}
+
+    def _generate_ai_tasks(self, graph: LineageGraph, root: Path) -> dict[str, Any]:
+        """Generate .lineage_ai_tasks.json for AI agent to process."""
         configs_needing_ai = [
             c
             for c in graph.configurations.values()
             if c.code and ((c.code_type == "sql" and not c.input_tables) or c.code_type == "python")
         ]
 
-        # Check cache: valid if FQN exists AND code hash matches
-        uncached = []
-        for c in configs_needing_ai:
-            code_hash = hashlib.sha256(c.code.encode()).hexdigest()[:16]
-            cached = ai_cache.get(c.fqn)
-            if cached and cached.get("_code_hash") == code_hash:
-                self._apply_ai_result(graph, c, cached, project_id_to_alias)
-            else:
-                uncached.append(c)
+        # Check which already have results
+        results_path = root / AI_RESULTS_FILE
+        existing_hashes: dict[str, str] = {}
+        if results_path.exists():
+            with open(results_path) as f:
+                for entry in json.load(f).get("results", []):
+                    fqn = entry.get("config_fqn", "")
+                    h = entry.get("_code_hash", "")
+                    if fqn and h:
+                        existing_hashes[fqn] = h
 
-        if not uncached:
-            return
-
-        def _analyze_one(config: Configuration) -> tuple[str, str, dict | None]:
+        tasks = []
+        for config in configs_needing_ai:
             code_hash = hashlib.sha256(config.code.encode()).hexdigest()[:16]
-            if config.code_type == "sql":
-                return config.fqn, code_hash, self._ai_analyze_sql(config, model)
-            elif config.code_type == "python":
-                return config.fqn, code_hash, self._ai_analyze_python(config, model)
-            return config.fqn, code_hash, None
+            if existing_hashes.get(config.fqn) == code_hash:
+                continue  # already analyzed, code unchanged
 
-        workers = min(max_workers, len(uncached)) or 1
-        completed = 0
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_analyze_one, c): c for c in uncached}
-            for future in as_completed(futures):
-                config = futures[future]
-                completed += 1
-                try:
-                    fqn, code_hash, result = future.result()
-                    if result:
-                        result["_code_hash"] = code_hash
-                        ai_cache[fqn] = result
-                        self._apply_ai_result(graph, config, result, project_id_to_alias)
-                except Exception:
-                    pass
-                if completed % 10 == 0:
-                    with open(cache_path, "w") as f:
-                        json.dump(ai_cache, f, indent=2)
+            # Resolve the code file path on disk
+            project_dir = root / config.project_alias
+            full_path = project_dir / "main" / config.path
+            code_file = full_path / ("transform.sql" if config.code_type == "sql" else "code.py")
 
-        with open(cache_path, "w") as f:
-            json.dump(ai_cache, f, indent=2)
+            task: dict[str, Any] = {
+                "config_fqn": config.fqn,
+                "project_alias": config.project_alias,
+                "project_id": config.project_id,
+                "component_id": config.component_id,
+                "config_name": config.config_name,
+                "code_type": config.code_type,
+                "code_file": str(code_file),
+                "_code_hash": code_hash,
+            }
+            if config.code_type == "python":
+                task["known_inputs"] = [t.get("source", "") for t in config.input_tables[:10]]
+                task["known_outputs"] = [
+                    t.get("destination", "") for t in config.output_tables[:10]
+                ]
+            tasks.append(task)
 
-    def _ai_analyze_sql(self, config: Configuration, model: str) -> dict | None:
-        prompt = AI_SQL_PROMPT.format(
-            project_alias=config.project_alias,
-            project_id=config.project_id,
-            sql_code=config.code[:6000],
-        )
-        return self._call_ai(prompt, model)
+        tasks_data = {
+            "description": "AI analysis tasks for column-level lineage.",
+            "instructions": (
+                "For each task, read the code_file from disk and extract table dependencies. "
+                "Write results to .lineage_ai_results.json (see output_format). "
+                "Then re-run `kbagent lineage build` to incorporate the results."
+            ),
+            "output_file": str(root / AI_RESULTS_FILE),
+            "output_format": {
+                "results": [
+                    {
+                        "config_fqn": "project:component/config_id",
+                        "_code_hash": "hash from task",
+                        "inputs": [
+                            {"pid": 123, "bucket": "in.c-x", "table": "y", "columns": ["a"]}
+                        ],
+                        "outputs": [{"table": "local_name", "columns": ["b"]}],
+                        "col_map": [
+                            {
+                                "out": "b",
+                                "in_table": "in.c-x.y",
+                                "in_col": "a",
+                                "transform": "direct",
+                            }
+                        ],
+                        "extra_inputs": [{"table_id": "bucket.table", "evidence": "code line"}],
+                        "external": [{"system": "Slack", "op": "write"}],
+                    }
+                ]
+            },
+            "sql_context": (
+                'Snowflake SQL uses \'KBC_USE4_{project_id}\'."bucket_id"."table_name" '
+                "for cross-project references. Same-project tables may use just "
+                '"bucket_id"."table_name" or aliased names from input mapping.'
+            ),
+            "tasks": tasks,
+        }
 
-    def _ai_analyze_python(self, config: Configuration, model: str) -> dict | None:
-        known_in = [t.get("source", "") for t in config.input_tables[:10]]
-        known_out = [t.get("destination", "") for t in config.output_tables[:10]]
-        prompt = AI_PYTHON_PROMPT.format(
-            project_alias=config.project_alias,
-            project_id=config.project_id,
-            known_inputs=", ".join(known_in) or "none",
-            known_outputs=", ".join(known_out) or "none",
-            python_code=config.code[:6000],
-        )
-        return self._call_ai(prompt, model)
+        tasks_path = root / AI_TASKS_FILE
+        with open(tasks_path, "w") as f:
+            json.dump(tasks_data, f, indent=2)
 
-    def _apply_ai_result(
-        self,
-        graph: LineageGraph,
-        config: Configuration,
-        result: dict,
-        project_id_to_alias: dict[int, str],
-    ) -> None:
-        for inp in result.get("inputs", []):
-            ref_pid = inp.get("pid", config.project_id)
-            bucket = inp.get("bucket", "")
-            table = inp.get("table", "")
-            if not bucket or not table:
-                continue
-            table_id = f"{bucket}.{table}"
-            ref_alias = project_id_to_alias.get(ref_pid, config.project_alias)
-            table_fqn = f"{ref_alias}:{table_id}"
-            if any(e.source_fqn == table_fqn and e.target_fqn == config.fqn for e in graph.edges):
-                continue
-            detection = "sql_ai_cross_project" if ref_pid != config.project_id else "sql_ai"
-            graph.add_edge(
-                Edge(
-                    source_fqn=table_fqn,
-                    target_fqn=config.fqn,
-                    source_type="table",
-                    target_type="config",
-                    edge_type="reads",
-                    detection=detection,
-                    columns=inp.get("columns", []),
-                )
-            )
-
-        for inp in result.get("extra_inputs", []):
-            table_id = inp.get("table_id", "")
-            if not table_id:
-                continue
-            table_fqn = f"{config.project_alias}:{table_id}"
-            if any(e.source_fqn == table_fqn and e.target_fqn == config.fqn for e in graph.edges):
-                continue
-            graph.add_edge(
-                Edge(
-                    source_fqn=table_fqn,
-                    target_fqn=config.fqn,
-                    source_type="table",
-                    target_type="config",
-                    edge_type="reads",
-                    detection="python_ai",
-                )
-            )
-
-    @staticmethod
-    def _call_ai(prompt: str, model: str = "haiku") -> dict | None:
-        try:
-            result = subprocess.run(
-                ["claude", "-p", prompt, "--model", model, "--output-format", "json"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                response = json.loads(result.stdout)
-                text = response.get("result", "")
-                return DeepLineageService._extract_json(text)
-        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
-            pass
-        return None
-
-    @staticmethod
-    def _extract_json(text: str) -> dict | None:
-        try:
-            return json.loads(text)
-        except (json.JSONDecodeError, TypeError):
-            pass
-        if not text:
-            return None
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-        return None
+        return {
+            "ai_tasks_generated": len(tasks),
+            "ai_tasks_file": str(tasks_path),
+            "ai_already_done": len(configs_needing_ai) - len(tasks),
+        }
 
     @staticmethod
     def _graph_from_dict(data: dict) -> LineageGraph:

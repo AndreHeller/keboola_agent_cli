@@ -25,9 +25,7 @@ HintRegistry.register(
                     method="build_lineage",
                     args={
                         "root": "{directory}",
-                        "include_ai": "{ai}",
-                        "ai_model": "{ai_model}",
-                        "ai_workers": "{ai_workers}",
+                        "generate_ai_tasks": "{ai}",
                     },
                 ),
             ),
@@ -36,7 +34,9 @@ HintRegistry.register(
             "This command reads from disk (sync'd data), not from the API. "
             "Run 'kbagent sync pull --all-projects' first.",
             "No --hint client equivalent — use --hint service to get Python code.",
-            "For cached usage: service.build_and_cache(root, Path('lineage.json')).",
+            "AI is 2-step: build with generate_ai_tasks=True writes .lineage_ai_tasks.json. "
+            "AI agent processes tasks and writes .lineage_ai_results.json. "
+            "Re-run build_lineage() to apply.",
         ],
     )
 )

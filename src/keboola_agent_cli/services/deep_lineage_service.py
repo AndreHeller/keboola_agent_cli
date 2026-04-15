@@ -950,8 +950,11 @@ class DeepLineageService:
 
     @staticmethod
     def _escape_mermaid_label(text: str) -> str:
-        """Escape characters that break mermaid label syntax."""
-        return text.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+        """Escape characters that break mermaid label syntax, preserving <br/>."""
+        # Temporarily protect <br/>, escape everything, restore
+        text = text.replace("<br/>", "\x00BR\x00")
+        text = text.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+        return text.replace("\x00BR\x00", "<br/>")
 
     @staticmethod
     def render_mermaid(

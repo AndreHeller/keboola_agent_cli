@@ -747,7 +747,12 @@ body {
       </p>
     </div>
     <div id="loading">Querying lineage...</div>
-    <div id="mermaid-output" class="mermaid-container"></div>
+    <div id="zoom-controls" style="display:none;position:absolute;top:60px;right:20px;z-index:10">
+      <button onclick="zoomDiagram(1.2)" title="Zoom in" style="padding:4px 10px;font-size:18px;cursor:pointer">+</button>
+      <button onclick="zoomDiagram(1/1.2)" title="Zoom out" style="padding:4px 10px;font-size:18px;cursor:pointer">&minus;</button>
+      <button onclick="zoomDiagram(0)" title="Reset zoom" style="padding:4px 10px;font-size:12px;cursor:pointer">Reset</button>
+    </div>
+    <div id="mermaid-output" class="mermaid-container" style="overflow:auto;transform-origin:top left"></div>
   </div>
 </div>
 
@@ -756,6 +761,7 @@ body {
 (function() {
   // State
   var allData = null;       // full lineage data from /data.json
+  var edgeCounts = {};      // fqn -> number of connections
   var currentTab = "tables";
   var selectedProject = "";
   var selectedNode = null;  // FQN of the selected node
@@ -789,6 +795,12 @@ body {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       allData = data;
+      // Pre-compute edge counts per node
+      edgeCounts = {};
+      (data.edges || []).forEach(function(e) {
+        edgeCounts[e.source_fqn] = (edgeCounts[e.source_fqn] || 0) + 1;
+        edgeCounts[e.target_fqn] = (edgeCounts[e.target_fqn] || 0) + 1;
+      });
       populateProjects();
     })
     .catch(function(err) {
@@ -895,10 +907,12 @@ body {
         if (query && displayName.toLowerCase().indexOf(query) < 0 &&
             fqn.toLowerCase().indexOf(query) < 0) continue;
         var colCount = Array.isArray(t.columns) ? t.columns.length : (t.columns || 0);
+        var ec = edgeCounts[fqn] || 0;
         items.push({
           fqn: fqn,
           name: displayName,
-          meta: colCount + " cols, " + (t.rows_count || 0).toLocaleString() + " rows"
+          edges: ec,
+          meta: ec + " edges, " + colCount + " cols, " + (t.rows_count || 0).toLocaleString() + " rows"
         });
       }
     } else {
@@ -910,15 +924,18 @@ body {
         var configName = c.config_name || c.name || cfqn;
         if (query && configName.toLowerCase().indexOf(query) < 0 &&
             cfqn.toLowerCase().indexOf(query) < 0) continue;
+        var cec = edgeCounts[cfqn] || 0;
         items.push({
           fqn: cfqn,
           name: configName,
-          meta: c.component_id || c.component_type || ""
+          edges: cec,
+          meta: cec + " edges, " + (c.component_id || c.component_type || "")
         });
       }
     }
 
-    items.sort(function(a, b) { return a.name.localeCompare(b.name); });
+    // Sort by edge count descending (most connected first)
+    items.sort(function(a, b) { return (b.edges || 0) - (a.edges || 0) || a.name.localeCompare(b.name); });
 
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
@@ -1024,6 +1041,8 @@ body {
     mermaidOutput.innerHTML = "";
     mermaid.render(id, code).then(function(result) {
       mermaidOutput.innerHTML = result.svg;
+      currentZoom = 1;
+      document.getElementById("zoom-controls").style.display = "block";
     }).catch(function(err) {
       mermaidOutput.innerHTML = '<p style="color:#d93025;padding:20px">' +
         'Mermaid render error: ' + escapeHtml(err.message) + '</p>' +
@@ -1034,6 +1053,14 @@ body {
   }
 
   // -- Helpers --
+  var currentZoom = 1;
+  window.zoomDiagram = function(factor) {
+    if (factor === 0) { currentZoom = 1; } else { currentZoom *= factor; }
+    currentZoom = Math.max(0.2, Math.min(3, currentZoom));
+    var svg = mermaidOutput.querySelector("svg");
+    if (svg) { svg.style.transform = "scale(" + currentZoom + ")"; svg.style.transformOrigin = "top left"; }
+  };
+
   function escapeHtml(text) {
     var div = document.createElement("div");
     div.appendChild(document.createTextNode(text || ""));

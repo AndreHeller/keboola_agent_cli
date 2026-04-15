@@ -1212,13 +1212,15 @@ body {
     mermaidOutput.innerHTML = "";
     mermaid.render(id, code).then(function(result) {
       mermaidOutput.innerHTML = result.svg;
-      // Override mermaid's tiny default size - let SVG use its natural size
+      // Fit SVG to fill the diagram area
       var svg = mermaidOutput.querySelector("svg");
       if (svg) {
-        svg.setAttribute("width", "100%");
-        svg.removeAttribute("height");
-        svg.style.minWidth = "800px";
-        svg.style.maxWidth = "none";
+        var area = document.getElementById("diagram-area");
+        var w = area.clientWidth - 20;
+        var h = area.clientHeight - 20;
+        svg.setAttribute("width", w);
+        svg.setAttribute("height", h);
+        svg.style.display = "block";
       }
       currentZoom = 1;
       document.getElementById("zoom-controls").style.display = "block";

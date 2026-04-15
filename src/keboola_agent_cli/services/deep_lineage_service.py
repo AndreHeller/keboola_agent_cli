@@ -1044,12 +1044,12 @@ class DeepLineageService:
         edges: list[dict],
         graph: LineageGraph,
         node_fqn: str,
+        show_columns: bool = False,
     ) -> str:
-        """Render lineage as a mermaid ER diagram showing column-level relationships.
+        """Render lineage as a mermaid ER diagram.
 
-        Tables become entities with their columns as attributes.
-        Column mappings (from AI) are shown as attribute comments.
-        Configs appear as relationship labels between tables.
+        Without show_columns: entities with name/row count + relationships.
+        With show_columns: full column list with PK markers and AI mappings.
         """
         lines: list[str] = ["erDiagram"]
 
@@ -1083,16 +1083,22 @@ class DeepLineageService:
             t = graph.tables.get(fqn)
             if not t:
                 continue
-            # Short name for entity: project:table_name
             entity_name = f"{t.project_alias}:{t.name}"
             safe_name = entity_name.replace('"', "'")
+
+            if not show_columns:
+                # Compact: just entity name with row count as single attribute
+                lines.append(f'    "{safe_name}" {{')
+                lines.append(f'        int rows "{t.rows_count:,} rows, {len(t.columns)} cols"')
+                lines.append("    }")
+                continue
+
+            # Full column list
             lines.append(f'    "{safe_name}" {{')
             pk_cols = set(t.primary_key) if t.primary_key else set()
             for col in t.columns[:30]:
-                # Sanitize column name for mermaid ER (alphanumeric + underscore only)
                 safe_col = re.sub(r"[^a-zA-Z0-9_]", "_", col)
                 pk_marker = " PK" if col in pk_cols else ""
-                # Check if any config maps to/from this column
                 comment = ""
                 for cfg_fqn, cm in col_maps.items():
                     for out_col, src_expr in cm.items():

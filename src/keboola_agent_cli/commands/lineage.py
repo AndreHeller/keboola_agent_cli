@@ -1366,7 +1366,12 @@ class _LineageHandler(http.server.BaseHTTPRequestHandler):
         show_cols = params.get("columns", [""])[0] == "true"
 
         if view == "er":
-            mermaid_code = DeepLineageService.render_er_diagram(edges, self.graph, node)
+            mermaid_code = DeepLineageService.render_er_diagram(
+                edges,
+                self.graph,
+                node,
+                show_columns=show_cols,
+            )
         else:
             mermaid_code = DeepLineageService.render_mermaid(
                 edges,

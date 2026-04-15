@@ -282,7 +282,7 @@ def lineage_show(
         "text",
         "--format",
         "-f",
-        help="Output format: text, mermaid, or html.",
+        help="Output format: text, mermaid, html, or er (entity-relationship).",
     ),
 ) -> None:
     """Query upstream/downstream dependencies from a cached lineage graph.
@@ -329,7 +329,7 @@ def lineage_show(
     formatter = get_formatter(ctx)
     service = get_service(ctx, "deep_lineage_service")
 
-    valid_formats = ("text", "mermaid", "html")
+    valid_formats = ("text", "mermaid", "html", "er")
     if format not in valid_formats:
         formatter.error(
             message=f"Invalid format '{format}'. Must be one of: {', '.join(valid_formats)}",
@@ -367,7 +367,7 @@ def lineage_show(
             if column:
                 query_result = _filter_column_json(query_result, column)
             formatter.output(query_result)
-        elif format in ("mermaid", "html"):
+        elif format in ("mermaid", "html", "er"):
             _output_mermaid_or_html(formatter, service, graph, query_result, "upstream", format)
         else:
             _format_lineage_tree(formatter, graph, query_result, "upstream", **display_opts)
@@ -386,7 +386,7 @@ def lineage_show(
             if column:
                 query_result = _filter_column_json(query_result, column)
             formatter.output(query_result)
-        elif format in ("mermaid", "html"):
+        elif format in ("mermaid", "html", "er"):
             _output_mermaid_or_html(formatter, service, graph, query_result, "downstream", format)
         else:
             _format_lineage_tree(formatter, graph, query_result, "downstream", **display_opts)
@@ -403,11 +403,16 @@ def _output_mermaid_or_html(
     direction: str,
     output_format: str,
 ) -> None:
-    """Render query result as mermaid or HTML and output it."""
+    """Render query result as mermaid, html, or er diagram and output it."""
     from ..services.deep_lineage_service import DeepLineageService
 
     node_fqn = query_result["node"]
     edges = query_result.get("edges", [])
+
+    if output_format == "er":
+        er_code = DeepLineageService.render_er_diagram(edges, graph, node_fqn)
+        typer.echo(er_code)
+        return
 
     mermaid_code = DeepLineageService.render_mermaid(edges, graph, direction, node_fqn)
 
@@ -735,8 +740,14 @@ body {
     <h2 id="diagram-title">Select a node to explore lineage</h2>
     <span id="main-stats"></span>
     <div id="export-buttons" style="display:none">
+      <label style="font-size:12px;margin-right:8px;cursor:pointer">
+        <input type="radio" name="view-mode" value="flow" checked> Flow
+      </label>
       <label style="font-size:12px;margin-right:12px;cursor:pointer">
-        <input type="checkbox" id="show-columns"> Show columns
+        <input type="radio" name="view-mode" value="er"> ER
+      </label>
+      <label style="font-size:12px;margin-right:12px;cursor:pointer">
+        <input type="checkbox" id="show-columns"> Columns
       </label>
       <button id="btn-mermaid">Download Mermaid</button>
       <button id="btn-json">Download JSON</button>
@@ -900,6 +911,9 @@ body {
   document.getElementById("show-columns").addEventListener("change", function() {
     if (selectedNode) queryNode(selectedNode);
   });
+  document.querySelectorAll('input[name="view-mode"]').forEach(function(r) {
+    r.addEventListener("change", function() { if (selectedNode) queryNode(selectedNode); });
+  });
 
   // -- Render node list (grouped by bucket / component type) --
   function renderNodeList() {
@@ -1024,7 +1038,8 @@ body {
     var depth = getDepth();
 
     var showCols = document.getElementById("show-columns").checked;
-    var cp = showCols ? "&columns=true" : "";
+    var viewMode = document.querySelector('input[name="view-mode"]:checked').value;
+    var cp = (showCols ? "&columns=true" : "") + (viewMode === "er" ? "&view=er" : "");
 
     placeholder.style.display = "none";
     mermaidOutput.innerHTML = "";
@@ -1324,14 +1339,19 @@ class _LineageHandler(http.server.BaseHTTPRequestHandler):
             return
 
         edges = result.get("edges", [])
+        view = params.get("view", ["flow"])[0]
         show_cols = params.get("columns", [""])[0] == "true"
-        mermaid_code = DeepLineageService.render_mermaid(
-            edges,
-            self.graph,
-            direction,
-            node,
-            show_columns=show_cols,
-        )
+
+        if view == "er":
+            mermaid_code = DeepLineageService.render_er_diagram(edges, self.graph, node)
+        else:
+            mermaid_code = DeepLineageService.render_mermaid(
+                edges,
+                self.graph,
+                direction,
+                node,
+                show_columns=show_cols,
+            )
         self._serve(mermaid_code, "text/plain")
 
     def _serve(self, content: str, content_type: str) -> None:

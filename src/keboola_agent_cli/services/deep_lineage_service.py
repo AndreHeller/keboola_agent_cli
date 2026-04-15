@@ -1040,6 +1040,118 @@ class DeepLineageService:
         return "\n".join(lines)
 
     @staticmethod
+    def render_er_diagram(
+        edges: list[dict],
+        graph: LineageGraph,
+        node_fqn: str,
+    ) -> str:
+        """Render lineage as a mermaid ER diagram showing column-level relationships.
+
+        Tables become entities with their columns as attributes.
+        Column mappings (from AI) are shown as attribute comments.
+        Configs appear as relationship labels between tables.
+        """
+        lines: list[str] = ["erDiagram"]
+
+        # Collect all table FQNs and their column mappings
+        table_fqns: set[str] = set()
+        config_fqns: set[str] = set()
+        # edge source/target -> column_mapping
+        col_maps: dict[str, dict[str, str]] = {}
+
+        if node_fqn in graph.tables:
+            table_fqns.add(node_fqn)
+
+        for edge in edges:
+            src, tgt = edge["source"], edge["target"]
+            if src in graph.tables:
+                table_fqns.add(src)
+            if tgt in graph.tables:
+                table_fqns.add(tgt)
+            if src in graph.configurations:
+                config_fqns.add(src)
+            if tgt in graph.configurations:
+                config_fqns.add(tgt)
+            cm = edge.get("column_mapping", {})
+            if cm:
+                # Key by config FQN (the node that transforms data)
+                cfg = tgt if tgt in graph.configurations else src
+                col_maps[cfg] = {**col_maps.get(cfg, {}), **cm}
+
+        # Emit entity definitions for tables
+        for fqn in sorted(table_fqns):
+            t = graph.tables.get(fqn)
+            if not t:
+                continue
+            # Short name for entity: project:table_name
+            entity_name = f"{t.project_alias}:{t.name}"
+            safe_name = entity_name.replace('"', "'")
+            lines.append(f'    "{safe_name}" {{')
+            pk_cols = set(t.primary_key) if t.primary_key else set()
+            for col in t.columns[:30]:
+                pk_marker = " PK" if col in pk_cols else ""
+                # Check if any config maps to/from this column
+                comment = ""
+                for cfg_fqn, cm in col_maps.items():
+                    for out_col, src_expr in cm.items():
+                        if src_expr.endswith(f".{col}") and fqn in src_expr.replace(f".{col}", ""):
+                            cfg = graph.configurations.get(cfg_fqn)
+                            cfg_label = cfg.config_name if cfg else cfg_fqn.split("/")[-1]
+                            comment = f' "-> {out_col} via {cfg_label}"'
+                            break
+                        if out_col == col:
+                            src_short = src_expr.split(".")[-1]
+                            comment = f' "from {src_short}"'
+                            break
+                lines.append(f"        string {col}{pk_marker}{comment}")
+            if len(t.columns) > 30:
+                lines.append(f'        string _more_ "+{len(t.columns) - 30} more columns"')
+            lines.append("    }")
+
+        # Emit relationships: table --via config--> table
+        # Find pairs: input table -> config -> output table
+        input_of: dict[str, list[str]] = {}  # config -> [input table fqns]
+        output_of: dict[str, list[str]] = {}  # config -> [output table fqns]
+        for edge in edges:
+            src, tgt = edge["source"], edge["target"]
+            if src in graph.tables and tgt in config_fqns:
+                input_of.setdefault(tgt, []).append(src)
+            if src in config_fqns and tgt in graph.tables:
+                output_of.setdefault(src, []).append(tgt)
+
+        seen_rels: set[tuple[str, str]] = set()
+        for cfg_fqn in config_fqns:
+            cfg = graph.configurations.get(cfg_fqn)
+            cfg_label = cfg.config_name if cfg else cfg_fqn.split("/")[-1]
+            safe_label = cfg_label.replace('"', "'")
+            inputs = input_of.get(cfg_fqn, [])
+            outputs = output_of.get(cfg_fqn, [])
+            for inp_fqn in inputs:
+                for out_fqn in outputs:
+                    inp_t = graph.tables.get(inp_fqn)
+                    out_t = graph.tables.get(out_fqn)
+                    if not inp_t or not out_t:
+                        continue
+                    key = (inp_fqn, out_fqn)
+                    if key in seen_rels:
+                        continue
+                    seen_rels.add(key)
+                    inp_name = f"{inp_t.project_alias}:{inp_t.name}".replace('"', "'")
+                    out_name = f"{out_t.project_alias}:{out_t.name}".replace('"', "'")
+                    lines.append(f'    "{inp_name}" ||--o{{ "{out_name}" : "{safe_label}"')
+
+            # If config has only inputs and no outputs (writer), show as relationship to config
+            if inputs and not outputs:
+                for inp_fqn in inputs:
+                    inp_t = graph.tables.get(inp_fqn)
+                    if not inp_t:
+                        continue
+                    inp_name = f"{inp_t.project_alias}:{inp_t.name}".replace('"', "'")
+                    lines.append(f'    "{inp_name}" }}o--|| "{safe_label}" : "writes"')
+
+        return "\n".join(lines)
+
+    @staticmethod
     def render_html(mermaid_code: str, title: str) -> str:
         """Wrap mermaid code in a self-contained HTML page.
 

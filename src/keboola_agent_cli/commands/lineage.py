@@ -719,6 +719,7 @@ body {
     <div class="radio-group">
       <label><input type="radio" name="direction" value="upstream" checked> Upstream</label>
       <label><input type="radio" name="direction" value="downstream"> Downstream</label>
+      <label><input type="radio" name="direction" value="both"> Both</label>
     </div>
     <label>Depth</label>
     <div id="depth-row">
@@ -949,12 +950,23 @@ body {
       var gItems = groups[gName];
       gItems.sort(function(a, b) { return (b.edges || 0) - (a.edges || 0) || a.name.localeCompare(b.name); });
 
-      // Group header
-      var header = document.createElement("div");
-      header.style.cssText = "padding:6px 8px;font-size:11px;font-weight:600;color:#5f6368;" +
-        "background:#f1f3f4;border-bottom:1px solid #e0e0e0;position:sticky;top:0;z-index:1";
+      // Foldable group header
       var totalEdges = gItems.reduce(function(s, i) { return s + i.edges; }, 0);
-      header.textContent = gName + " (" + gItems.length + ", " + totalEdges + " edges)";
+      var header = document.createElement("div");
+      header.style.cssText = "padding:8px 8px;font-size:11px;font-weight:600;color:#1a73e8;" +
+        "background:#e8f0fe;border-bottom:1px solid #d2e3fc;cursor:pointer;user-select:none;" +
+        "display:flex;justify-content:space-between;align-items:center";
+      header.innerHTML = '<span>\u25BC ' + escapeHtml(gName) + '</span>' +
+        '<span style="color:#5f6368;font-weight:400">' + gItems.length + ', ' + totalEdges + ' edges</span>';
+      var groupContainer = document.createElement("div");
+      header.addEventListener("click", (function(container, hdr) {
+        return function() {
+          var hidden = container.style.display === "none";
+          container.style.display = hidden ? "block" : "none";
+          hdr.querySelector("span").textContent = (hidden ? "\u25BC " : "\u25B6 ") +
+            hdr.querySelector("span").textContent.substring(2);
+        };
+      })(groupContainer, header));
       nodeList.appendChild(header);
 
       for (var i = 0; i < gItems.length; i++) {
@@ -967,8 +979,9 @@ body {
         div.addEventListener("click", (function(fqn) {
           return function() { onNodeClick(fqn); };
         })(item.fqn));
-        nodeList.appendChild(div);
+        groupContainer.appendChild(div);
       }
+      nodeList.appendChild(groupContainer);
     }
   }
 
@@ -1003,10 +1016,42 @@ body {
     loading.style.display = "block";
     exportBtns.style.display = "none";
     mainStats.textContent = "";
+
+    if (direction === "both") {
+      // Fetch both directions and merge
+      diagramTitle.textContent = "Both directions of " + fqn + ", depth " + depth;
+      Promise.all([
+        fetch("/api/query?node=" + encodeURIComponent(fqn) + "&direction=upstream&depth=" + depth).then(function(r){return r.json();}),
+        fetch("/api/query?node=" + encodeURIComponent(fqn) + "&direction=downstream&depth=" + depth).then(function(r){return r.json();}),
+        fetch("/api/mermaid?node=" + encodeURIComponent(fqn) + "&direction=upstream&depth=" + depth).then(function(r){return r.text();}),
+        fetch("/api/mermaid?node=" + encodeURIComponent(fqn) + "&direction=downstream&depth=" + depth).then(function(r){return r.text();})
+      ]).then(function(res) {
+        loading.style.display = "none";
+        var upQ = res[0], downQ = res[1], upM = res[2], downM = res[3];
+        var allEdges = (upQ.edges || []).concat(downQ.edges || []);
+        var merged = {node: fqn, edges: allEdges};
+        // Dedupe mermaid: take upstream lines, add downstream-only node/edge lines
+        var upLines = upM.split("\n"); var downLines = downM.split("\n");
+        var seen = {}; upLines.forEach(function(l){seen[l.trim()]=true;});
+        var extra = downLines.filter(function(l){return l.trim() && !seen[l.trim()] && !l.trim().startsWith("graph ") && !l.trim().startsWith("classDef ");});
+        var combined = upLines.slice(0,-2).concat(extra).concat(upLines.slice(-2));
+        // Change direction to LR for combined view
+        combined[0] = "graph LR";
+        var mermaidCode = combined.join("\n");
+        lastQueryResult = merged; lastMermaidCode = mermaidCode;
+        var nodeSet = {}; if(merged.node) nodeSet[merged.node]=true;
+        allEdges.forEach(function(e){nodeSet[e.source]=true;nodeSet[e.target]=true;});
+        mainStats.textContent = Object.keys(nodeSet).length+" nodes, "+allEdges.length+" edges";
+        exportBtns.style.display = "flex";
+        if(allEdges.length===0){mermaidOutput.innerHTML='<p style="color:#888;padding:20px">No dependencies found in either direction.</p>';return;}
+        buildIdMap(merged); renderMermaid(mermaidCode);
+      });
+      return;
+    }
+
     diagramTitle.textContent = direction.charAt(0).toUpperCase() + direction.slice(1) +
       " of " + fqn + ", depth " + depth;
 
-    // Fetch both query data and mermaid in parallel
     var queryUrl = "/api/query?node=" + encodeURIComponent(fqn) +
       "&direction=" + direction + "&depth=" + depth;
     var mermaidUrl = "/api/mermaid?node=" + encodeURIComponent(fqn) +
@@ -1030,7 +1075,6 @@ body {
       lastMermaidCode = mermaidCode;
 
       var edges = queryResult.edges || [];
-      // Count unique nodes in edges
       var nodeSet = {};
       if (queryResult.node) nodeSet[queryResult.node] = true;
       for (var i = 0; i < edges.length; i++) {
@@ -1042,8 +1086,17 @@ body {
       exportBtns.style.display = "flex";
 
       if (edges.length === 0) {
+        var opposite = direction === "upstream" ? "downstream" : "upstream";
         mermaidOutput.innerHTML = '<p style="color:#888;padding:20px">No ' +
-          direction + ' dependencies found.</p>';
+          direction + ' dependencies found.</p>' +
+          '<p style="padding:0 20px"><a href="#" style="color:#1a73e8" onclick="' +
+          "document.querySelector('input[name=direction][value=" + opposite + "]').checked=true;" +
+          "document.querySelector('.node-item.selected').click();return false;" +
+          '">Try ' + opposite + ' direction</a> ' +
+          'or <a href="#" style="color:#1a73e8" onclick="' +
+          "document.querySelector('input[name=direction][value=both]').checked=true;" +
+          "document.querySelector('.node-item.selected').click();return false;" +
+          '">show both directions</a></p>';
         return;
       }
 

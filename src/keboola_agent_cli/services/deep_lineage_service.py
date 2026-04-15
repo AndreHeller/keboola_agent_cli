@@ -1031,17 +1031,42 @@ class DeepLineageService:
             Complete HTML document string.
         """
         escaped_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        legend = (
+            '<div style="margin:20px 0;padding:12px 16px;background:#f5f5f5;'
+            'border-radius:8px;font-size:13px;display:inline-block">'
+            "<strong>Legend</strong><br/>"
+            '<span style="display:inline-block;width:14px;height:14px;'
+            "background:#e1f5fe;border:2px solid #0288d1;border-radius:3px;"
+            'vertical-align:middle;margin-right:4px"></span> Table '
+            '<span style="color:#888">(project:bucket.table &mdash; columns, rows)</span>'
+            "&nbsp;&nbsp;&nbsp;"
+            '<span style="display:inline-block;width:14px;height:14px;'
+            "background:#e8f5e9;border:2px solid #388e3c;border-radius:3px;"
+            'vertical-align:middle;margin-right:4px"></span> Configuration '
+            '<span style="color:#888">(transformation, extractor, writer, app)</span>'
+            "<br/>"
+            '<span style="color:#888;font-size:12px">'
+            "Edge labels: input_mapping / output_mapping (deterministic) "
+            "| sql_tokenizer (SQL parsing) | bucket_sharing (cross-project) "
+            "| ai (AI-detected)</span>"
+            "</div>"
+        )
         return (
             "<!DOCTYPE html>\n"
             "<html>\n"
             "<head>\n"
             f"  <title>{escaped_title}</title>\n"
             '  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>\n'
-            "  <style>body { font-family: system-ui; max-width: 100%; padding: 20px; } "
-            ".mermaid { text-align: center; }</style>\n"
+            "  <style>\n"
+            "    body { font-family: system-ui, -apple-system, sans-serif;\n"
+            "           max-width: 100%; padding: 20px; color: #333; }\n"
+            "    h2 { margin-bottom: 4px; }\n"
+            "    .mermaid { text-align: center; margin-top: 16px; }\n"
+            "  </style>\n"
             "</head>\n"
             "<body>\n"
             f"  <h2>{escaped_title}</h2>\n"
+            f"  {legend}\n"
             f'  <div class="mermaid">\n{mermaid_code}\n  </div>\n'
             "  <script>mermaid.initialize({startOnLoad: true, theme: 'default', "
             "flowchart: {curve: 'basis'}});</script>\n"

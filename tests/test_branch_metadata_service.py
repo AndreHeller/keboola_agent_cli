@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from helpers import setup_single_project
+from keboola_agent_cli.constants import METADATA_NOT_FOUND
 from keboola_agent_cli.errors import ConfigError, KeboolaApiError
 from keboola_agent_cli.services.branch_service import (
     PROJECT_DESCRIPTION_KEY,
@@ -84,7 +85,7 @@ class TestBranchMetadataGet:
 
     def test_get_missing_key_raises_not_found(self, tmp_config_dir: Path) -> None:
         mock_client = MagicMock()
-        mock_client.get_branch_metadata_value.return_value = None
+        mock_client.get_branch_metadata_value.return_value = METADATA_NOT_FOUND
         store = setup_single_project(tmp_config_dir)
         svc = BranchService(
             config_store=store,
@@ -158,7 +159,7 @@ class TestProjectDescription:
     def test_get_returns_empty_when_unset(self, tmp_config_dir: Path) -> None:
         """A missing project description returns '', not an error."""
         mock_client = MagicMock()
-        mock_client.get_branch_metadata_value.return_value = None
+        mock_client.get_branch_metadata_value.return_value = METADATA_NOT_FOUND
         store = setup_single_project(tmp_config_dir)
         svc = BranchService(
             config_store=store,

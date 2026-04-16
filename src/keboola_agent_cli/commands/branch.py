@@ -409,6 +409,12 @@ def branch_metadata_delete(
         "--metadata-id",
         help="Numeric ID of the metadata entry (from metadata-list)",
     ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
     branch: str = typer.Option(
         "default",
         "--branch",
@@ -427,6 +433,14 @@ def branch_metadata_delete(
         return
     formatter = get_formatter(ctx)
     service = get_service(ctx, "branch_service")
+
+    if (
+        not yes
+        and not formatter.json_mode
+        and not typer.confirm(f"Delete metadata entry {metadata_id} from project '{project}'?")
+    ):
+        formatter.console.print("Aborted.")
+        raise typer.Exit(code=0)
 
     try:
         result = service.delete_branch_metadata(

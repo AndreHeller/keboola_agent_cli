@@ -26,6 +26,7 @@ from .constants import (
     FILE_DOWNLOAD_TIMEOUT,
     FILE_UPLOAD_TIMEOUT,
     IMPORT_JOB_MAX_WAIT,
+    METADATA_NOT_FOUND,
     QUERY_JOB_MAX_WAIT,
     QUERY_JOB_POLL_INTERVAL,
     STORAGE_JOB_MAX_WAIT,
@@ -658,12 +659,13 @@ class KeboolaClient(BaseHttpClient):
             branch_id: Branch ID or the literal "default" for the main branch.
 
         Returns:
-            The string value, or None if the key is not present.
+            The string value if the key exists (may be None if the API stored null),
+            or ``METADATA_NOT_FOUND`` sentinel if the key is not present.
         """
         for entry in self.list_branch_metadata(branch_id=branch_id):
             if entry.get("key") == key:
                 return entry.get("value")
-        return None
+        return METADATA_NOT_FOUND
 
     def list_buckets(
         self, include: str | None = None, branch_id: int | None = None

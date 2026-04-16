@@ -2316,7 +2316,9 @@ class TestBranchMetadata:
         assert value == "# My project"
 
     def test_get_branch_metadata_value_missing(self, httpx_mock) -> None:
-        """get_branch_metadata_value() returns None when the key is absent."""
+        """get_branch_metadata_value() returns sentinel when the key is absent."""
+        from keboola_agent_cli.constants import METADATA_NOT_FOUND
+
         httpx_mock.add_response(
             url=f"{_BASE}/v2/storage/branch/default/metadata",
             method="GET",
@@ -2325,4 +2327,4 @@ class TestBranchMetadata:
         )
         with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
             value = client.get_branch_metadata_value(key="KBC.projectDescription")
-        assert value is None
+        assert value is METADATA_NOT_FOUND

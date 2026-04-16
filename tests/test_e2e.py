@@ -493,7 +493,7 @@ class TestFullE2E:
         self._test_branch_lifecycle()
 
         _step(
-            35,
+            36,
             "project description + branch metadata",
             "get/set description + generic metadata CRUD",
         )

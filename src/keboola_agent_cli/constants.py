@@ -7,6 +7,10 @@ and ensure consistency across the codebase.
 
 import httpx
 
+# --- Sentinel for missing metadata keys ---
+# Distinguishes "key absent" from "value is None/null" in branch metadata lookups.
+METADATA_NOT_FOUND = object()
+
 # --- HTTP Retry Constants ---
 RETRYABLE_STATUS_CODES: set[int] = {429, 500, 502, 503, 504}
 MAX_RETRIES: int = 3

@@ -2,7 +2,9 @@
 
 Orchestrates multi-project branch retrieval in parallel, annotates with
 project alias, and aggregates results. Provides create, activate, reset,
-delete, and merge URL generation for development branches.
+delete, and merge URL generation for development branches. Also provides
+branch metadata CRUD and a "project description" convenience wrapper over
+the ``KBC.projectDescription`` metadata key on the default branch.
 """
 
 from typing import Any
@@ -10,6 +12,8 @@ from typing import Any
 from ..errors import ConfigError, KeboolaApiError
 from ..models import ProjectConfig
 from .base import BaseService
+
+PROJECT_DESCRIPTION_KEY = "KBC.projectDescription"
 
 
 class BranchService(BaseService):
@@ -336,3 +340,217 @@ class BranchService(BaseService):
                 f"in project '{alias}'. Active branch has been reset to main."
             ),
         }
+
+    # ── Branch metadata ────────────────────────────────────────────────
+
+    def list_branch_metadata(
+        self,
+        alias: str,
+        branch_id: int | str = "default",
+    ) -> dict[str, Any]:
+        """List all metadata entries on a branch for a single project.
+
+        Args:
+            alias: Project alias.
+            branch_id: Branch ID or "default" for the main branch.
+
+        Returns:
+            Dict with project_alias, branch_id, and a key-sorted metadata list.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            entries = client.list_branch_metadata(branch_id=branch_id)
+        finally:
+            client.close()
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "metadata": sorted(entries, key=lambda e: e.get("key", "")),
+        }
+
+    def get_branch_metadata(
+        self,
+        alias: str,
+        key: str,
+        branch_id: int | str = "default",
+    ) -> dict[str, Any]:
+        """Get a single metadata value by key.
+
+        Args:
+            alias: Project alias.
+            key: Metadata key (e.g. "KBC.projectDescription").
+            branch_id: Branch ID or "default" for the main branch.
+
+        Returns:
+            Dict with project_alias, branch_id, key, value.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the key is not present or the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            value = client.get_branch_metadata_value(key=key, branch_id=branch_id)
+        finally:
+            client.close()
+        if value is None:
+            raise KeboolaApiError(
+                message=(
+                    f"Metadata key '{key}' not found on branch '{branch_id}' of project '{alias}'."
+                ),
+                status_code=404,
+                error_code="NOT_FOUND",
+                retryable=False,
+            )
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "key": key,
+            "value": value,
+        }
+
+    def set_branch_metadata(
+        self,
+        alias: str,
+        key: str,
+        value: str,
+        branch_id: int | str = "default",
+    ) -> dict[str, Any]:
+        """Set a single metadata key/value on a branch.
+
+        Args:
+            alias: Project alias.
+            key: Metadata key to set.
+            value: Metadata value (plain string; e.g. markdown).
+            branch_id: Branch ID or "default" for the main branch.
+
+        Returns:
+            Dict with project_alias, branch_id, key, value, result, message.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            result = client.set_branch_metadata(entries=[(key, value)], branch_id=branch_id)
+        finally:
+            client.close()
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "key": key,
+            "value": value,
+            "result": result,
+            "message": (f"Metadata '{key}' set on branch '{branch_id}' of project '{alias}'."),
+        }
+
+    def delete_branch_metadata(
+        self,
+        alias: str,
+        metadata_id: int | str,
+        branch_id: int | str = "default",
+    ) -> dict[str, Any]:
+        """Delete a metadata entry by its numeric ID.
+
+        Args:
+            alias: Project alias.
+            metadata_id: Metadata entry ID (from ``list_branch_metadata``).
+            branch_id: Branch ID or "default" for the main branch.
+
+        Returns:
+            Dict confirming the deletion.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            client.delete_branch_metadata(metadata_id=metadata_id, branch_id=branch_id)
+        finally:
+            client.close()
+        return {
+            "project_alias": alias,
+            "branch_id": branch_id,
+            "metadata_id": metadata_id,
+            "message": (
+                f"Metadata ID {metadata_id} deleted from branch '{branch_id}' of project '{alias}'."
+            ),
+        }
+
+    # ── Project description (convenience wrappers) ─────────────────────
+
+    def get_project_description(self, alias: str) -> dict[str, Any]:
+        """Get the dashboard project description for a project.
+
+        Reads the ``KBC.projectDescription`` metadata value from the default
+        branch -- this is what the Keboola UI displays on the project
+        dashboard.
+
+        Returns an empty description (not an error) if the key is unset, so
+        callers don't need to special-case freshly-provisioned projects.
+
+        Args:
+            alias: Project alias.
+
+        Returns:
+            Dict with project_alias, key, description (str, possibly empty).
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            value = client.get_branch_metadata_value(
+                key=PROJECT_DESCRIPTION_KEY, branch_id="default"
+            )
+        finally:
+            client.close()
+        return {
+            "project_alias": alias,
+            "key": PROJECT_DESCRIPTION_KEY,
+            "description": value or "",
+        }
+
+    def set_project_description(self, alias: str, description: str) -> dict[str, Any]:
+        """Set the dashboard project description for a project.
+
+        Writes to ``KBC.projectDescription`` on the default branch, which is
+        what the Keboola UI reads for the project dashboard description.
+
+        Args:
+            alias: Project alias.
+            description: Markdown content for the description.
+
+        Returns:
+            Dict with project_alias, key, description, result, message.
+
+        Raises:
+            ConfigError: If the project alias is not found.
+            KeboolaApiError: If the API call fails.
+        """
+        result = self.set_branch_metadata(
+            alias=alias,
+            key=PROJECT_DESCRIPTION_KEY,
+            value=description,
+            branch_id="default",
+        )
+        result["description"] = description
+        result["message"] = f"Project description updated for '{alias}' ({len(description)} chars)."
+        return result

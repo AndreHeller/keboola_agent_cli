@@ -20,6 +20,8 @@ OPERATION_REGISTRY: dict[str, str] = {
     "project.edit": "admin",
     "project.status": "read",
     "project.refresh": "admin",
+    "project.description-get": "read",
+    "project.description-set": "write",
     # Config browsing & management
     "config.list": "read",
     "config.detail": "read",
@@ -53,6 +55,10 @@ OPERATION_REGISTRY: dict[str, str] = {
     "branch.reset": "write",
     "branch.delete": "destructive",
     "branch.merge": "write",
+    "branch.metadata-list": "read",
+    "branch.metadata-get": "read",
+    "branch.metadata-set": "write",
+    "branch.metadata-delete": "destructive",
     # Workspace lifecycle
     "workspace.create": "write",
     "workspace.list": "read",

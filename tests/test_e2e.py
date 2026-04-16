@@ -492,6 +492,13 @@ class TestFullE2E:
         _step(35, "branch lifecycle", "list / create / use / reset / merge / delete")
         self._test_branch_lifecycle()
 
+        _step(
+            35,
+            "project description + branch metadata",
+            "get/set description + generic metadata CRUD",
+        )
+        self._test_project_description_and_metadata()
+
         # ==============================================================
         # PHASE 11: Permissions
         # ==============================================================
@@ -1811,6 +1818,128 @@ class TestFullE2E:
         data = self._run_ok("branch", "list", "--project", self.alias)
         branch_ids = [b["id"] for b in data["data"]["branches"]]
         assert branch_id not in branch_ids
+
+    def _test_project_description_and_metadata(self) -> None:
+        """Test project description + branch metadata CRUD round-trip.
+
+        Uses the default branch so the dashboard reflects the change. Captures
+        the original description up-front and restores it at the end to avoid
+        polluting the shared E2E project.
+        """
+        # Capture original description so we can restore it
+        data = self._run_ok("project", "description-get", "--project", self.alias)
+        original_desc = data["data"]["description"]
+
+        marker = f"# E2E {RUN_ID}\n\nTemporary project description."
+
+        try:
+            # set via --text
+            data = self._run_ok(
+                "project",
+                "description-set",
+                "--project",
+                self.alias,
+                "--text",
+                marker,
+            )
+            assert "updated" in data["data"]["message"].lower()
+
+            # get roundtrip
+            data = self._run_ok("project", "description-get", "--project", self.alias)
+            assert data["data"]["description"] == marker
+
+            # generic branch metadata-list should include KBC.projectDescription
+            data = self._run_ok(
+                "branch",
+                "metadata-list",
+                "--project",
+                self.alias,
+                "--branch",
+                "default",
+            )
+            entries = data["data"]["metadata"]
+            match = next(
+                (e for e in entries if e.get("key") == "KBC.projectDescription"),
+                None,
+            )
+            assert match is not None, "KBC.projectDescription not in metadata list"
+            assert match["value"] == marker
+
+            # generic branch metadata-get by key
+            data = self._run_ok(
+                "branch",
+                "metadata-get",
+                "--project",
+                self.alias,
+                "--key",
+                "KBC.projectDescription",
+                "--branch",
+                "default",
+            )
+            assert data["data"]["value"] == marker
+
+            # set via branch metadata-set (custom key we can then delete by id)
+            custom_key = f"E2E.{RUN_ID}.custom"
+            data = self._run_ok(
+                "branch",
+                "metadata-set",
+                "--project",
+                self.alias,
+                "--key",
+                custom_key,
+                "--text",
+                "e2e-value",
+                "--branch",
+                "default",
+            )
+            assert data["data"]["key"] == custom_key
+
+            # find the new entry ID so we can delete it
+            data = self._run_ok(
+                "branch",
+                "metadata-list",
+                "--project",
+                self.alias,
+                "--branch",
+                "default",
+            )
+            custom_entry = next(e for e in data["data"]["metadata"] if e.get("key") == custom_key)
+            metadata_id = int(custom_entry["id"])
+
+            # delete by ID
+            data = self._run_ok(
+                "branch",
+                "metadata-delete",
+                "--project",
+                self.alias,
+                "--metadata-id",
+                str(metadata_id),
+                "--branch",
+                "default",
+            )
+            assert str(metadata_id) in data["data"]["message"]
+
+            # verify delete
+            data = self._run_ok(
+                "branch",
+                "metadata-list",
+                "--project",
+                self.alias,
+                "--branch",
+                "default",
+            )
+            keys_after = {e.get("key") for e in data["data"]["metadata"]}
+            assert custom_key not in keys_after
+        finally:
+            # Restore original description so we don't leave e2e markers behind
+            self._run_ok(
+                "project",
+                "description-set",
+                "--project",
+                self.alias,
+                "--text",
+                original_desc,
+            )
 
     def _test_permissions(self) -> None:
         """Test permissions list, show, and check commands."""

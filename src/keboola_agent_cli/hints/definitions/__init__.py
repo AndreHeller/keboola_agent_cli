@@ -9,6 +9,7 @@ from . import (
     kai,  # noqa: F401
     lineage,  # noqa: F401
     org,  # noqa: F401
+    project,  # noqa: F401
     sharing,  # noqa: F401
     storage,  # noqa: F401
     tool,  # noqa: F401

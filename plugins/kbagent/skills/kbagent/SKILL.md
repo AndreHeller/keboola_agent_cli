@@ -61,6 +61,8 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Edit an existing Keboola project connection | `kbagent project edit --project ALIAS` |
 | Test connectivity to connected Keboola projects | `kbagent project status` |
 | Refresh expired or invalid Storage API tokens | `kbagent project refresh` |
+| Get the Keboola dashboard project description | `kbagent project description-get --project PROJECT` |
+| Set the Keboola dashboard project description (markdown) | `kbagent project description-set --project PROJECT` |
 | Set up projects and register them in the kbagent config | `kbagent org setup --url URL` |
 | List available components from connected projects | `kbagent component list` |
 | Show detailed information about a specific component | `kbagent component detail --component-id COMPONENT-ID` |
@@ -113,6 +115,10 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | Reset the active branch back to main/production | `kbagent branch reset --project PROJECT` |
 | Delete a development branch | `kbagent branch delete --project PROJECT --branch BRANCH` |
 | Get the KBC UI merge URL for a development branch | `kbagent branch merge --project PROJECT` |
+| List all metadata entries on a branch | `kbagent branch metadata-list --project PROJECT` |
+| Read a single metadata value by key | `kbagent branch metadata-get --project PROJECT --key KEY` |
+| Set a metadata key/value on a branch | `kbagent branch metadata-set --project PROJECT --key KEY` |
+| Delete a branch metadata entry by its numeric ID | `kbagent branch metadata-delete --project PROJECT --metadata-id METADATA-ID` |
 | Create a new workspace | `kbagent workspace create --project PROJECT` |
 | List workspaces from connected projects | `kbagent workspace list` |
 | Show workspace details (password NOT included) | `kbagent workspace detail --project PROJECT --workspace-id WORKSPACE-ID` |

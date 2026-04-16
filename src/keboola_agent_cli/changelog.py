@@ -8,7 +8,7 @@ from __future__ import annotations
 
 # Ordered newest-first.  Each value is a list of brief one-line descriptions.
 CHANGELOG: dict[str, list[str]] = {
-    "0.21.0": [
+    "0.20.2": [
         "New: job terminate -- kill Queue API jobs with --job-id or bulk --status filter (#181)",
         "New: --status any filter for terminating all killable jobs (created+waiting+processing)",
         "New: client helper kill_job + service terminate_jobs with partition response (killed/already_finished/not_found/failed)",

@@ -668,28 +668,6 @@ class StorageService(BaseService):
         project = projects[alias]
 
         if dry_run:
-            if branch_id:
-                # Validate tables exist on the branch (non-branch dry-run
-                # skips validation — out of scope for this fix).
-                client = self._client_factory(project.stack_url, project.token)
-                would_delete: list[str] = []
-                failed: list[dict[str, str]] = []
-                try:
-                    for tid in table_ids:
-                        try:
-                            client.get_table_detail(tid, branch_id=branch_id)
-                            would_delete.append(tid)
-                        except KeboolaApiError as exc:
-                            failed.append({"id": tid, "error": exc.message})
-                finally:
-                    client.close()
-                return {
-                    "deleted": [],
-                    "failed": failed,
-                    "would_delete": would_delete,
-                    "dry_run": True,
-                    "project_alias": alias,
-                }
             return {
                 "deleted": [],
                 "failed": [],
@@ -705,15 +683,7 @@ class StorageService(BaseService):
         try:
             for tid in table_ids:
                 try:
-                    if branch_id:
-                        # Resolve physical table ID first — the async DELETE
-                        # endpoint doesn't handle branch bucket resolution
-                        # (Keboola Storage API limitation).
-                        detail = client.get_table_detail(tid, branch_id=branch_id)
-                        physical_id = detail["id"]
-                        client.delete_table(physical_id, branch_id=None, force=force)
-                    else:
-                        client.delete_table(tid, branch_id=None, force=force)
+                    client.delete_table(tid, branch_id=branch_id, force=force)
                     deleted.append(tid)
                 except KeboolaApiError as exc:
                     failed.append({"id": tid, "error": exc.message})
@@ -773,32 +743,9 @@ class StorageService(BaseService):
 
         client = self._client_factory(project.stack_url, project.token)
         try:
-            # Resolve physical table ID once for branch operations — the async
-            # DELETE endpoint doesn't handle branch bucket resolution.
-            effective_table_id = table_id
-            effective_branch = branch_id
-            if branch_id:
-                try:
-                    detail = client.get_table_detail(table_id, branch_id=branch_id)
-                    effective_table_id = detail["id"]
-                    effective_branch = None
-                except KeboolaApiError as exc:
-                    # Table itself not found on branch — fail all columns
-                    for col in columns:
-                        failed.append({"column": col, "error": exc.message})
-                    return {
-                        "deleted": deleted,
-                        "failed": failed,
-                        "dry_run": False,
-                        "project_alias": alias,
-                        "table_id": table_id,
-                    }
-
             for col in columns:
                 try:
-                    client.delete_column(
-                        effective_table_id, col, branch_id=effective_branch, force=force
-                    )
+                    client.delete_column(table_id, col, branch_id=branch_id, force=force)
                     deleted.append(col)
                 except KeboolaApiError as exc:
                     failed.append({"column": col, "error": exc.message})
@@ -891,12 +838,7 @@ class StorageService(BaseService):
                     continue
 
                 try:
-                    # On branches, use the physical bucket ID from the detail
-                    # response and skip the branch prefix — same workaround
-                    # as delete_tables (async DELETE doesn't resolve branches).
-                    physical_bid = bucket.get("id", bid) if branch_id else bid
-                    effective_branch = None if branch_id else branch_id
-                    client.delete_bucket(physical_bid, force=force, branch_id=effective_branch)
+                    client.delete_bucket(bid, force=force, branch_id=branch_id)
                     deleted.append(bid)
                 except KeboolaApiError as exc:
                     failed.append({"id": bid, "error": exc.message})

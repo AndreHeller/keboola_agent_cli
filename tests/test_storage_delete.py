@@ -681,106 +681,20 @@ class TestDeleteColumnCLI:
 
 
 class TestDeleteTableBranch:
-    """Tests for --branch support in delete-table.
+    """Tests for --branch support in delete-table."""
 
-    When branch_id is set, the service resolves the physical table ID via
-    get_table_detail (which handles branch bucket mapping) and then deletes
-    using the physical ID without the branch prefix.  This works around a
-    Keboola Storage API limitation where async DELETE doesn't resolve branch
-    bucket context.
-    """
-
-    def test_branch_resolves_physical_id(self, tmp_path: Path) -> None:
-        """On branch, resolve physical table ID then delete without branch prefix."""
+    def test_service_passes_branch_id(self, tmp_path: Path) -> None:
+        """delete_tables passes branch_id to client.delete_table."""
         store = _make_store(tmp_path)
         mock_client = MagicMock()
-        mock_client.get_table_detail.return_value = {
-            "id": "in.c-42-data.users",
-            "name": "users",
-            "bucket": {"id": "in.c-42-data"},
-        }
         mock_client.delete_table.return_value = {"id": 1, "status": "success"}
         service = _make_service(store, mock_client)
 
         result = service.delete_tables(alias="test", table_ids=["in.c-data.users"], branch_id=42)
 
         assert result["deleted"] == ["in.c-data.users"]
-        mock_client.get_table_detail.assert_called_once_with("in.c-data.users", branch_id=42)
         mock_client.delete_table.assert_called_once_with(
-            "in.c-42-data.users", branch_id=None, force=False
-        )
-
-    def test_branch_resolution_failure(self, tmp_path: Path) -> None:
-        """When table doesn't exist on branch, report error in failed list."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.get_table_detail.side_effect = KeboolaApiError(
-            message="Table not found", status_code=404
-        )
-        service = _make_service(store, mock_client)
-
-        result = service.delete_tables(alias="test", table_ids=["in.c-data.gone"], branch_id=42)
-
-        assert result["deleted"] == []
-        assert len(result["failed"]) == 1
-        assert result["failed"][0]["id"] == "in.c-data.gone"
-        mock_client.delete_table.assert_not_called()
-
-    def test_branch_batch_mixed(self, tmp_path: Path) -> None:
-        """Batch delete on branch: one succeeds, one fails resolution."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.get_table_detail.side_effect = [
-            {"id": "in.c-42-data.ok", "name": "ok"},
-            KeboolaApiError(message="Not found", status_code=404),
-        ]
-        mock_client.delete_table.return_value = {"id": 1, "status": "success"}
-        service = _make_service(store, mock_client)
-
-        result = service.delete_tables(
-            alias="test", table_ids=["in.c-data.ok", "in.c-data.gone"], branch_id=42
-        )
-
-        assert result["deleted"] == ["in.c-data.ok"]
-        assert len(result["failed"]) == 1
-        assert result["failed"][0]["id"] == "in.c-data.gone"
-
-    def test_branch_dry_run_validates(self, tmp_path: Path) -> None:
-        """Dry-run on branch validates tables via get_table_detail."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.get_table_detail.side_effect = [
-            {"id": "in.c-42-data.ok", "name": "ok"},
-            KeboolaApiError(message="Not found", status_code=404),
-        ]
-        service = _make_service(store, mock_client)
-
-        result = service.delete_tables(
-            alias="test",
-            table_ids=["in.c-data.ok", "in.c-data.gone"],
-            branch_id=42,
-            dry_run=True,
-        )
-
-        assert result["dry_run"] is True
-        assert result["would_delete"] == ["in.c-data.ok"]
-        assert len(result["failed"]) == 1
-        assert result["failed"][0]["id"] == "in.c-data.gone"
-        mock_client.delete_table.assert_not_called()
-
-    def test_no_branch_unchanged(self, tmp_path: Path) -> None:
-        """Without branch_id, no get_table_detail call — direct delete."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.delete_table.return_value = {"id": 1, "status": "success"}
-        service = _make_service(store, mock_client)
-
-        result = service.delete_tables(alias="test", table_ids=["in.c-data.users"])
-
-        assert result["deleted"] == ["in.c-data.users"]
-        mock_client.get_table_detail.assert_not_called()
-        mock_client.delete_table.assert_called_once_with(
-            "in.c-data.users", branch_id=None, force=False
+            "in.c-data.users", branch_id=42, force=False
         )
 
     def test_cli_branch_flag_json(self, tmp_path: Path) -> None:
@@ -821,11 +735,11 @@ class TestDeleteTableBranch:
 class TestDeleteBucketBranch:
     """Tests for --branch support in delete-bucket."""
 
-    def test_branch_uses_physical_bucket_id(self, tmp_path: Path) -> None:
-        """On branch, delete_buckets uses physical bucket ID without branch prefix."""
+    def test_service_passes_branch_id(self, tmp_path: Path) -> None:
+        """delete_buckets passes branch_id to client calls."""
         store = _make_store(tmp_path)
         mock_client = MagicMock()
-        mock_client.get_bucket_detail.return_value = {"id": "in.c-99-data"}
+        mock_client.get_bucket_detail.return_value = {"id": "in.c-data"}
         mock_client.delete_bucket.return_value = {"id": 1, "status": "success"}
         service = _make_service(store, mock_client)
 
@@ -833,22 +747,7 @@ class TestDeleteBucketBranch:
 
         assert result["deleted"] == ["in.c-data"]
         mock_client.get_bucket_detail.assert_called_once_with("in.c-data", branch_id=99)
-        mock_client.delete_bucket.assert_called_once_with(
-            "in.c-99-data", force=False, branch_id=None
-        )
-
-    def test_no_branch_unchanged(self, tmp_path: Path) -> None:
-        """Without branch, delete_buckets uses original bucket ID."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.get_bucket_detail.return_value = {"id": "in.c-data"}
-        mock_client.delete_bucket.return_value = {"id": 1, "status": "success"}
-        service = _make_service(store, mock_client)
-
-        result = service.delete_buckets(alias="test", bucket_ids=["in.c-data"])
-
-        assert result["deleted"] == ["in.c-data"]
-        mock_client.delete_bucket.assert_called_once_with("in.c-data", force=False, branch_id=None)
+        mock_client.delete_bucket.assert_called_once_with("in.c-data", force=False, branch_id=99)
 
     def test_cli_branch_flag_json(self, tmp_path: Path) -> None:
         """storage delete-bucket --branch 99 passes branch_id to service."""
@@ -1004,69 +903,22 @@ class TestStorageTablesBranch:
 
 
 class TestDeleteColumnBranch:
-    """Tests for --branch support in delete-column.
+    """Tests for --branch support in delete-column."""
 
-    Same resolve-then-delete pattern as delete_tables: on branches, the
-    physical table ID is resolved once and used for all column deletes.
-    """
-
-    def test_branch_resolves_physical_id(self, tmp_path: Path) -> None:
-        """On branch, resolve physical table ID then delete columns without branch prefix."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.get_table_detail.return_value = {
-            "id": "in.c-42-data.users",
-            "name": "users",
-        }
-        mock_client.delete_column.return_value = None
-        service = _make_service(store, mock_client)
-
-        result = service.delete_columns(
-            alias="test", table_id="in.c-data.users", columns=["age", "name"], branch_id=42
-        )
-
-        assert result["deleted"] == ["age", "name"]
-        # get_table_detail called once (not per column)
-        mock_client.get_table_detail.assert_called_once_with("in.c-data.users", branch_id=42)
-        # delete_column uses physical ID without branch
-        assert mock_client.delete_column.call_count == 2
-        mock_client.delete_column.assert_any_call(
-            "in.c-42-data.users", "age", branch_id=None, force=False
-        )
-        mock_client.delete_column.assert_any_call(
-            "in.c-42-data.users", "name", branch_id=None, force=False
-        )
-
-    def test_branch_resolution_failure_fails_all_columns(self, tmp_path: Path) -> None:
-        """When table not found on branch, all columns are reported as failed."""
-        store = _make_store(tmp_path)
-        mock_client = MagicMock()
-        mock_client.get_table_detail.side_effect = KeboolaApiError(
-            message="Table not found", status_code=404
-        )
-        service = _make_service(store, mock_client)
-
-        result = service.delete_columns(
-            alias="test", table_id="in.c-data.gone", columns=["a", "b"], branch_id=42
-        )
-
-        assert result["deleted"] == []
-        assert len(result["failed"]) == 2
-        mock_client.delete_column.assert_not_called()
-
-    def test_no_branch_unchanged(self, tmp_path: Path) -> None:
-        """Without branch_id, no get_table_detail call — direct delete."""
+    def test_service_passes_branch_id(self, tmp_path: Path) -> None:
+        """delete_columns passes branch_id to client.delete_column."""
         store = _make_store(tmp_path)
         mock_client = MagicMock()
         mock_client.delete_column.return_value = None
         service = _make_service(store, mock_client)
 
-        result = service.delete_columns(alias="test", table_id="in.c-data.users", columns=["age"])
+        result = service.delete_columns(
+            alias="test", table_id="in.c-data.users", columns=["age"], branch_id=42
+        )
 
         assert result["deleted"] == ["age"]
-        mock_client.get_table_detail.assert_not_called()
         mock_client.delete_column.assert_called_once_with(
-            "in.c-data.users", "age", branch_id=None, force=False
+            "in.c-data.users", "age", branch_id=42, force=False
         )
 
     def test_cli_branch_flag_json(self, tmp_path: Path) -> None:

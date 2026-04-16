@@ -8,6 +8,11 @@ from __future__ import annotations
 
 # Ordered newest-first.  Each value is a list of brief one-line descriptions.
 CHANGELOG: dict[str, list[str]] = {
+    "0.20.1": [
+        "New: project description-get / description-set -- read/write the Keboola dashboard project description (markdown)",
+        "New: branch metadata-list / metadata-get / metadata-set / metadata-delete -- generic CRUD over branch metadata (KBC.* keys)",
+        "New: client helpers list/set/delete_branch_metadata + get_branch_metadata_value on KeboolaClient",
+    ],
     "0.20.0": [
         "New: lineage build -- column-level lineage graph from sync'd data (SQL tokenizer + AI)",
         "New: lineage show -- query upstream/downstream with --columns, -c trace, --format mermaid/html/er",

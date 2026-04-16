@@ -26,6 +26,7 @@ from .constants import (
     FILE_DOWNLOAD_TIMEOUT,
     FILE_UPLOAD_TIMEOUT,
     IMPORT_JOB_MAX_WAIT,
+    METADATA_NOT_FOUND,
     QUERY_JOB_MAX_WAIT,
     QUERY_JOB_POLL_INTERVAL,
     STORAGE_JOB_MAX_WAIT,
@@ -575,6 +576,97 @@ class KeboolaClient(BaseHttpClient):
         response = self._request("GET", "/v2/storage/dev-branches")
         return response.json()
 
+    def list_branch_metadata(self, branch_id: int | str = "default") -> list[dict[str, Any]]:
+        """List metadata entries on a branch.
+
+        GET /v2/storage/branch/{id}/metadata
+
+        Args:
+            branch_id: Branch ID or the literal "default" for the main branch.
+
+        Returns:
+            List of metadata dicts with keys: id, key, value, provider, timestamp.
+        """
+        response = self._request("GET", f"/v2/storage/branch/{branch_id}/metadata")
+        return response.json()
+
+    def set_branch_metadata(
+        self,
+        entries: list[tuple[str, str]],
+        branch_id: int | str = "default",
+    ) -> list[dict[str, Any]]:
+        """Bulk-set metadata key/value pairs on a branch.
+
+        POST /v2/storage/branch/{id}/metadata
+
+        Keboola's endpoint expects PHP-style array indices in the
+        form-urlencoded body, e.g.::
+
+            metadata[0][key]=KBC.projectDescription
+            metadata[0][value]=My project
+
+        httpx's ``data=`` accepts a mapping of str -> str and URL-encodes it.
+        Since each ``metadata[i][...]`` key is unique per index, a plain dict
+        preserves both ordering (Python 3.7+) and Keboola's expected shape.
+
+        Args:
+            entries: Ordered list of ``(key, value)`` metadata tuples.
+            branch_id: Branch ID or the literal "default" for the main branch.
+
+        Returns:
+            List of metadata dicts created/updated by the API.
+        """
+        form: dict[str, str] = {}
+        for i, (key, value) in enumerate(entries):
+            form[f"metadata[{i}][key]"] = key
+            form[f"metadata[{i}][value]"] = value
+        response = self._request(
+            "POST",
+            f"/v2/storage/branch/{branch_id}/metadata",
+            data=form,
+        )
+        return response.json()
+
+    def delete_branch_metadata(
+        self,
+        metadata_id: int | str,
+        branch_id: int | str = "default",
+    ) -> None:
+        """Delete a single metadata entry on a branch by its numeric ID.
+
+        DELETE /v2/storage/branch/{id}/metadata/{metadataId}
+
+        Args:
+            metadata_id: ID of the metadata entry (from ``list_branch_metadata``).
+            branch_id: Branch ID or the literal "default" for the main branch.
+        """
+        self._request(
+            "DELETE",
+            f"/v2/storage/branch/{branch_id}/metadata/{metadata_id}",
+        )
+
+    def get_branch_metadata_value(
+        self,
+        key: str,
+        branch_id: int | str = "default",
+    ) -> str | None:
+        """Return the value for a single metadata key on a branch, or None if absent.
+
+        Convenience wrapper around ``list_branch_metadata`` that filters by key.
+
+        Args:
+            key: Metadata key to look up (e.g. "KBC.projectDescription").
+            branch_id: Branch ID or the literal "default" for the main branch.
+
+        Returns:
+            The string value if the key exists (may be None if the API stored null),
+            or ``METADATA_NOT_FOUND`` sentinel if the key is not present.
+        """
+        for entry in self.list_branch_metadata(branch_id=branch_id):
+            if entry.get("key") == key:
+                return entry.get("value")
+        return METADATA_NOT_FOUND
+
     def list_buckets(
         self, include: str | None = None, branch_id: int | None = None
     ) -> list[dict[str, Any]]:
@@ -1114,19 +1206,28 @@ class KeboolaClient(BaseHttpClient):
         )
         return job.get("results", {})
 
-    def delete_table(self, table_id: str, branch_id: int | None = None) -> dict[str, Any]:
+    def delete_table(
+        self,
+        table_id: str,
+        branch_id: int | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
         """Delete a storage table (async, waits for completion).
 
         Args:
             table_id: Full table ID (e.g. "in.c-bucket.table").
             branch_id: If set, target a specific dev branch.
+            force: If True, cascade-delete the table and all its aliases.
 
         Returns:
             Completed storage job dict.
         """
         prefix = f"/v2/storage/branch/{branch_id}" if branch_id else "/v2/storage"
         safe_id = quote(table_id, safe="")
-        response = self._request("DELETE", f"{prefix}/tables/{safe_id}", params={"async": "true"})
+        params: dict[str, str] = {"async": "true"}
+        if force:
+            params["force"] = "true"
+        response = self._request("DELETE", f"{prefix}/tables/{safe_id}", params=params)
         return self._wait_for_storage_job(response.json())
 
     def delete_column(

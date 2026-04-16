@@ -643,6 +643,7 @@ class StorageService(BaseService):
         alias: str,
         table_ids: list[str],
         dry_run: bool = False,
+        force: bool = False,
         branch_id: int | None = None,
     ) -> dict[str, Any]:
         """Delete one or more storage tables.
@@ -654,6 +655,7 @@ class StorageService(BaseService):
             alias: Project alias.
             table_ids: List of table IDs to delete.
             dry_run: If True, only report what would be deleted.
+            force: If True, cascade-delete tables and all their aliases.
             branch_id: If set, target a specific dev branch.
 
         Returns:
@@ -681,7 +683,7 @@ class StorageService(BaseService):
         try:
             for tid in table_ids:
                 try:
-                    client.delete_table(tid, branch_id=branch_id)
+                    client.delete_table(tid, branch_id=branch_id, force=force)
                     deleted.append(tid)
                 except KeboolaApiError as exc:
                     failed.append({"id": tid, "error": exc.message})

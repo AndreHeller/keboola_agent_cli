@@ -5,6 +5,7 @@ No business logic belongs here.
 """
 
 import sys
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -20,11 +21,14 @@ from ..constants import (
 from ..errors import ConfigError, KeboolaApiError
 from ._helpers import (
     check_cli_permission,
+    emit_hint,
     get_formatter,
     get_service,
     map_error_to_exit_code,
     resolve_manage_token,
+    should_hint,
 )
+from ._metadata_input import resolve_text_input
 
 project_app = typer.Typer(help="Manage connected Keboola projects")
 
@@ -467,3 +471,101 @@ def project_refresh(
         raise typer.Exit(code=exit_code) from None
 
     formatter.output(result, _format_refresh_result)
+
+
+# ── Project description (dashboard KBC.projectDescription) ────────────
+
+
+@project_app.command("description-get")
+def project_description_get(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias to query",
+    ),
+) -> None:
+    """Get the Keboola dashboard project description.
+
+    Reads the ``KBC.projectDescription`` metadata value from the default
+    branch - this is what the Keboola UI shows on the project dashboard.
+    Returns an empty string if no description has been set.
+    """
+    if should_hint(ctx):
+        emit_hint(ctx, "project.description-get", project=project)
+        return
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "branch_service")
+
+    try:
+        result = service.get_project_description(alias=project)
+    except KeboolaApiError as exc:
+        exit_code = map_error_to_exit_code(exc)
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=exit_code) from None
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+
+    formatter.output(
+        result,
+        lambda c, d: c.print(d["description"] or "[dim](no description set)[/dim]"),
+    )
+
+
+@project_app.command("description-set")
+def project_description_set(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias to update",
+    ),
+    text: str | None = typer.Option(None, "--text", help="Inline description string"),
+    file: Path | None = typer.Option(
+        None,
+        "--file",
+        help="Read description from a UTF-8 markdown file",
+    ),
+    stdin: bool = typer.Option(
+        False,
+        "--stdin",
+        help="Read description from standard input",
+    ),
+) -> None:
+    """Set the Keboola dashboard project description (markdown).
+
+    Writes to ``KBC.projectDescription`` on the default branch. Provide the
+    content via exactly one of --text, --file, or --stdin.
+    """
+    formatter = get_formatter(ctx)
+
+    try:
+        description = resolve_text_input(text=text, file=file, stdin=stdin)
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="INVALID_ARGUMENT")
+        raise typer.Exit(code=2) from None
+
+    if should_hint(ctx):
+        emit_hint(
+            ctx,
+            "project.description-set",
+            project=project,
+            description=description,
+        )
+        return
+    service = get_service(ctx, "branch_service")
+
+    try:
+        result = service.set_project_description(alias=project, description=description)
+        formatter.output(
+            result,
+            lambda c, d: c.print(f"[bold green]Success:[/bold green] {d['message']}"),
+        )
+    except KeboolaApiError as exc:
+        exit_code = map_error_to_exit_code(exc)
+        formatter.error(message=exc.message, error_code=exc.error_code, retryable=exc.retryable)
+        raise typer.Exit(code=exit_code) from None
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None

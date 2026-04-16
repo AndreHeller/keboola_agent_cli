@@ -2207,3 +2207,124 @@ class TestCreateJob:
         body = json.loads(request.content)
         assert body["branchId"] == "123"
         assert body["configRowIds"] == ["row1", "row2"]
+
+
+_BRANCH_METADATA_SAMPLE = [
+    {
+        "id": 1001,
+        "key": "KBC.projectDescription",
+        "value": "# My project",
+        "provider": "user",
+        "timestamp": "2026-04-16T10:00:00+0200",
+    },
+    {
+        "id": 1002,
+        "key": "something.else",
+        "value": "abc",
+        "provider": "user",
+        "timestamp": "2026-04-16T10:01:00+0200",
+    },
+]
+
+
+class TestBranchMetadata:
+    """Tests for branch metadata CRUD against /v2/storage/branch/{id}/metadata."""
+
+    def test_list_branch_metadata_default(self, httpx_mock) -> None:
+        """list_branch_metadata() hits /branch/default/metadata and returns entries."""
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/default/metadata",
+            method="GET",
+            json=_BRANCH_METADATA_SAMPLE,
+            status_code=200,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.list_branch_metadata()
+        assert result == _BRANCH_METADATA_SAMPLE
+
+    def test_list_branch_metadata_numeric(self, httpx_mock) -> None:
+        """list_branch_metadata(branch_id=123) hits /branch/123/metadata."""
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/123/metadata",
+            method="GET",
+            json=[],
+            status_code=200,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.list_branch_metadata(branch_id=123)
+        assert result == []
+
+    def test_set_branch_metadata_encodes_php_indices(self, httpx_mock) -> None:
+        """set_branch_metadata() URL-encodes PHP-style indices in the form body."""
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/default/metadata",
+            method="POST",
+            json=_BRANCH_METADATA_SAMPLE[:1],
+            status_code=201,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.set_branch_metadata(
+                entries=[("KBC.projectDescription", "# My project")]
+            )
+
+        assert result == _BRANCH_METADATA_SAMPLE[:1]
+        request = httpx_mock.get_request()
+        body = request.content.decode()
+        # httpx URL-encodes "[" and "]" as %5B / %5D; accept either form.
+        normalized = body.replace("%5B", "[").replace("%5D", "]")
+        assert "metadata[0][key]=KBC.projectDescription" in normalized
+        assert "metadata[0][value]=" in normalized
+        assert request.headers["content-type"].startswith("application/x-www-form-urlencoded")
+
+    def test_set_branch_metadata_bulk(self, httpx_mock) -> None:
+        """set_branch_metadata() encodes multiple entries with increasing indices."""
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/default/metadata",
+            method="POST",
+            json=_BRANCH_METADATA_SAMPLE,
+            status_code=201,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            client.set_branch_metadata(entries=[("a", "1"), ("b", "2"), ("c", "3")])
+        body = httpx_mock.get_request().content.decode()
+        normalized = body.replace("%5B", "[").replace("%5D", "]")
+        assert "metadata[0][key]=a" in normalized
+        assert "metadata[1][key]=b" in normalized
+        assert "metadata[2][key]=c" in normalized
+
+    def test_delete_branch_metadata(self, httpx_mock) -> None:
+        """delete_branch_metadata() issues DELETE on the right path."""
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/default/metadata/1001",
+            method="DELETE",
+            status_code=204,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            client.delete_branch_metadata(metadata_id=1001)
+        assert httpx_mock.get_request().method == "DELETE"
+
+    def test_get_branch_metadata_value_found(self, httpx_mock) -> None:
+        """get_branch_metadata_value() returns the matching entry's value."""
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/default/metadata",
+            method="GET",
+            json=_BRANCH_METADATA_SAMPLE,
+            status_code=200,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            value = client.get_branch_metadata_value(key="KBC.projectDescription")
+        assert value == "# My project"
+
+    def test_get_branch_metadata_value_missing(self, httpx_mock) -> None:
+        """get_branch_metadata_value() returns sentinel when the key is absent."""
+        from keboola_agent_cli.constants import METADATA_NOT_FOUND
+
+        httpx_mock.add_response(
+            url=f"{_BASE}/v2/storage/branch/default/metadata",
+            method="GET",
+            json=[],
+            status_code=200,
+        )
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            value = client.get_branch_metadata_value(key="KBC.projectDescription")
+        assert value is METADATA_NOT_FOUND

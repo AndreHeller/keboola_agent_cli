@@ -16,6 +16,8 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `project remove --project NAME` -- disconnect a project
 - `project edit --project NAME [--url URL] [--token TOKEN]` -- update connection details
 - `project status [--project NAME]` -- test connectivity and response time
+- `project description-get --project NAME` -- read the dashboard project description (KBC.projectDescription on the default branch). Returns `{"description": ""}` if not set, not an error
+- `project description-set --project NAME [--text STR | --file PATH | --stdin]` -- set the dashboard project description (markdown). Pass exactly one of `--text`, `--file`, or `--stdin`. Writes to `KBC.projectDescription` on the default branch -- always the main branch, regardless of any active dev branch
 
 ## Organization
 - `org setup --org-id ID --url URL [--dry-run] [--yes]` -- bulk-onboard all projects from an org (org admin, needs `KBC_MANAGE_API_TOKEN`)
@@ -48,7 +50,7 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `storage create-table --project NAME --bucket-id ID --name NAME --column COL:TYPE [...] [--primary-key COL] [--branch ID]` -- create typed table (branch-aware)
 - `storage upload-table --project NAME --table-id ID --file PATH [--incremental] [--branch ID]` -- upload CSV (branch-aware)
 - `storage download-table --project NAME --table-id ID [--output FILE] [--columns COL ...] [--limit N] [--branch ID]` -- export table to CSV (branch-aware)
-- `storage delete-table --project NAME --table-id ID [--table-id ...] [--dry-run] [--yes] [--branch ID]` -- delete tables (branch-aware)
+- `storage delete-table --project NAME --table-id ID [--table-id ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete tables, --force cascade-deletes aliased tables (branch-aware)
 - `storage delete-column --project NAME --table-id ID --column COL [--column ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete columns from a table (branch-aware)
 - `storage delete-bucket --project NAME --bucket-id ID [--bucket-id ...] [--force] [--dry-run] [--yes] [--branch ID]` -- delete buckets (branch-aware)
 
@@ -67,6 +69,10 @@ All commands support `--json` for structured output. Multi-project flags (`--pro
 - `branch reset --project ALIAS` -- reset to main/production
 - `branch delete --project ALIAS --branch ID` -- delete branch (resets if active)
 - `branch merge --project ALIAS [--branch ID]` -- get merge URL (does NOT merge via API)
+- `branch metadata-list --project NAME [--branch ID|default]` -- list all metadata entries on a branch (id, key, value, provider, timestamp). `--branch` defaults to `default` (main branch)
+- `branch metadata-get --project NAME --key KEY [--branch ID|default]` -- read a single metadata value by key. Exits with `NOT_FOUND` (exit 1) if absent
+- `branch metadata-set --project NAME --key KEY [--text STR | --file PATH | --stdin] [--branch ID|default]` -- set a key/value. Useful for `KBC.projectDescription` and similar dashboard-visible fields. Pass exactly one of `--text`, `--file`, or `--stdin`
+- `branch metadata-delete --project NAME --metadata-id ID [--branch ID|default]` -- delete a metadata entry by its numeric ID (from `metadata-list`)
 
 ## Workspaces (SQL Debugging)
 - `workspace create --project ALIAS [--name NAME] [--ui] [--read-only]` -- create workspace (headless ~1s, `--ui` ~15s)

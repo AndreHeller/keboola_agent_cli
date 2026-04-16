@@ -20,7 +20,10 @@ description: >
   input mapping migration, remove input mapping, Snowflake paths,
   MULTI_STATEMENT_COUNT, statement count error, SQL transformation migration,
   keboola encrypt, encrypt secrets, encrypt credentials, encrypt password,
-  keboola encryption API, #password, #api_token, KBC::ProjectSecure.
+  keboola encryption API, #password, #api_token, KBC::ProjectSecure,
+  safe config write, dry-run preview, fresh fetch before edit,
+  stale local config file, config version overwrite,
+  local workspace, project directory, kbagent init.
 ---
 
 # kbagent -- Keboola Agent CLI
@@ -42,6 +45,23 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 4. **Write commands need `--project`**: specify the target project alias
 5. **Tokens are always masked** in output -- this is expected, not an error
 6. **Use `--hint` for Python code generation**: `kbagent --hint client <command>` generates Python code using `KeboolaClient` (direct API), `kbagent --hint service <command>` generates code using the service layer with CLI config. See [programming-with-cli.md](references/programming-with-cli.md) for details.
+7. **Always fetch fresh before write**: configs change between commands and across users. Re-fetch from the API immediately before any update; never reuse a config dump from earlier in the session. Stale local files are how `vN+1` silently overwrites someone else's `vN` changes.
+8. **Always `--dry-run` first** for destructive operations (`config update`, `config delete`, `storage delete-*`, `branch delete`, `sync push`). Show the user the diff and get explicit confirmation before applying.
+9. **Prefer CLI commands over MCP tools** where both exist (`config update` over `update_config`, `config detail` over `get_configs`). Lower latency, native dry-run/diff support, consistent JSON shape, and fewer parameter-shape footguns. Use MCP only for operations the CLI does not cover (e.g. `str_replace`, `list_append`, `run_component`).
+10. **Never auto-run jobs after config changes**. `config update` (or `sync push`) and `job run` are always two separate steps. Wait for the user to confirm before triggering a run -- do not chain them.
+
+## Safe write workflow
+
+For any operation that modifies a Keboola config or storage object, follow this order. See [safe-write-workflow](references/safe-write-workflow.md) for the detailed runbook with examples and anti-patterns.
+
+1. **Fetch fresh** from the API (e.g. `kbagent --json config detail ...`) -- never reuse a local file from earlier in the session.
+2. **Compute the change** in memory or via `jq`/Python. Keep the diff small and targeted; prefer `--set path=value` or `--merge` over full-config replacement.
+3. **Preview with `--dry-run`** (e.g. `kbagent --json config update ... --dry-run`). Show the user what will change.
+4. **Get user confirmation** before re-running the same command without `--dry-run`.
+5. **Verify** by re-fetching the config and inspecting the new version.
+6. **Stop**. Do NOT auto-trigger `job run`, transformation execution, or any side-effecting follow-up. The user decides when to run.
+
+When working inside a git repository or project directory, run `kbagent init` (or `kbagent init --from-global`) once to create a local `.kbagent/` workspace. After that, kbagent works from any subdirectory of the project -- no need to `cd ~` first.
 
 ## Choosing the right approach
 
@@ -175,6 +195,7 @@ For detailed response parsing rules and common pitfalls, see [gotchas](reference
 | Workflow | Reference |
 |----------|-----------|
 | All commands cheat sheet | [commands-reference](references/commands-reference.md) |
+| **Safe config write workflow** (fetch → dry-run → confirm → push) | [safe-write-workflow](references/safe-write-workflow.md) |
 | Creating new configurations | [scaffold-workflow](references/scaffold-workflow.md) |
 | MCP tools (multi-project read/write) | [mcp-workflow](references/mcp-workflow.md) |
 | Workspace SQL debugging | [workspace-workflow](references/workspace-workflow.md) |

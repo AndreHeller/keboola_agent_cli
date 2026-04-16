@@ -219,19 +219,37 @@ SELECT * FROM sapi_1507."in.c-keboola-ex-db-mysql"."orders"
 This applies to linked bucket paths (`sapi_NNNN`), native bucket paths, and
 any identifier containing dots, hyphens, or lowercase letters.
 
-## SQL migration: do NOT use global text replace
+## SQL editing: do NOT use global text replace on identifiers
 
-When migrating SQL transformations (e.g. removing input mapping and replacing
-aliases with direct Snowflake paths), **never use global find & replace**.
-A table name like `"orders"` also appears as a **column name** in many places.
+This applies to ANY operation that rewrites a table or column name in SQL:
 
-Global replace will corrupt:
+- **Renaming** -- changing a table name (`"orders"` → `"objednavky"`)
+- **Migration** -- removing input mapping, replacing aliases with direct
+  Snowflake paths (`"orders"` → `"sapi_1507"."in.c-db"."orders"`)
+- **Refactoring** -- consolidating duplicate workspace tables, changing
+  prefixes (`"tmp.X"` → `"stg.X"`)
+
+In all of these, **never use global find & replace**. A table name like
+`"orders"` almost always also appears as a **column name** somewhere
+(FK reference in `JOIN ON`, aggregation alias in `SELECT`, `WHERE` clause).
+
+Global replace corrupts every scenario:
 
 ```sql
--- BEFORE: "orders" is a column name in SELECT
+-- BEFORE: rename table "orders" → "objednavky"
+SELECT SUM(a."orders") AS "orders" FROM "orders" a
+
+-- AFTER global replace (WRONG!):
+SELECT SUM(a."objednavky") AS "objednavky" FROM "objednavky" a
+-- The column reference and the SELECT alias were renamed too --
+-- only the FROM table should have changed.
+```
+
+```sql
+-- BEFORE: migrate "orders" alias to Snowflake path
 SUM(a."orders") AS "orders"
 
--- AFTER global replace: column becomes a table path (WRONG!)
+-- AFTER global replace (WRONG!): column becomes a table path
 SUM(a."tmp.orders") AS "tmp.orders"  -- no such column
 ```
 
@@ -239,23 +257,37 @@ SUM(a."tmp.orders") AS "tmp.orders"  -- no such column
 -- BEFORE: "country_locality" is a FK column in JOIN ON
 ON pcl."country_locality" = cl."id"
 
--- AFTER global replace: FK column becomes full path (WRONG!)
+-- AFTER global replace (WRONG!): FK column becomes full path
 ON pcl."sapi_1507"."in.c-keboola-ex-db-mysql"."country_locality" = cl."id"
 ```
 
-**Safe migration approach:**
-1. Build a complete destination→source map from `storage.input.tables`
-2. Replace ONLY in `FROM` and `JOIN` table-reference positions (not columns)
-3. After migration, verify with these regex checks:
-   - `alias\."sapi_\d+"` → FK column incorrectly expanded (e.g. `a."sapi_1507"...`)
-   - `ON.*=\s*"sapi_\d+"` → bare FK in JOIN ON replaced with path
-   - `"tmp\.\w+"` used as column name (not after FROM/JOIN)
-4. Verify ALL destination aliases were replaced (none should remain in SQL)
-5. Workspace tables created by earlier code blocks (e.g. `"tmp.orders"`) must
-   NOT be replaced -- they are runtime artifacts, not input mapping aliases
+**Safe approach (for any rename, migration, or refactor):**
 
-See [sql-migration-workflow](sql-migration-workflow.md) for the complete
-step-by-step procedure.
+1. Replace ONLY in **table-reference positions**:
+   - After `FROM` keyword
+   - After `JOIN` keyword
+   - In `CREATE ... TABLE "name"` declarations
+   - In `INSERT INTO "name"` / `UPDATE "name"` / `DELETE FROM "name"`
+2. Do NOT replace in:
+   - Column references: `a."orders"`, `SUM("orders")`, `"orders" AS "orders"`
+   - `JOIN ON` conditions: `ON a."col_name" = b."id"`
+   - `WHERE` conditions, string literals (`'... orders ...'`)
+3. **Context detection heuristic:**
+   - Preceded by a dot (`alias."name"`) → column, skip
+   - Preceded by `FROM` / `JOIN` keyword → table, replace
+   - Inside `SELECT` list (between commas, no FROM yet) → column, skip
+4. After editing, verify with regex:
+   - **Rename**: search for the new name in column positions
+     (`alias\."newname"`, `SUM\("newname"\)`) -- must be zero hits
+   - **Migration**: `alias\."sapi_\d+"`, `ON.*=\s*"sapi_\d+"`,
+     `"tmp\.\w+"` used as column
+   - Verify all old occurrences in table positions are gone
+5. Workspace tables created by earlier code blocks (e.g. `"tmp.orders"`)
+   must NOT be replaced -- they are runtime artifacts, not aliases.
+
+For input mapping migration specifically, see
+[sql-migration-workflow](sql-migration-workflow.md) for the full
+step-by-step procedure including building the destination→source map.
 
 ## Workspace table name conflicts
 

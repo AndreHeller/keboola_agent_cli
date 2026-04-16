@@ -230,3 +230,18 @@ for workspace table name conflicts before pushing:
 This isn't covered by `--dry-run` -- you have to spot it during step 2
 (compute the change). See `gotchas.md` "Workspace table name conflicts" for
 detail.
+
+## Renaming SQL identifiers in transformations
+
+When renaming a table inside a SQL transformation (e.g. `"orders"` →
+`"objednavky"`), do NOT use global find & replace. The same name almost
+always also appears as a **column** somewhere -- FK in `JOIN ON`,
+aggregation alias in `SELECT`, `WHERE` condition. Global replace will
+rename the column too and break the SQL silently.
+
+Replace only in **table-reference positions**: after `FROM`, after `JOIN`,
+in `CREATE ... TABLE` declarations. The same rule applies when migrating
+to direct Snowflake paths or changing table prefixes.
+
+See `gotchas.md` "SQL editing: do NOT use global text replace on
+identifiers" for the full pattern, examples, and verification regexes.

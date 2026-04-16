@@ -242,6 +242,8 @@ kbagent project edit --project NAME [--url URL] [--token TOKEN]
 kbagent project status [--project NAME]
 kbagent project refresh --project ALIAS [--dry-run] [--force] [--yes] [--token-description DESC] [--token-expires-in N]
 kbagent project refresh --all [--dry-run] [--force] [--yes] [--token-description DESC] [--token-expires-in N]
+kbagent project description-get --project NAME
+kbagent project description-set --project NAME [--text STR | --file PATH | --stdin]
 
 kbagent config list [--project NAME] [--component-type TYPE] [--component-id ID] [--branch ID]
 kbagent config detail --project NAME --component-id ID --config-id ID [--branch ID]
@@ -297,6 +299,10 @@ kbagent branch use --project ALIAS --branch ID
 kbagent branch reset --project ALIAS
 kbagent branch delete --project ALIAS --branch ID
 kbagent branch merge --project ALIAS [--branch ID]
+kbagent branch metadata-list --project NAME [--branch ID|default]
+kbagent branch metadata-get --project NAME --key KEY [--branch ID|default]
+kbagent branch metadata-set --project NAME --key KEY [--text STR | --file PATH | --stdin] [--branch ID|default]
+kbagent branch metadata-delete --project NAME --metadata-id ID [--branch ID|default]
 
 kbagent workspace create --project ALIAS [--name NAME] [--backend TYPE] [--ui] [--read-only/--no-read-only]
 kbagent workspace list [--project NAME]

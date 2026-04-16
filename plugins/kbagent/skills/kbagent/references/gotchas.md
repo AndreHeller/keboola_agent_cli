@@ -323,3 +323,19 @@ See [docs/hint-mode.md](../../../../../docs/hint-mode.md) for full documentation
 - **Not saving workspace password**: only returned once on creation
 - **Putting SQL in _config.yml**: SQL transformations must use `transform.sql` with block markers (see above)
 - **Auto-running jobs after config update**: never start a job automatically after pushing config changes -- let the user decide when to run
+
+## Project description vs branch description
+
+The "description" shown on the Keboola project dashboard is **not** the same
+field as a branch's `description` attribute:
+
+- **Dashboard project description** = `KBC.projectDescription` metadata on the
+  **default (main) branch**. Set via `kbagent project description-set` (or
+  generically `kbagent branch metadata-set --key KBC.projectDescription --branch default`)
+- **Dev branch description** = the `description` field on a dev branch record.
+  Set via `kbagent branch create --description "..."`; visible in the branch
+  switcher and synced as `description.md` by the kbc CLI
+
+They live at different endpoints in the Storage API
+(`/v2/storage/branch/{id}/metadata` vs. `/v2/storage/dev-branches/{id}`),
+so setting a branch's description will **not** update the dashboard.

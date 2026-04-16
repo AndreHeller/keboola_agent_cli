@@ -74,6 +74,15 @@ Use `kbagent <command> --help` for full flag details and examples.
   kbagent project refresh --all [--dry-run] [--force] [--yes] [--token-description ...] [--token-expires-in N]
     Refresh project tokens via Manage API. --all refreshes all projects. --force replaces non-expiring tokens.
 
+  kbagent project description-get --project NAME
+    Read the Keboola dashboard project description (markdown). Backed by
+    the KBC.projectDescription metadata key on the default branch. Returns
+    an empty string if no description has been set.
+
+  kbagent project description-set --project NAME [--text STR | --file PATH | --stdin]
+    Set the dashboard project description. Pass exactly one of --text,
+    --file, or --stdin. Writes KBC.projectDescription to the default branch.
+
 ### Component Discovery
 
   kbagent component list [--project NAME] [--type TYPE] [--query "search"]
@@ -265,6 +274,19 @@ Use `kbagent <command> --help` for full flag details and examples.
 
   kbagent branch merge --project ALIAS [--branch ID]
     Get KBC UI merge URL (does NOT merge via API). Resets active branch.
+
+  kbagent branch metadata-list --project NAME [--branch ID|default]
+    List all metadata entries on a branch (id, key, value, provider, timestamp).
+
+  kbagent branch metadata-get --project NAME --key KEY [--branch ID|default]
+    Read a single metadata value by key. Exits with NOT_FOUND if absent.
+
+  kbagent branch metadata-set --project NAME --key KEY [--text STR | --file PATH | --stdin] [--branch ID|default]
+    Set a metadata key/value. Useful for KBC.projectDescription and similar
+    dashboard-visible fields. --branch defaults to "default" (main branch).
+
+  kbagent branch metadata-delete --project NAME --metadata-id ID [--branch ID|default]
+    Delete a metadata entry by its numeric ID (from metadata-list).
 
 ### Workspaces (SQL Debugging)
 

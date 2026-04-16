@@ -772,6 +772,47 @@ def format_branches_table(console: Console, data: dict[str, Any]) -> None:
     console.print()
 
 
+def format_branch_metadata_table(console: Console, data: dict[str, Any]) -> None:
+    """Render branch metadata entries as a Rich table.
+
+    Args:
+        console: Rich Console instance.
+        data: Dict with project_alias, branch_id, and metadata (list of entries).
+    """
+    entries = data.get("metadata", [])
+    alias = data.get("project_alias", "unknown")
+    branch_id = data.get("branch_id", "default")
+
+    if not entries:
+        console.print(
+            f"No metadata on branch [bold]{branch_id}[/bold] of project "
+            f"[bold magenta]{alias}[/bold magenta]."
+        )
+        return
+
+    table = Table(title=f"Branch Metadata  -  project: {alias}  -  branch: {branch_id}")
+    table.add_column("ID", justify="right", style="dim")
+    table.add_column("Key", style="bold cyan")
+    table.add_column("Value", max_width=60)
+    table.add_column("Provider", style="dim")
+    table.add_column("Timestamp", style="dim")
+
+    for entry in entries:
+        value = str(entry.get("value", ""))
+        if "\n" in value:
+            first_line = value.splitlines()[0]
+            value = f"{first_line} [dim](+{len(value.splitlines()) - 1} more lines)[/dim]"
+        table.add_row(
+            str(entry.get("id", "")),
+            str(entry.get("key", "")),
+            value,
+            str(entry.get("provider", "")),
+            str(entry.get("timestamp", "")),
+        )
+
+    console.print(table)
+
+
 def format_doctor_panel(console: Console, data: dict[str, Any]) -> None:
     """Render doctor check results as a Rich panel with colored status indicators.
 

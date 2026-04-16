@@ -1850,6 +1850,190 @@ class TestJobServiceRunJob:
         mock_client.wait_for_queue_job.assert_called_once_with("557", max_wait=60.0)
 
 
+def _make_job_store_and_project(tmp_config_dir: Path, alias: str = "prod") -> ConfigStore:
+    """Helper to register a single project so JobService.resolve_projects() works."""
+    store = ConfigStore(config_dir=tmp_config_dir)
+    store.add_project(
+        alias,
+        ProjectConfig(
+            stack_url="https://connection.keboola.com",
+            token="901-abc-defghijklmnopqrst",
+            project_name="Project",
+            project_id=1234,
+        ),
+    )
+    return store
+
+
+class TestJobServiceTerminateJobs:
+    """Tests for JobService.terminate_jobs() partition logic.
+
+    Queue API returns four distinct HTTP shapes for kill; the service has to
+    translate them into {killed, already_finished, not_found, failed}. The tests
+    exercise each branch with a mocked client so we can assert the bucket
+    assignment without hitting a live Queue.
+    """
+
+    def test_dry_run_reports_without_calling_kill(self, tmp_config_dir: Path) -> None:
+        """dry_run=True short-circuits before any HTTP call and echoes the ids back."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["1", "2"], dry_run=True)
+
+        assert result["dry_run"] is True
+        assert result["would_terminate"] == ["1", "2"]
+        assert result["killed"] == []
+        mock_client.kill_job.assert_not_called()
+
+    def test_kill_success_goes_to_killed_bucket(self, tmp_config_dir: Path) -> None:
+        """HTTP 200 response flows into 'killed' with id/status/desiredStatus summary."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+        mock_client.kill_job.return_value = {
+            "id": "111",
+            "status": "processing",
+            "desiredStatus": "terminating",
+            "isFinished": False,
+        }
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["111"])
+
+        assert result["killed"] == [
+            {"id": "111", "status": "processing", "desiredStatus": "terminating"}
+        ]
+        assert result["already_finished"] == []
+        assert result["not_found"] == []
+        assert result["failed"] == []
+
+    def test_400_not_killable_goes_to_already_finished(self, tmp_config_dir: Path) -> None:
+        """Job already in terminal state returns HTTP 400 -> already_finished (race-safe)."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+        mock_client.kill_job.side_effect = KeboolaApiError(
+            message='Job id "1" is not in one of killable states (created,waiting,processing).',
+            status_code=400,
+            error_code="API_ERROR",
+        )
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["1"])
+
+        assert result["already_finished"] == [{"id": "1", "reason": "not_killable"}]
+        assert result["killed"] == []
+        assert result["failed"] == []
+
+    def test_500_with_finished_job_goes_to_already_finished(self, tmp_config_dir: Path) -> None:
+        """Queue API's 500/404 mismatch: GET confirms isFinished=True -> already_finished."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+        mock_client.kill_job.side_effect = KeboolaApiError(
+            message="Internal Server Error occurred.",
+            status_code=500,
+            error_code="API_ERROR",
+        )
+        mock_client.get_job_detail.return_value = {
+            "id": "2",
+            "status": "success",
+            "isFinished": True,
+        }
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["2"])
+
+        assert result["already_finished"] == [{"id": "2", "reason": "terminal_state"}]
+        assert result["failed"] == []
+        mock_client.get_job_detail.assert_called_once_with("2")
+
+    def test_500_with_missing_job_goes_to_not_found(self, tmp_config_dir: Path) -> None:
+        """Queue API's 500/404 mismatch: GET returns 404 -> not_found bucket."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+        mock_client.kill_job.side_effect = KeboolaApiError(
+            message="Internal Server Error occurred.",
+            status_code=500,
+            error_code="API_ERROR",
+        )
+        mock_client.get_job_detail.side_effect = KeboolaApiError(
+            message="Not found",
+            status_code=404,
+            error_code="NOT_FOUND",
+        )
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["99"])
+
+        assert result["not_found"] == ["99"]
+        assert result["failed"] == []
+
+    def test_other_errors_go_to_failed(self, tmp_config_dir: Path) -> None:
+        """Auth/network/unknown errors land in 'failed' with the API message attached."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+        mock_client.kill_job.side_effect = KeboolaApiError(
+            message="Token expired",
+            status_code=401,
+            error_code="INVALID_TOKEN",
+        )
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["1"])
+
+        assert result["failed"] == [{"id": "1", "error": "Token expired"}]
+        assert result["killed"] == []
+
+    def test_batch_tolerates_partial_failures(self, tmp_config_dir: Path) -> None:
+        """One failure in a batch does not prevent other jobs from being killed."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+
+        def kill_side_effect(jid: str) -> dict:
+            if jid == "bad":
+                raise KeboolaApiError("Boom", status_code=502, error_code="API_ERROR")
+            return {"id": jid, "status": "processing", "desiredStatus": "terminating"}
+
+        mock_client.kill_job.side_effect = kill_side_effect
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        result = service.terminate_jobs(alias="prod", job_ids=["ok1", "bad", "ok2"])
+
+        assert {entry["id"] for entry in result["killed"]} == {"ok1", "ok2"}
+        assert result["failed"] == [{"id": "bad", "error": "Boom"}]
+
+    def test_resolve_job_ids_filters_by_branch_client_side(self, tmp_config_dir: Path) -> None:
+        """resolve_job_ids_by_filter applies branch_id filter client-side (Queue API doesn't)."""
+        store = _make_job_store_and_project(tmp_config_dir)
+        mock_client = MagicMock()
+        mock_client.list_jobs.return_value = [
+            {"id": "1", "branchId": "100", "status": "processing"},
+            {"id": "2", "branchId": "200", "status": "processing"},
+            {"id": "3", "branchId": 100, "status": "waiting"},  # numeric variant
+        ]
+
+        service = JobService(store, client_factory=lambda url, token: mock_client)
+        jobs = service.resolve_job_ids_by_filter(
+            alias="prod",
+            status="processing",
+            branch_id=100,
+        )
+
+        assert {j["id"] for j in jobs} == {"1", "3"}
+
+    def test_filter_killable_drops_terminal_jobs(self) -> None:
+        """filter_killable() keeps only created/waiting/processing states."""
+        jobs = [
+            {"id": "1", "status": "processing"},
+            {"id": "2", "status": "terminated"},
+            {"id": "3", "status": "waiting"},
+            {"id": "4", "status": "success"},
+            {"id": "5", "status": "created"},
+        ]
+        kept = JobService.filter_killable(jobs)
+        assert {j["id"] for j in kept} == {"1", "3", "5"}
+
+
 # ---------------------------------------------------------------------------
 # Parallel-specific tests: deterministic ordering, unexpected exceptions
 # ---------------------------------------------------------------------------

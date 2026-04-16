@@ -120,6 +120,10 @@ SECRET_PLACEHOLDER: str = "<YOUR_SECRET>"
 # --- Job Run ---
 DEFAULT_JOB_RUN_TIMEOUT: float = 300.0  # 5 min default for --wait polling
 
+# --- Job Terminate ---
+# States where POST /jobs/{id}/kill returns HTTP 200; any other state yields 400.
+KILLABLE_JOB_STATUSES: frozenset[str] = frozenset({"created", "waiting", "processing"})
+
 # --- Permission Exit Code ---
 EXIT_PERMISSION_DENIED: int = 6
 

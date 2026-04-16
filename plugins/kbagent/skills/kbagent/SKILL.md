@@ -76,6 +76,7 @@ If kbagent is not installed or you need the full standalone reference, run `kbag
 | List jobs from connected projects | `kbagent job list` |
 | Show detailed information about a specific job | `kbagent job detail --project PROJECT --job-id JOB-ID` |
 | Run a job for a component configuration | `kbagent job run --project PROJECT --component-id COMPONENT-ID --config-id CONFIG-ID` |
+| Terminate one or more Queue API jobs (use to stop runaway or stuck jobs) | `kbagent job terminate --project PROJECT` |
 | List storage buckets with sharing/linked bucket information | `kbagent storage buckets` |
 | Show detailed bucket info including Snowflake direct access paths | `kbagent storage bucket-detail --project PROJECT --bucket-id BUCKET-ID` |
 | List storage tables from a project | `kbagent storage tables --project PROJECT` |

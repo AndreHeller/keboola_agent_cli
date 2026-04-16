@@ -34,6 +34,7 @@ OPERATION_REGISTRY: dict[str, str] = {
     "job.list": "read",
     "job.detail": "read",
     "job.run": "write",
+    "job.terminate": "destructive",
     # Lineage
     "lineage.build": "read",
     "lineage.info": "read",

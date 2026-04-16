@@ -17,6 +17,7 @@ Not all commands return data the same way. Key differences:
 | `config search` | `{"matches": [...], "errors": [...], "stats": {...}}` |
 | `storage table-detail` | `{"table_id": ..., "columns": [...], "column_details": [...]}` |
 | `storage download-table` | `{"table_id": ..., "output_path": ..., "file_size_bytes": N}` |
+| `job terminate` | `{"killed": [...], "already_finished": [...], "not_found": [...], "failed": [...]}` -- four-way partition, NOT a simple success/failure. Always inspect each bucket |
 
 Always check the actual response structure rather than assuming a pattern.
 
@@ -339,3 +340,35 @@ field as a branch's `description` attribute:
 They live at different endpoints in the Storage API
 (`/v2/storage/branch/{id}/metadata` vs. `/v2/storage/dev-branches/{id}`),
 so setting a branch's description will **not** update the dashboard.
+
+## `job terminate` quirks
+
+Queue API's kill endpoint (`POST /jobs/{id}/kill`) has a few non-obvious behaviors the
+CLI hides via its four-bucket response, but they matter when interpreting results:
+
+- **Kill is asynchronous.** A successful `killed` entry has
+  `desiredStatus=terminating` but the actual `status` does not change immediately.
+  The job transitions to `cancelled` (if it was `waiting`) or `terminated`
+  (if it was `processing`) within a few seconds. Poll `job detail` for
+  `isFinished=true` before assuming it's done.
+- **`processing` is transient in the middle of termination.** Between the
+  accepted kill and the terminal state, you may briefly observe
+  `status=terminating` -- still `isFinished=false`. Don't treat it as an error.
+- **Re-terminating a finished job is safe.** Queue API returns HTTP 400 for
+  already-terminal jobs; the CLI reports them in `already_finished` rather than
+  `failed`. This also covers race conditions where a job finishes between
+  `list` and `terminate`.
+- **Bogus or already-`success`/`error` IDs hit an inconsistency:** Queue API
+  returns HTTP 500 with body `code=404`. The CLI verifies via GET: if the job
+  exists and is finished, it lands in `already_finished`; if GET returns 404,
+  it lands in `not_found`.
+- **`--status` filter is client-side for branches.** Queue API's `/search/jobs`
+  does not accept a branch parameter, so `--branch ID` is applied by filtering
+  the listed jobs on `branchId`. If you need pristine branch scoping, consider
+  using the IDs returned from `job list --status processing` and passing them
+  explicitly with `--job-id`.
+- **`--status any` is the right default for runaway cleanup.** It fetches all
+  recent jobs (no status filter) and keeps only `created`/`waiting`/`processing`
+  client-side. Picking a single status misses the other killable states -- e.g.
+  a runaway loop often piles up `waiting` jobs while you're typing
+  `--status processing`.

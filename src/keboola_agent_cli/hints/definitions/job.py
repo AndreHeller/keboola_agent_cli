@@ -120,3 +120,40 @@ HintRegistry.register(
         ],
     )
 )
+
+# ── job terminate ──────────────────────────────────────────────────
+
+HintRegistry.register(
+    CommandHint(
+        cli_command="job.terminate",
+        description="Request termination of one or more Queue API jobs",
+        steps=[
+            HintStep(
+                comment="Kill a single job (async: sets desiredStatus=terminating)",
+                client=ClientCall(
+                    method="kill_job",
+                    args={"job_id": "{job_id}"},
+                    result_var="job",
+                    result_hint="dict",
+                ),
+                service=ServiceCall(
+                    service_class="JobService",
+                    service_module="job_service",
+                    method="terminate_jobs",
+                    args={
+                        "alias": "{project}",
+                        "job_ids": "{job_id}",
+                        "dry_run": "{dry_run}",
+                    },
+                ),
+            ),
+        ],
+        notes=[
+            "Uses the Queue API (queue.keboola.com) - POST /jobs/{id}/kill.",
+            "Killable states: created, waiting, processing. Others return HTTP 400.",
+            "Transition is async - poll get_job_detail for isFinished=True.",
+            "Service partitions results into killed / already_finished / not_found / failed.",
+            "For bulk mode, resolve job IDs first via list_jobs, then call terminate_jobs.",
+        ],
+    )
+)

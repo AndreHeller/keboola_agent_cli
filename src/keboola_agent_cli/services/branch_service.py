@@ -9,6 +9,7 @@ the ``KBC.projectDescription`` metadata key on the default branch.
 
 from typing import Any
 
+from ..constants import METADATA_NOT_FOUND
 from ..errors import ConfigError, KeboolaApiError
 from ..models import ProjectConfig
 from .base import BaseService
@@ -401,7 +402,7 @@ class BranchService(BaseService):
             value = client.get_branch_metadata_value(key=key, branch_id=branch_id)
         finally:
             client.close()
-        if value is None:
+        if value is METADATA_NOT_FOUND:
             raise KeboolaApiError(
                 message=(
                     f"Metadata key '{key}' not found on branch '{branch_id}' of project '{alias}'."
@@ -525,7 +526,7 @@ class BranchService(BaseService):
         return {
             "project_alias": alias,
             "key": PROJECT_DESCRIPTION_KEY,
-            "description": value or "",
+            "description": "" if value is METADATA_NOT_FOUND else (value or ""),
         }
 
     def set_project_description(self, alias: str, description: str) -> dict[str, Any]:
@@ -545,12 +546,16 @@ class BranchService(BaseService):
             ConfigError: If the project alias is not found.
             KeboolaApiError: If the API call fails.
         """
-        result = self.set_branch_metadata(
+        raw = self.set_branch_metadata(
             alias=alias,
             key=PROJECT_DESCRIPTION_KEY,
             value=description,
             branch_id="default",
         )
-        result["description"] = description
-        result["message"] = f"Project description updated for '{alias}' ({len(description)} chars)."
-        return result
+        return {
+            "project_alias": alias,
+            "key": PROJECT_DESCRIPTION_KEY,
+            "description": description,
+            "result": raw["result"],
+            "message": f"Project description updated for '{alias}' ({len(description)} chars).",
+        }

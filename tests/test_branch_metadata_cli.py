@@ -364,9 +364,7 @@ class TestProjectDescription:
         mock_svc = MagicMock()
         mock_svc.set_project_description.return_value = {
             "project_alias": "prod",
-            "branch_id": "default",
             "key": "KBC.projectDescription",
-            "value": "# New",
             "description": "# New",
             "result": [],
             "message": "Project description updated for 'prod' (5 chars).",
@@ -392,9 +390,7 @@ class TestProjectDescription:
         mock_svc = MagicMock()
         mock_svc.set_project_description.return_value = {
             "project_alias": "prod",
-            "branch_id": "default",
             "key": "KBC.projectDescription",
-            "value": "from stdin",
             "description": "from stdin",
             "result": [],
             "message": "ok",

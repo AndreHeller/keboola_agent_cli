@@ -2209,6 +2209,88 @@ class TestCreateJob:
         assert body["configRowIds"] == ["row1", "row2"]
 
 
+class TestKillJob:
+    """Tests for kill_job() - Queue API POST /jobs/{id}/kill."""
+
+    def test_kill_job_success(self, httpx_mock) -> None:
+        """kill_job() returns full job dict with desiredStatus=terminating on 200."""
+        job_response = {
+            "id": "1234",
+            "status": "processing",
+            "desiredStatus": "terminating",
+            "isFinished": False,
+        }
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs/1234/kill",
+            method="POST",
+            json=job_response,
+            status_code=200,
+        )
+
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            result = client.kill_job("1234")
+
+        assert result["id"] == "1234"
+        assert result["desiredStatus"] == "terminating"
+
+    def test_kill_job_400_not_killable(self, httpx_mock) -> None:
+        """kill_job() raises KeboolaApiError(400) on terminal-state jobs."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs/9999/kill",
+            method="POST",
+            json={
+                "error": 'Job id "9999" is not in one of killable states (created,waiting,processing).',
+                "code": 400,
+            },
+            status_code=400,
+        )
+
+        with (
+            KeboolaClient(stack_url=_BASE, token=_TOKEN) as client,
+            pytest.raises(KeboolaApiError) as exc_info,
+        ):
+            client.kill_job("9999")
+
+        assert exc_info.value.status_code == 400
+        assert "killable states" in exc_info.value.message.lower()
+
+    def test_kill_job_500_404_mismatch(self, httpx_mock) -> None:
+        """kill_job() surfaces Queue API's 500/404 inconsistency for bogus/success jobs.
+
+        Queue API returns HTTP 500 with body code=404 for already-finished or
+        missing jobs. Client passes the error through; service layer distinguishes
+        the two cases via a follow-up GET.
+        """
+        # HTTP 500 triggers retry path (MAX_RETRIES total attempts); stub each.
+        for _ in range(MAX_RETRIES):
+            httpx_mock.add_response(
+                url="https://queue.keboola.com/jobs/1/kill",
+                method="POST",
+                json={"error": "Internal Server Error occurred.", "code": 404},
+                status_code=500,
+            )
+
+        with (
+            KeboolaClient(stack_url=_BASE, token=_TOKEN) as client,
+            pytest.raises(KeboolaApiError) as exc_info,
+        ):
+            client.kill_job("1")
+
+        assert exc_info.value.status_code == 500
+
+    def test_kill_job_url_encodes_job_id(self, httpx_mock) -> None:
+        """kill_job() URL-encodes the job ID to prevent path injection."""
+        httpx_mock.add_response(
+            url="https://queue.keboola.com/jobs/ab%2Fcd/kill",
+            method="POST",
+            json={"id": "ab/cd", "status": "processing", "desiredStatus": "terminating"},
+            status_code=200,
+        )
+
+        with KeboolaClient(stack_url=_BASE, token=_TOKEN) as client:
+            client.kill_job("ab/cd")
+
+
 _BRANCH_METADATA_SAMPLE = [
     {
         "id": 1001,

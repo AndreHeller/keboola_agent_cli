@@ -131,6 +131,12 @@ Use `kbagent <command> --help` for full flag details and examples.
     Run a Queue API job. --row-id selects specific config rows (repeatable; omit to run entire config).
     --wait polls until job finishes. --timeout sets max wait in seconds (default 300). Branch-aware.
 
+  kbagent job terminate --project NAME (--job-id ID [--job-id ID ...] | --status any|created|waiting|processing [--component-id ID] [--config-id ID] [--branch ID] [--limit N]) [--dry-run] [--yes]
+    Kill running jobs via Queue API (POST /jobs/{id}/kill). Use to stop runaway loops or pile-ups.
+    Two modes: single/batch by --job-id, or bulk by --status. --status any covers all killable states
+    (created+waiting+processing). Response partitions into killed / already_finished / not_found / failed.
+    Idempotent: re-running on terminal jobs reports them as already_finished rather than failing.
+
 ### Storage
 
   kbagent storage buckets [--project NAME] [--branch ID]

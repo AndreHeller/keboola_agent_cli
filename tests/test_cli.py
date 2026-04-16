@@ -2246,6 +2246,385 @@ class TestJobRun:
         assert result.exit_code == 2
 
 
+class TestJobTerminate:
+    """Tests for `kbagent job terminate` command."""
+
+    def _setup(self, tmp_path: Path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        store = _setup_config_test(
+            config_dir,
+            {
+                "prod": {"token": "901-10493007-VDtlEDWDF6Tx5V8jjE8FshFlqM0Hl0c08KHqpt0k"},
+            },
+        )
+        return store
+
+    def test_terminate_single_job_by_id(self, tmp_path: Path) -> None:
+        """--job-id variant calls service.terminate_jobs with the exact list."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            job_service = MagicMock()
+            job_service.terminate_jobs.return_value = {
+                "killed": [{"id": "111", "status": "processing", "desiredStatus": "terminating"}],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [],
+                "dry_run": False,
+                "project_alias": "prod",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--job-id",
+                    "111",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        job_service.terminate_jobs.assert_called_once()
+        call_kwargs = job_service.terminate_jobs.call_args.kwargs
+        assert call_kwargs["alias"] == "prod"
+        assert call_kwargs["job_ids"] == ["111"]
+
+    def test_terminate_multiple_job_ids(self, tmp_path: Path) -> None:
+        """--job-id repeated flags accumulate into a single batch call."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            job_service = MagicMock()
+            job_service.terminate_jobs.return_value = {
+                "killed": [],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [],
+                "dry_run": False,
+                "project_alias": "prod",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--job-id",
+                    "a",
+                    "--job-id",
+                    "b",
+                    "--job-id",
+                    "c",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert job_service.terminate_jobs.call_args.kwargs["job_ids"] == ["a", "b", "c"]
+
+    def test_terminate_requires_job_id_or_status(self, tmp_path: Path) -> None:
+        """Providing neither --job-id nor --status is a usage error."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                ["--json", "job", "terminate", "--project", "prod", "--yes"],
+            )
+
+        assert result.exit_code == 2
+
+    def test_terminate_rejects_both_job_id_and_status(self, tmp_path: Path) -> None:
+        """--job-id and --status are mutually exclusive."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--job-id",
+                    "1",
+                    "--status",
+                    "processing",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 2
+
+    def test_terminate_rejects_invalid_status(self, tmp_path: Path) -> None:
+        """--status success (terminal) is rejected as not killable."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+            MockJobService.return_value = JobService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--status",
+                    "success",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 2
+
+    def test_terminate_bulk_by_status(self, tmp_path: Path) -> None:
+        """--status triggers resolve_job_ids_by_filter + terminate_jobs with resolved IDs."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            job_service = MagicMock()
+            job_service.resolve_job_ids_by_filter.return_value = [
+                {"id": "1", "status": "processing"},
+                {"id": "2", "status": "processing"},
+            ]
+            job_service.terminate_jobs.return_value = {
+                "killed": [
+                    {"id": "1", "status": "processing", "desiredStatus": "terminating"},
+                    {"id": "2", "status": "processing", "desiredStatus": "terminating"},
+                ],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [],
+                "dry_run": False,
+                "project_alias": "prod",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--status",
+                    "processing",
+                    "--component-id",
+                    "keboola.python-transformation-v2",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        job_service.resolve_job_ids_by_filter.assert_called_once()
+        job_service.terminate_jobs.assert_called_once_with(alias="prod", job_ids=["1", "2"])
+
+    def test_terminate_status_any_fetches_all_and_filters_client_side(self, tmp_path: Path) -> None:
+        """--status any passes status=None to list_jobs and applies filter_killable()."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            job_service = MagicMock()
+            job_service.resolve_job_ids_by_filter.return_value = [
+                {"id": "1", "status": "processing"},
+                {"id": "2", "status": "success"},  # should be filtered out
+                {"id": "3", "status": "waiting"},
+            ]
+            job_service.filter_killable.return_value = [
+                {"id": "1", "status": "processing"},
+                {"id": "3", "status": "waiting"},
+            ]
+            job_service.terminate_jobs.return_value = {
+                "killed": [],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [],
+                "dry_run": False,
+                "project_alias": "prod",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--status",
+                    "any",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        # list call should pass status=None (not "any")
+        assert job_service.resolve_job_ids_by_filter.call_args.kwargs["status"] is None
+        job_service.filter_killable.assert_called_once()
+        # terminate_jobs receives only the two killable IDs
+        assert job_service.terminate_jobs.call_args.kwargs["job_ids"] == ["1", "3"]
+
+    def test_terminate_dry_run_reports_without_kill(self, tmp_path: Path) -> None:
+        """--dry-run short-circuits and forwards dry_run=True to service."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            job_service = MagicMock()
+            job_service.terminate_jobs.return_value = {
+                "killed": [],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [],
+                "would_terminate": ["1", "2"],
+                "dry_run": True,
+                "project_alias": "prod",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--job-id",
+                    "1",
+                    "--job-id",
+                    "2",
+                    "--dry-run",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert job_service.terminate_jobs.call_args.kwargs["dry_run"] is True
+
+    def test_terminate_exit_code_1_on_failures(self, tmp_path: Path) -> None:
+        """Non-empty failed bucket yields exit code 1."""
+        store = self._setup(tmp_path)
+
+        with (
+            patch("keboola_agent_cli.cli.ConfigStore") as MockStore,
+            patch("keboola_agent_cli.cli.ProjectService") as MockProjService,
+            patch("keboola_agent_cli.cli.ConfigService") as MockCfgService,
+            patch("keboola_agent_cli.cli.JobService") as MockJobService,
+        ):
+            MockStore.return_value = store
+            job_service = MagicMock()
+            job_service.terminate_jobs.return_value = {
+                "killed": [],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [{"id": "1", "error": "timeout"}],
+                "dry_run": False,
+                "project_alias": "prod",
+            }
+            MockJobService.return_value = job_service
+            MockProjService.return_value = ProjectService(config_store=store)
+            MockCfgService.return_value = ConfigService(config_store=store)
+
+            result = runner.invoke(
+                app,
+                [
+                    "--json",
+                    "job",
+                    "terminate",
+                    "--project",
+                    "prod",
+                    "--job-id",
+                    "1",
+                    "--yes",
+                ],
+            )
+
+        assert result.exit_code == 1
+
+
 # ---------------------------------------------------------------------------
 # Context command tests
 # ---------------------------------------------------------------------------

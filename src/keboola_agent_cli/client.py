@@ -1675,6 +1675,24 @@ class KeboolaClient(BaseHttpClient):
         response = self._queue_request("POST", "/jobs", json=body)
         return response.json()
 
+    def kill_job(self, job_id: str) -> dict[str, Any]:
+        """Request termination of a running Queue API job.
+
+        Sets the job's desiredStatus to "terminating"; the executor transitions
+        the actual status asynchronously (waiting -> cancelled, processing ->
+        terminating -> terminated). Poll get_job_detail until isFinished=True
+        to observe the terminal state.
+
+        Killable states per Queue API: created, waiting, processing. Calling
+        kill on any other state returns HTTP 400 with a "not in one of killable
+        states" message; callers that want idempotent behavior (e.g. bulk
+        terminate after list_jobs under race conditions) should translate that
+        into a no-op success at the service layer.
+        """
+        safe_job_id = quote(job_id, safe="")
+        response = self._queue_request("POST", f"/jobs/{safe_job_id}/kill")
+        return response.json()
+
     def wait_for_queue_job(
         self, job_id: str, max_wait: float = STORAGE_JOB_MAX_WAIT
     ) -> dict[str, Any]:

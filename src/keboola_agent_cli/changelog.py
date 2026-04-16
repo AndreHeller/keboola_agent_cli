@@ -8,6 +8,12 @@ from __future__ import annotations
 
 # Ordered newest-first.  Each value is a list of brief one-line descriptions.
 CHANGELOG: dict[str, list[str]] = {
+    "0.20.2": [
+        "New: job terminate -- kill Queue API jobs with --job-id or bulk --status filter (#181)",
+        "New: --status any filter for terminating all killable jobs (created+waiting+processing)",
+        "New: client helper kill_job + service terminate_jobs with partition response (killed/already_finished/not_found/failed)",
+        "New: job.terminate permission (destructive class) for policy-based gating",
+    ],
     "0.20.1": [
         "New: project description-get / description-set -- read/write the Keboola dashboard project description (markdown)",
         "New: branch metadata-list / metadata-get / metadata-set / metadata-delete -- generic CRUD over branch metadata (KBC.* keys)",

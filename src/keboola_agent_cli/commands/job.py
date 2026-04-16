@@ -7,7 +7,13 @@ No business logic belongs here.
 import typer
 
 from ..config_store import ConfigStore
-from ..constants import DEFAULT_JOB_LIMIT, DEFAULT_JOB_RUN_TIMEOUT, MAX_JOB_LIMIT, VALID_STATUSES
+from ..constants import (
+    DEFAULT_JOB_LIMIT,
+    DEFAULT_JOB_RUN_TIMEOUT,
+    KILLABLE_JOB_STATUSES,
+    MAX_JOB_LIMIT,
+    VALID_STATUSES,
+)
 from ..errors import ConfigError, KeboolaApiError
 from ..output import format_job_detail, format_jobs_table
 from ._helpers import (
@@ -270,3 +276,256 @@ def job_run(
                     "  Use --wait to poll until completion, "
                     f"or: kbagent job detail --project {project} --job-id {job_id}"
                 )
+
+
+@job_app.command("terminate")
+def job_terminate(
+    ctx: typer.Context,
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project alias",
+    ),
+    job_id: list[str] | None = typer.Option(
+        None,
+        "--job-id",
+        help="Job ID to terminate. Can be repeated. Mutually exclusive with --status.",
+    ),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help=(
+            "Bulk-terminate jobs matching status. "
+            f"Single killable: {', '.join(sorted(KILLABLE_JOB_STATUSES))}. "
+            "Use 'any' to match all killable states at once (typical for runaway cleanup). "
+            "Recommend scoping with --component-id / --config-id / --branch."
+        ),
+    ),
+    component_id: str | None = typer.Option(
+        None,
+        "--component-id",
+        help="Filter bulk terminate by component ID",
+    ),
+    config_id: str | None = typer.Option(
+        None,
+        "--config-id",
+        help="Filter bulk terminate by configuration ID (requires --component-id)",
+    ),
+    limit: int = typer.Option(
+        DEFAULT_JOB_LIMIT,
+        "--limit",
+        help=f"Max jobs to consider when using --status (1-{MAX_JOB_LIMIT})",
+    ),
+    branch: int | None = typer.Option(
+        None,
+        "--branch",
+        help="Dev branch ID (filters jobs client-side; defaults to active branch if set via 'branch use')",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be terminated without executing",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Terminate one or more Queue API jobs (use to stop runaway or stuck jobs).
+
+    Two modes:
+
+    - Single/multiple by ID: --job-id ID [--job-id ID ...]
+    - Bulk by filter: --status processing [--component-id ID] [--config-id ID] [--branch ID]
+
+    Queue API kill is asynchronous: the job's desiredStatus becomes 'terminating'
+    and the actual status transitions to 'cancelled' (if waiting) or 'terminated'
+    (if processing) within a few seconds. Poll with 'kbagent job detail' to
+    observe the terminal state.
+
+    Jobs already in a terminal state (success/error/terminated/cancelled) are
+    counted as 'already_finished' — safe to re-run this command idempotently
+    for cleanup purposes.
+    """
+    if should_hint(ctx):
+        emit_hint(
+            ctx,
+            "job.terminate",
+            project=project,
+            job_id=job_id,
+            status=status,
+            component_id=component_id,
+            config_id=config_id,
+            limit=limit,
+            branch=branch,
+            dry_run=dry_run,
+        )
+        return
+
+    formatter = get_formatter(ctx)
+    service = get_service(ctx, "job_service")
+    config_store: ConfigStore = ctx.obj["config_store"]
+
+    if bool(job_id) == bool(status):
+        formatter.error(
+            message="Provide either --job-id (one or more) or --status, but not both.",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2)
+
+    if status and status != "any" and status not in KILLABLE_JOB_STATUSES:
+        formatter.error(
+            message=(
+                f"Invalid --status '{status}'. Use one of: "
+                f"{', '.join(sorted(KILLABLE_JOB_STATUSES))} or 'any'."
+            ),
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2)
+
+    if config_id and not component_id:
+        formatter.error(
+            message="--config-id requires --component-id.",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2)
+
+    if limit < 1 or limit > MAX_JOB_LIMIT:
+        formatter.error(
+            message=f"Invalid --limit {limit}. Must be between 1 and {MAX_JOB_LIMIT}.",
+            error_code="INVALID_ARGUMENT",
+        )
+        raise typer.Exit(code=2)
+
+    validate_branch_requires_project(formatter, branch, project)
+    _, effective_branch = resolve_branch(config_store, formatter, project, branch)
+
+    # Resolve job IDs
+    resolved_ids: list[str]
+    filter_context: dict[str, object | None] | None = None
+    if job_id:
+        resolved_ids = list(job_id)
+    else:
+        # "any" means: list without status filter, then keep only killable states client-side
+        list_status = None if status == "any" else status
+        try:
+            matched = service.resolve_job_ids_by_filter(
+                alias=project,
+                status=list_status,
+                component_id=component_id,
+                config_id=config_id,
+                branch_id=effective_branch,
+                limit=limit,
+            )
+            if status == "any":
+                matched = service.filter_killable(matched)
+        except ConfigError as exc:
+            formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+            raise typer.Exit(code=5) from None
+        except KeboolaApiError as exc:
+            formatter.error(
+                message=exc.message,
+                error_code=exc.error_code,
+                project=project,
+                retryable=exc.retryable,
+            )
+            raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+        resolved_ids = [str(j.get("id")) for j in matched if j.get("id")]
+        filter_context = {
+            "status": status,
+            "component_id": component_id,
+            "config_id": config_id,
+            "branch_id": effective_branch,
+            "matched_count": len(resolved_ids),
+        }
+
+    if not resolved_ids:
+        empty_result = {
+            "killed": [],
+            "already_finished": [],
+            "not_found": [],
+            "failed": [],
+            "dry_run": dry_run,
+            "project_alias": project,
+            "filter": filter_context,
+        }
+        if formatter.json_mode:
+            formatter.output(empty_result)
+        else:
+            formatter.console.print("[bold blue]No jobs matched.[/bold blue]")
+        return
+
+    # Dry-run: report without killing
+    if dry_run:
+        try:
+            result = service.terminate_jobs(
+                alias=project,
+                job_ids=resolved_ids,
+                dry_run=True,
+            )
+        except ConfigError as exc:
+            formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+            raise typer.Exit(code=5) from None
+
+        if filter_context is not None:
+            result["filter"] = filter_context
+        if formatter.json_mode:
+            formatter.output(result)
+        else:
+            formatter.console.print(
+                f"[bold blue]Would terminate {len(resolved_ids)} job(s):[/bold blue]"
+            )
+            for jid in resolved_ids:
+                formatter.console.print(f"  - {jid}")
+        return
+
+    # Confirmation prompt (interactive only)
+    confirm_msg = f"Terminate {len(resolved_ids)} job(s) in project '{project}'?"
+    if not yes and not formatter.json_mode and not typer.confirm(confirm_msg):
+        formatter.console.print("Aborted.")
+        raise typer.Exit(code=0)
+
+    try:
+        result = service.terminate_jobs(
+            alias=project,
+            job_ids=resolved_ids,
+        )
+    except ConfigError as exc:
+        formatter.error(message=exc.message, error_code="CONFIG_ERROR")
+        raise typer.Exit(code=5) from None
+    except KeboolaApiError as exc:
+        formatter.error(
+            message=exc.message,
+            error_code=exc.error_code,
+            project=project,
+            retryable=exc.retryable,
+        )
+        raise typer.Exit(code=map_error_to_exit_code(exc)) from None
+
+    if filter_context is not None:
+        result["filter"] = filter_context
+
+    if formatter.json_mode:
+        formatter.output(result)
+    else:
+        for entry in result["killed"]:
+            formatter.console.print(
+                f"[bold green]Killed:[/bold green] {entry['id']} "
+                f"(status={entry.get('status')}, desiredStatus={entry.get('desiredStatus')})"
+            )
+        for entry in result["already_finished"]:
+            formatter.console.print(
+                f"[yellow]Already finished:[/yellow] {entry['id']} ({entry.get('reason')})"
+            )
+        for jid in result["not_found"]:
+            formatter.console.print(f"[bold red]Not found:[/bold red] {jid}")
+        for f_item in result["failed"]:
+            formatter.console.print(
+                f"[bold red]Failed:[/bold red] {f_item['id']}: {f_item['error']}"
+            )
+
+    if result["failed"]:
+        raise typer.Exit(code=1)

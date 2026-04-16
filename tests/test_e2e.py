@@ -472,6 +472,17 @@ class TestFullE2E:
         self._test_transformation_cleanup(out_bucket_id, transform_config_id)
 
         # ==============================================================
+        # PHASE 7.5: Job terminate (kill long-running / runaway jobs)
+        # ==============================================================
+
+        _step(
+            32.5,
+            "job terminate",
+            "spawn sleep job, kill it, verify idempotency",
+        )
+        self._test_job_terminate()
+
+        # ==============================================================
         # PHASE 8: File operations
         # ==============================================================
 
@@ -1530,6 +1541,132 @@ class TestFullE2E:
                 f"Row id={row['id']}: value={value}, "
                 f"expected doubled_value={value * 2}, got {doubled}"
             )
+
+    def _test_job_terminate(self) -> None:
+        """End-to-end coverage for `kbagent job terminate`.
+
+        Spawns a python-transformation-v2 job that would sleep for 10 minutes,
+        terminates it via CLI, confirms the buckets behave as documented:
+          - killed (200)
+          - already_finished on re-terminate (400 "not in killable states")
+          - not_found on a bogus ID (500/body-404 disambiguated via GET)
+
+        Any leftover config is cleaned up at the end.
+        """
+        # Sleep transformation - long enough that we always catch it in a killable state
+        kill_config_body = self.api.create_config(
+            component_id="keboola.python-transformation-v2",
+            name=f"{RUN_ID} kill-test",
+            configuration={
+                "parameters": {
+                    "blocks": [
+                        {
+                            "name": "Block 1",
+                            "codes": [
+                                {
+                                    "name": "sleep",
+                                    "script": ["import time", "time.sleep(600)"],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+            description="E2E: spawned only to be terminated",
+        )
+        kill_config_id = str(kill_config_body["id"])
+        self._created_config_ids.append(("keboola.python-transformation-v2", kill_config_id))
+
+        # Spawn without --wait (we want it still alive to kill)
+        data = self._run_ok(
+            "job",
+            "run",
+            "--project",
+            self.alias,
+            "--component-id",
+            "keboola.python-transformation-v2",
+            "--config-id",
+            kill_config_id,
+        )
+        job_id = str(data["data"]["id"])
+        assert job_id
+
+        # Dry-run first: should not touch the job
+        dry = self._run_ok(
+            "job",
+            "terminate",
+            "--project",
+            self.alias,
+            "--job-id",
+            job_id,
+            "--dry-run",
+        )["data"]
+        assert dry["dry_run"] is True
+        assert dry["would_terminate"] == [job_id]
+        assert dry["killed"] == []
+
+        # Real terminate
+        killed_result = self._run_ok(
+            "job",
+            "terminate",
+            "--project",
+            self.alias,
+            "--job-id",
+            job_id,
+            "--yes",
+        )["data"]
+        assert len(killed_result["killed"]) == 1
+        assert killed_result["killed"][0]["id"] == job_id
+        assert killed_result["killed"][0]["desiredStatus"] == "terminating"
+        assert killed_result["failed"] == []
+
+        # Poll until job reaches a terminal state (isFinished=True)
+        for _ in range(40):
+            detail = self._run_ok(
+                "job",
+                "detail",
+                "--project",
+                self.alias,
+                "--job-id",
+                job_id,
+            )["data"]
+            if detail["isFinished"]:
+                break
+            time.sleep(2)
+        else:
+            raise AssertionError(f"Job {job_id} did not reach terminal state within 80s")
+        assert detail["status"] in {"cancelled", "terminated"}
+
+        # Idempotency: re-terminate should hit the already_finished bucket
+        idemp = self._run_ok(
+            "job",
+            "terminate",
+            "--project",
+            self.alias,
+            "--job-id",
+            job_id,
+            "--yes",
+        )["data"]
+        assert idemp["killed"] == []
+        assert len(idemp["already_finished"]) == 1
+        assert idemp["already_finished"][0]["id"] == job_id
+
+        # Bogus ID should be classified as not_found (via GET fallback)
+        bogus = self._run_ok(
+            "job",
+            "terminate",
+            "--project",
+            self.alias,
+            "--job-id",
+            "99999999999999",
+            "--yes",
+        )["data"]
+        assert bogus["not_found"] == ["99999999999999"]
+        assert bogus["failed"] == []
+
+        # Cleanup the config now (don't leak resources even if later phases fail)
+        self.api.delete_config("keboola.python-transformation-v2", kill_config_id)
+        self._created_config_ids.remove(("keboola.python-transformation-v2", kill_config_id))
 
     def _test_transformation_cleanup(self, out_bucket_id: str, transform_config_id: str) -> None:
         """Clean up transformation resources via CLI."""

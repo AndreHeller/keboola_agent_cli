@@ -6,7 +6,7 @@ and aggregation without knowing about CLI or HTTP details.
 
 from typing import Any
 
-from ..constants import DEFAULT_JOB_LIMIT
+from ..constants import DEFAULT_JOB_LIMIT, KILLABLE_JOB_STATUSES
 from ..errors import KeboolaApiError
 from ..models import ProjectConfig
 from .base import BaseService
@@ -194,3 +194,147 @@ class JobService(BaseService):
 
         job["project_alias"] = alias
         return job
+
+    def resolve_job_ids_by_filter(
+        self,
+        alias: str,
+        status: str | None = None,
+        component_id: str | None = None,
+        config_id: str | None = None,
+        branch_id: int | None = None,
+        limit: int = DEFAULT_JOB_LIMIT,
+    ) -> list[dict[str, Any]]:
+        """Resolve a set of jobs via filters for bulk operations (e.g. terminate).
+
+        Returns the full job dicts (not just IDs) so callers can display context
+        in dry-run output. branch_id is applied client-side because the Queue
+        API /search/jobs endpoint does not accept a branch filter.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            jobs = client.list_jobs(
+                component_id=component_id,
+                config_id=config_id,
+                status=status,
+                limit=limit,
+            )
+        finally:
+            client.close()
+
+        if branch_id is not None:
+            jobs = [j for j in jobs if str(j.get("branchId")) == str(branch_id)]
+
+        return jobs
+
+    def terminate_jobs(
+        self,
+        alias: str,
+        job_ids: list[str],
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Terminate one or more Queue API jobs.
+
+        Partitions results into four buckets based on Queue API behavior:
+        - killed: HTTP 200 from POST /jobs/{id}/kill (transition to terminating)
+        - already_finished: HTTP 400 "not in one of killable states" (race condition
+          between list and kill) OR HTTP 500 with body code=404 + GET confirms
+          isFinished=True (Queue API inconsistency for terminal jobs)
+        - not_found: HTTP 500 + body code=404 + GET returns 404
+        - failed: anything else (auth, network, genuine server errors)
+
+        Batch-tolerant: accumulates errors per job, one failure does not stop
+        other kills.
+
+        Args:
+            alias: Project alias.
+            job_ids: List of job IDs to terminate.
+            dry_run: If True, only report what would be terminated.
+
+        Returns:
+            Dict with 'killed', 'already_finished', 'not_found', 'failed',
+            'dry_run', 'project_alias', and optionally 'would_terminate'.
+        """
+        projects = self.resolve_projects([alias])
+        project = projects[alias]
+
+        if dry_run:
+            return {
+                "killed": [],
+                "already_finished": [],
+                "not_found": [],
+                "failed": [],
+                "would_terminate": list(job_ids),
+                "dry_run": True,
+                "project_alias": alias,
+            }
+
+        killed: list[dict[str, Any]] = []
+        already_finished: list[dict[str, Any]] = []
+        not_found: list[str] = []
+        failed: list[dict[str, str]] = []
+
+        client = self._client_factory(project.stack_url, project.token)
+        try:
+            for jid in job_ids:
+                try:
+                    result = client.kill_job(jid)
+                    killed.append(
+                        {
+                            "id": jid,
+                            "status": result.get("status"),
+                            "desiredStatus": result.get("desiredStatus"),
+                        }
+                    )
+                except KeboolaApiError as exc:
+                    disposition = self._classify_kill_error(client, jid, exc)
+                    if disposition["bucket"] == "already_finished":
+                        already_finished.append({"id": jid, "reason": disposition["reason"]})
+                    elif disposition["bucket"] == "not_found":
+                        not_found.append(jid)
+                    else:
+                        failed.append({"id": jid, "error": exc.message})
+        finally:
+            client.close()
+
+        return {
+            "killed": killed,
+            "already_finished": already_finished,
+            "not_found": not_found,
+            "failed": failed,
+            "dry_run": False,
+            "project_alias": alias,
+        }
+
+    def _classify_kill_error(
+        self, client: Any, job_id: str, exc: KeboolaApiError
+    ) -> dict[str, str]:
+        """Map a kill_job error into one of {already_finished, not_found, failed}.
+
+        Queue API returns HTTP 400 with "not in one of killable states" when the
+        job is already terminal; for success/error/bogus IDs it returns HTTP 500
+        with body code=404 (inconsistent), so we fall back to GET /jobs/{id} to
+        distinguish "already done" from "really missing".
+        """
+        # Killable-state race: job transitioned to terminal between list and kill
+        if exc.status_code == 400 and "killable states" in exc.message.lower():
+            return {"bucket": "already_finished", "reason": "not_killable"}
+
+        # 500/404 inconsistency: verify via GET
+        if exc.status_code == 500 or exc.status_code == 404:
+            try:
+                job = client.get_job_detail(job_id)
+                if job.get("isFinished"):
+                    return {"bucket": "already_finished", "reason": "terminal_state"}
+            except KeboolaApiError as get_exc:
+                if get_exc.status_code == 404:
+                    return {"bucket": "not_found", "reason": "missing"}
+
+        return {"bucket": "failed", "reason": "error"}
+
+    @staticmethod
+    def filter_killable(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep only jobs whose current status is killable per Queue API contract."""
+        return [j for j in jobs if j.get("status") in KILLABLE_JOB_STATUSES]

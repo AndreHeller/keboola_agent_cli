@@ -8,6 +8,10 @@ from __future__ import annotations
 
 # Ordered newest-first.  Each value is a list of brief one-line descriptions.
 CHANGELOG: dict[str, list[str]] = {
+    "0.20.1": [
+        "Fix: storage delete-table/delete-column/delete-bucket on dev branches (#177)",
+        "Fix: --dry-run now validates table existence on branches before reporting success",
+    ],
     "0.20.0": [
         "New: lineage build -- column-level lineage graph from sync'd data (SQL tokenizer + AI)",
         "New: lineage show -- query upstream/downstream with --columns, -c trace, --format mermaid/html/er",
